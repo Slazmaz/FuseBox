@@ -1,0 +1,371 @@
+#ifndef _WIN32
+/* realpath and kill under -std=c11. */
+#define _DEFAULT_SOURCE
+#endif
+
+#include "platform.h"
+
+#include <SDL3/SDL.h>
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <dwmapi.h>
+#else
+#include <limits.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#endif
+
+void platform_home(char *dst, size_t size)
+{
+   const char *home = SDL_GetUserFolder(SDL_FOLDER_HOME);
+   size_t len;
+
+   SDL_strlcpy(dst, home ? home : ".", size);
+   len = SDL_strlen(dst);
+   while (len > 1 && (dst[len - 1] == '/' || dst[len - 1] == '\\'))
+      dst[--len] = '\0';
+}
+
+bool platform_exists(const char *path)
+{
+   return SDL_GetPathInfo(path, NULL);
+}
+
+/* The userdata/<id> whose localconfig.vdf changed last: the account used
+ * most recently. */
+struct newest
+{
+   const char *userdata;
+   SDL_Time time;
+   char best[1024];
+};
+
+static SDL_EnumerationResult SDLCALL on_user(void *user, const char *dir, const char *name)
+{
+   struct newest *n = user;
+   char path[1024];
+   SDL_PathInfo info;
+   const char *p;
+
+   /* Numbers only: "0" and "anonymous" aren't accounts. */
+   for (p = name; *p >= '0' && *p <= '9'; p++)
+      ;
+   if (!name[0] || *p || SDL_strcmp(name, "0") == 0)
+      return SDL_ENUM_CONTINUE;
+   SDL_snprintf(path, sizeof(path), "%s%s" PATH_SEP "config" PATH_SEP "localconfig.vdf", dir, name);
+   if (!SDL_GetPathInfo(path, &info))
+      info.modify_time = 0;
+   if (!n->best[0] || info.modify_time > n->time)
+   {
+      n->time = info.modify_time;
+      SDL_snprintf(n->best, sizeof(n->best), "%s%s" PATH_SEP "config", dir, name);
+   }
+   return SDL_ENUM_CONTINUE;
+}
+
+static bool pick_user(struct steam_install *steam)
+{
+   struct newest n;
+   char userdata[1024];
+
+   SDL_zero(n);
+   SDL_snprintf(userdata, sizeof(userdata), "%s" PATH_SEP "userdata", steam->root);
+   if (!SDL_EnumerateDirectory(userdata, on_user, &n) || !n.best[0])
+      return false;
+   SDL_strlcpy(steam->config, n.best, sizeof(steam->config));
+   return true;
+}
+
+#ifdef _WIN32
+
+static HKEY hive_of(const char *hive)
+{
+   return SDL_strcmp(hive, "HKLM") == 0 ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER;
+}
+
+static WCHAR *wide(const char *text)
+{
+   return text ? (WCHAR *)SDL_iconv_string("UTF-16LE", "UTF-8", text, SDL_strlen(text) + 1)
+      : NULL;
+}
+
+static void narrow(const WCHAR *text, char *dst, size_t size)
+{
+   char *s = SDL_iconv_string("UTF-8", "UTF-16LE", (const char *)text,
+         (SDL_wcslen(text) + 1) * sizeof(WCHAR));
+   SDL_strlcpy(dst, s ? s : "", size);
+   SDL_free(s);
+}
+
+bool platform_reg_string(const char *hive, const char *key, const char *value,
+      char *dst, size_t size)
+{
+   WCHAR *k = wide(key), *v = wide(value), buf[2048];
+   DWORD bytes = sizeof(buf);
+   LSTATUS st;
+
+   dst[0] = '\0';
+   st = RegGetValueW(hive_of(hive), k, v, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, NULL, buf, &bytes);
+   SDL_free(k);
+   SDL_free(v);
+   if (st != ERROR_SUCCESS)
+      return false;
+   narrow(buf, dst, size);
+   return dst[0] != '\0';
+}
+
+bool platform_reg_dword(const char *hive, const char *key, const char *value, unsigned *dst)
+{
+   WCHAR *k = wide(key), *v = wide(value);
+   DWORD d = 0, bytes = sizeof(d);
+   LSTATUS st = RegGetValueW(hive_of(hive), k, v, RRF_RT_REG_DWORD, NULL, &d, &bytes);
+
+   SDL_free(k);
+   SDL_free(v);
+   *dst = d;
+   return st == ERROR_SUCCESS;
+}
+
+void platform_reg_subkeys(const char *hive, const char *key,
+      void (*fn)(const char *name, void *user), void *user)
+{
+   WCHAR *k = wide(key), name[256];
+   HKEY h;
+   DWORD i, len;
+
+   if (RegOpenKeyExW(hive_of(hive), k, 0, KEY_READ, &h) != ERROR_SUCCESS)
+   {
+      SDL_free(k);
+      return;
+   }
+   SDL_free(k);
+   for (i = 0;; i++)
+   {
+      char utf8[512];
+      len = SDL_arraysize(name);
+      if (RegEnumKeyExW(h, i, name, &len, NULL, NULL, NULL, NULL) != ERROR_SUCCESS)
+         break;
+      narrow(name, utf8, sizeof(utf8));
+      fn(utf8, user);
+   }
+   RegCloseKey(h);
+}
+
+bool platform_find_steam(struct steam_install *steam)
+{
+   char *p;
+
+   SDL_zerop(steam);
+   if (!platform_reg_string("HKCU", "Software\\Valve\\Steam", "SteamPath", steam->root,
+            sizeof(steam->root))
+         && !platform_reg_string("HKLM", "SOFTWARE\\WOW6432Node\\Valve\\Steam", "InstallPath",
+            steam->root, sizeof(steam->root)))
+      return false;
+   /* The registry has it with '/'. */
+   for (p = steam->root; *p; p++)
+      if (*p == '/')
+         *p = '\\';
+   if (!platform_reg_string("HKCU", "Software\\Valve\\Steam", "SteamExe", steam->exe,
+            sizeof(steam->exe)))
+      SDL_snprintf(steam->exe, sizeof(steam->exe), "%s\\steam.exe", steam->root);
+   for (p = steam->exe; *p; p++)
+      if (*p == '/')
+         *p = '\\';
+   if (!pick_user(steam))
+   {
+      steam->root[0] = '\0';
+      return false;
+   }
+   return true;
+}
+
+bool platform_steam_running(const struct steam_install *steam)
+{
+   unsigned pid = 0;
+   HANDLE h;
+   DWORD code = 0;
+
+   if (!platform_reg_dword("HKCU", "Software\\Valve\\Steam\\ActiveProcess", "pid", &pid) || !pid)
+      return false;
+   if (!(h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)))
+      return false;
+   GetExitCodeProcess(h, &code);
+   CloseHandle(h);
+   return code == STILL_ACTIVE;
+}
+
+#else
+
+static bool find_root(struct steam_install *steam, const char *home, const char *rel, bool flatpak)
+{
+   char path[1024], real[1024];
+
+   SDL_snprintf(path, sizeof(path), "%s/%s", home, rel);
+   if (!realpath(path, real))
+      return false;
+   SDL_strlcpy(steam->root, real, sizeof(steam->root));
+   steam->flatpak = flatpak;
+   return pick_user(steam);
+}
+
+bool platform_find_steam(struct steam_install *steam)
+{
+   char home[1024];
+
+   SDL_zerop(steam);
+   platform_home(home, sizeof(home));
+   if (!find_root(steam, home, ".steam/steam", false)
+         && !find_root(steam, home, ".local/share/Steam", false)
+         && !find_root(steam, home, ".var/app/com.valvesoftware.Steam/.local/share/Steam", true))
+   {
+      steam->root[0] = '\0';
+      return false;
+   }
+   SDL_strlcpy(steam->exe, steam->flatpak ? "flatpak" : "steam", sizeof(steam->exe));
+   return true;
+}
+
+bool platform_steam_running(const struct steam_install *steam)
+{
+   char home[1024], path[1024], *text;
+   long pid;
+
+   platform_home(home, sizeof(home));
+   SDL_snprintf(path, sizeof(path), "%s/.steam/steam.pid", home);
+   if (!(text = SDL_LoadFile(path, NULL)))
+   {
+      SDL_snprintf(path, sizeof(path),
+            "%s/.var/app/com.valvesoftware.Steam/.steam/steam.pid", home);
+      if (!(text = SDL_LoadFile(path, NULL)))
+         return false;
+   }
+   pid = SDL_strtol(text, NULL, 10);
+   SDL_free(text);
+   return pid > 0 && kill((pid_t)pid, 0) == 0;
+}
+
+#endif
+
+#ifdef _WIN32
+/* DWM draws its shadow for a window whose frame reaches into the client
+ * area: a one-pixel margin is enough, and SDL keeps the frame itself
+ * hidden for a borderless window. */
+void platform_window_shadow(void *sdl_window)
+{
+   HWND hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(sdl_window),
+         SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+   MARGINS margins = { 1, 1, 1, 1 };
+
+   if (hwnd)
+      DwmExtendFrameIntoClientArea(hwnd, &margins);
+}
+/* The exe's icon at 256 (Windows scales a smaller one up), its colour
+ * bitmap read as 32-bit BGRA; an icon without alpha takes it from its
+ * mask. */
+bool platform_exe_icon(const char *exe, const char *png_path)
+{
+   WCHAR *w = wide(exe);
+   HICON icon = NULL;
+   UINT id = 0;
+   ICONINFO ii;
+   BITMAP bm;
+   BITMAPINFO bi;
+   SDL_Surface *s = NULL;
+   HDC dc;
+   bool ok = false;
+   int i, n;
+
+   if (!w)
+      return false;
+   n = (int)PrivateExtractIconsW(w, 0, 256, 256, &icon, &id, 1, 0);
+   SDL_free(w);
+   if (n != 1 || !icon)
+      return false;
+   if (!GetIconInfo(icon, &ii))
+   {
+      DestroyIcon(icon);
+      return false;
+   }
+   if (ii.hbmColor && GetObject(ii.hbmColor, sizeof(bm), &bm)
+         && (s = SDL_CreateSurface(bm.bmWidth, bm.bmHeight, SDL_PIXELFORMAT_BGRA32)))
+   {
+      SDL_zero(bi);
+      bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+      bi.bmiHeader.biWidth = bm.bmWidth;
+      bi.bmiHeader.biHeight = -bm.bmHeight;
+      bi.bmiHeader.biPlanes = 1;
+      bi.bmiHeader.biBitCount = 32;
+      bi.bmiHeader.biCompression = BI_RGB;
+      dc = GetDC(NULL);
+      if (s->pitch == bm.bmWidth * 4
+            && GetDIBits(dc, ii.hbmColor, 0, bm.bmHeight, s->pixels, &bi, DIB_RGB_COLORS))
+      {
+         Uint8 *p = s->pixels;
+         bool alpha = false;
+         for (i = 0; i < bm.bmWidth * bm.bmHeight && !alpha; i++)
+            alpha = p[i * 4 + 3] != 0;
+         if (!alpha && ii.hbmMask)
+         {
+            Uint8 *mask = SDL_malloc((size_t)bm.bmWidth * bm.bmHeight * 4);
+            if (mask && GetDIBits(dc, ii.hbmMask, 0, bm.bmHeight, mask, &bi, DIB_RGB_COLORS))
+               for (i = 0; i < bm.bmWidth * bm.bmHeight; i++)
+                  p[i * 4 + 3] = mask[i * 4] ? 0 : 255;
+            SDL_free(mask);
+         }
+         ok = SDL_SavePNG(s, png_path);
+      }
+      ReleaseDC(NULL, dc);
+      SDL_DestroySurface(s);
+   }
+   if (ii.hbmColor)
+      DeleteObject(ii.hbmColor);
+   if (ii.hbmMask)
+      DeleteObject(ii.hbmMask);
+   DestroyIcon(icon);
+   return ok;
+}
+#else
+void platform_window_shadow(void *sdl_window)
+{
+}
+
+bool platform_exe_icon(const char *exe, const char *png_path)
+{
+   return false;
+}
+#endif
+
+static void run(const struct steam_install *steam, bool shutdown)
+{
+   const char *args[6];
+   int n = 0;
+   SDL_Process *p;
+
+   args[n++] = steam->exe;
+   if (steam->flatpak)
+   {
+      args[n++] = "run";
+      args[n++] = "com.valvesoftware.Steam";
+   }
+   if (shutdown)
+      args[n++] = "-shutdown";
+   args[n] = NULL;
+   /* Not waited for: Steam keeps running after FuseBox closes. */
+   if ((p = SDL_CreateProcess(args, false)))
+      SDL_DestroyProcess(p);
+   else
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't run %s: %s", steam->exe, SDL_GetError());
+}
+
+void platform_steam_shutdown(const struct steam_install *steam)
+{
+   run(steam, true);
+}
+
+void platform_steam_start(const struct steam_install *steam)
+{
+   run(steam, false);
+}

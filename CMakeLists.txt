@@ -22,10 +22,14 @@ add_library(fusebox_core STATIC
    src/credentials.c
    src/json.c
    src/vdf.c
+   src/platform.c
    src/jobs.c
 )
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl)
+if(WIN32)
+   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
+endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
    foreach(t fusebox_core)
