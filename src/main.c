@@ -223,7 +223,14 @@ struct fill_job
 {
    int index;
    Uint8 what;
+   /* Counted in list_fills. */
+   bool listed;
 };
+
+/* Icons the list's rows wait for: only so many at once, so rows scrolled
+ * past don't hold up the ones shown. */
+#define LIST_FILLS 16
+static SDL_AtomicInt list_fills;
 
 /* The most popular art where the game has none, so nothing is left blank;
  * picking in the window replaces it. */
@@ -233,7 +240,17 @@ static void job_fill(void *data)
    int t;
 
    if (j->what == FILL_ICON)
+   {
+      bool cover;
       sgdb_fill(j->index, true, ART_ICON, jobs_abort());
+      /* Without one, the list shows its cover. */
+      library_lock();
+      cover = library_game(j->index)->rom[0] && !library_game(j->index)->art[ART_ICON].path[0]
+         && library_game(j->index)->sgdb_id;
+      library_unlock();
+      if (cover)
+         sgdb_fill(j->index, true, ART_COVER, jobs_abort());
+   }
    else if (j->what == FILL_ALL)
       sgdb_fill(j->index, false, ART_COVER, jobs_abort());
    else
@@ -243,14 +260,16 @@ static void job_fill(void *data)
    library_lock();
    library_game(j->index)->filling &= (Uint8)~j->what;
    library_unlock();
+   if (j->listed)
+      SDL_AddAtomicInt(&list_fills, -1);
    /* Quietly: the status line keeps what the scan found. An empty status
-    * only wakes the window to show the new art. */
+    * only wakes the window to show the new art (and ask for more). */
    post_status("%s", "");
    SDL_free(j);
 }
 
 /* Looks art up, unless that's already waiting. Under the library's lock. */
-static void queue_fill(int index, Uint8 what, enum job_level level, bool first)
+static void queue_fill(int index, Uint8 what, enum job_level level, bool first, bool listed)
 {
    struct game *g = library_game(index);
    struct fill_job *j;
@@ -260,6 +279,9 @@ static void queue_fill(int index, Uint8 what, enum job_level level, bool first)
    g->filling |= what;
    j->index = index;
    j->what = what;
+   j->listed = listed;
+   if (listed)
+      SDL_AddAtomicInt(&list_fills, 1);
    jobs_add(job_fill, j, level, first);
 }
 
@@ -277,16 +299,18 @@ static void start_fill(void)
       const struct game *g = library_game(i);
       bool missing = false;
 
-      if (!g->installed)
+      /* ROM collections are big: theirs is looked up as they're shown
+       * (fill_shown), or ticked. */
+      if (!g->installed || (g->rom[0] && !g->selected))
          continue;
       for (t = 0; t < ART_TYPES; t++)
          missing |= !g->art[t].path[0];
       /* An icon FuseBox filled in, where the game's own exe has one. */
-      if (!g->art[ART_ICON].path[0]
-            || (g->game_exe[0] && !g->art[ART_ICON].picked && g->art[ART_ICON].sgdb_id != 0))
-         queue_fill(i, FILL_ICON, JOB_ICON, false);
+      if (!g->rom[0] && (!g->art[ART_ICON].path[0]
+            || (g->game_exe[0] && !g->art[ART_ICON].picked && g->art[ART_ICON].sgdb_id != 0)))
+         queue_fill(i, FILL_ICON, JOB_ICON, false, false);
       if (missing)
-         queue_fill(i, FILL_ALL, JOB_REST, false);
+         queue_fill(i, FILL_ALL, JOB_REST, false, false);
    }
    library_unlock();
 }
@@ -1252,15 +1276,22 @@ static void tile_size(enum art_type t, float *w, float *h)
    *h = S(sizes[t][1]);
 }
 
-/* A game's missing art is looked up the first time it's opened, what's
- * shown first: its icon, then its art of the kind shown. Under the
- * library's lock. */
-static void fill_once(int index, Uint8 what, enum job_level level, bool first)
+/* A game's missing art is looked up the first time it's shown, what's
+ * shown first: a ROM's icon in the list; when it's opened its icon, its art
+ * of the kind shown, then the rest. Under the library's lock. */
+static void fill_once(int index, Uint8 what, enum job_level level, bool first, bool listed)
 {
    if (index < 0 || index >= app.covers_alloc || (app.filled[index] & what))
       return;
    app.filled[index] |= what;
-   queue_fill(index, what, level, first);
+   queue_fill(index, what, level, first, listed);
+}
+
+static void fill_row(int index, const struct game *g)
+{
+   if (g->rom[0] && !g->art[ART_ICON].path[0] && !g->art[ART_COVER].path[0] && sgdb_has_key()
+         && SDL_GetAtomicInt(&list_fills) < LIST_FILLS)
+      fill_once(index, FILL_ICON, JOB_ICON, false, true);
 }
 
 static void fill_open(int index, const struct game *g)
@@ -1268,9 +1299,11 @@ static void fill_open(int index, const struct game *g)
    if (!g->installed || !sgdb_has_key())
       return;
    if (!g->art[ART_ICON].path[0])
-      fill_once(index, FILL_ICON, JOB_ICON, true);
+      fill_once(index, FILL_ICON, JOB_ICON, true, false);
    if (!g->art[app.tab].path[0] && app.tab != ART_ICON)
-      fill_once(index, (Uint8)(FILL_TYPE << app.tab), JOB_SELECTED, true);
+      fill_once(index, (Uint8)(FILL_TYPE << app.tab), JOB_SELECTED, true, false);
+   if (g->rom[0])
+      fill_once(index, FILL_ALL, JOB_REST, true, false);
 }
 
 /* It was renamed or matched to another game: what wasn't found may be. */
@@ -1651,6 +1684,7 @@ static void draw_sidebar(float w)
             g->selected = !g->selected;
       }
 
+      fill_row(index, g);
       pic = list_art(index, g);
       if (pic)
          draw_cover(pic->tex, pic->w, pic->h, x + S(38), ry + S(8), S(28), S(28), 0, 1);
