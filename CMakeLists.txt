@@ -23,6 +23,7 @@ add_library(fusebox_core STATIC
    src/json.c
    src/vdf.c
    src/library.c
+   src/sgdb.c
    src/platform.c
    src/jobs.c
 )
