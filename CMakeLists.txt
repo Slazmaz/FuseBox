@@ -66,6 +66,7 @@ add_library(fusebox_core STATIC
    src/rahash.c
    src/disc.c
    src/crypto.c
+   src/steamui.c
 )
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)

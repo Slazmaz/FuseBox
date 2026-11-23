@@ -26,9 +26,10 @@ struct steam_install
 
 bool platform_find_steam(struct steam_install *steam);
 bool platform_steam_running(const struct steam_install *steam);
-/* Asks Steam to quit, or starts it; returns at once. */
+/* Asks Steam to quit, or starts it (with its interface's debugging port
+ * open on this computer, unless 0); returns at once. */
 void platform_steam_shutdown(const struct steam_install *steam);
-void platform_steam_start(const struct steam_install *steam);
+void platform_steam_start(const struct steam_install *steam, int port);
 
 /* The home folder, without a trailing separator. */
 void platform_home(char *dst, size_t size);

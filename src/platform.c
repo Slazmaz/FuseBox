@@ -338,9 +338,10 @@ bool platform_exe_icon(const char *exe, const char *png_path)
 }
 #endif
 
-static void run(const struct steam_install *steam, bool shutdown)
+static void run(const struct steam_install *steam, bool shutdown, int port)
 {
-   const char *args[6];
+   const char *args[8];
+   char number[16];
    int n = 0;
    SDL_Process *p;
 
@@ -352,6 +353,13 @@ static void run(const struct steam_install *steam, bool shutdown)
    }
    if (shutdown)
       args[n++] = "-shutdown";
+   if (port)
+   {
+      SDL_snprintf(number, sizeof(number), "%d", port);
+      args[n++] = "-cef-enable-debugging";
+      args[n++] = "-devtools-port";
+      args[n++] = number;
+   }
    args[n] = NULL;
    /* Not waited for: Steam keeps running after FuseBox closes. */
    if ((p = SDL_CreateProcess(args, false)))
@@ -362,10 +370,10 @@ static void run(const struct steam_install *steam, bool shutdown)
 
 void platform_steam_shutdown(const struct steam_install *steam)
 {
-   run(steam, true);
+   run(steam, true, 0);
 }
 
-void platform_steam_start(const struct steam_install *steam)
+void platform_steam_start(const struct steam_install *steam, int port)
 {
-   run(steam, false);
+   run(steam, false, port);
 }

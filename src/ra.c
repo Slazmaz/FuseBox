@@ -3,6 +3,7 @@
 #include "http.h"
 #include "json.h"
 #include "library.h"
+#include "platform.h"
 #include "rahash.h"
 
 #include <SDL3/SDL.h>
@@ -15,6 +16,11 @@
 #define CONSOLES 128
 /* Progress asked for less than this ago isn't asked for again. */
 #define FRESH_MS (5 * 60 * 1000)
+/* A saved list's older percentages are looked up again (seconds). */
+#define LIST_AGE_S (7 * 24 * 3600)
+/* From here on, ids aren't achievements: RetroAchievements puts a warning
+ * in the list of emulators it doesn't know. */
+#define FIRST_WARNING_ID 101000000u
 
 static struct
 {
@@ -22,6 +28,8 @@ static struct
    /* Under lock. */
    SDL_Mutex *lock;
    char user[128], token[128];
+   bool in_steam;
+   int port;
 
    /* One refresh at a time; what it keeps: when each console's progress
     * was last asked for (ms), and whether its games were. */
@@ -30,8 +38,16 @@ static struct
    bool listed[CONSOLES];
 } ra;
 
+static void settings_path(char *dst, size_t size)
+{
+   SDL_snprintf(dst, size, "%s" PATH_SEP "retroachievements.json", ra.config);
+}
+
 void ra_init(const char *config_dir)
 {
+   char path[1100], *text;
+   struct json *root;
+
    SDL_strlcpy(ra.config, config_dir, sizeof(ra.config));
    if (!ra.lock)
    {
@@ -42,6 +58,77 @@ void ra_init(const char *config_dir)
    if (!credentials_get(ra.config, KEY_USER, ra.user, sizeof(ra.user))
          || !credentials_get(ra.config, KEY_TOKEN, ra.token, sizeof(ra.token)))
       ra.user[0] = ra.token[0] = '\0';
+   settings_path(path, sizeof(path));
+   text = SDL_LoadFile(path, NULL);
+   root = text ? json_parse(text) : NULL;
+   ra.in_steam = !root || json_bool(root, "in_steam", true);
+   ra.port = root ? (int)json_num(root, "port", 0) : 0;
+   SDL_UnlockMutex(ra.lock);
+   json_free(root);
+   SDL_free(text);
+}
+
+/* Under the lock. */
+static void save_settings(void)
+{
+   char path[1100];
+   SDL_IOStream *io;
+
+   SDL_CreateDirectory(ra.config);
+   settings_path(path, sizeof(path));
+   if (!(io = SDL_IOFromFile(path, "wb")))
+   {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
+      return;
+   }
+   SDL_IOprintf(io, "{\n  \"in_steam\": %s,\n  \"port\": %d\n}\n",
+         ra.in_steam ? "true" : "false", ra.port);
+   SDL_CloseIO(io);
+}
+
+bool ra_in_steam(void)
+{
+   bool on;
+
+   SDL_LockMutex(ra.lock);
+   on = ra.in_steam;
+   SDL_UnlockMutex(ra.lock);
+   return on;
+}
+
+void ra_set_in_steam(bool on)
+{
+   SDL_LockMutex(ra.lock);
+   ra.in_steam = on;
+   save_settings();
+   SDL_UnlockMutex(ra.lock);
+}
+
+bool ra_active(void)
+{
+   bool active;
+
+   SDL_LockMutex(ra.lock);
+   active = ra.in_steam && ra.token[0];
+   SDL_UnlockMutex(ra.lock);
+   return active;
+}
+
+int ra_port(void)
+{
+   int port;
+
+   SDL_LockMutex(ra.lock);
+   port = ra.port;
+   SDL_UnlockMutex(ra.lock);
+   return port;
+}
+
+void ra_set_port(int port)
+{
+   SDL_LockMutex(ra.lock);
+   ra.port = port;
+   save_settings();
    SDL_UnlockMutex(ra.lock);
 }
 
@@ -378,4 +465,108 @@ bool ra_refresh(bool force, SDL_AtomicInt *abort)
    SDL_free(items);
    SDL_UnlockMutex(ra.run);
    return ok && !(abort && SDL_GetAtomicInt(abort));
+}
+
+/* --- A game's list ------------------------------------------------------ */
+
+/* The list saved for the game, if it's for this account and these numbers.
+ * Its file is a line about it, then the list. */
+static char *saved_list(const char *path, const char *user, unsigned total, unsigned unlocked)
+{
+   char *text = SDL_LoadFile(path, NULL), *line, *list = NULL;
+   struct json *about;
+   SDL_Time now = 0;
+
+   if (!text || !(line = SDL_strchr(text, '\n')))
+   {
+      SDL_free(text);
+      return NULL;
+   }
+   *line++ = '\0';
+   SDL_GetCurrentTime(&now);
+   about = json_parse(text);
+   if (about && SDL_strcmp(json_str(about, "user", ""), user) == 0
+         && json_num(about, "total", -1) == total && json_num(about, "unlocked", -1) == unlocked
+         && (double)(now / SDL_NS_PER_SECOND) - json_num(about, "time", 0) < LIST_AGE_S)
+      list = SDL_strdup(line);
+   json_free(about);
+   SDL_free(text);
+   return list;
+}
+
+static bool is_unlocked(const struct json *unlocks, unsigned id)
+{
+   const struct json *list = json_get(unlocks, "UserUnlocks"), *o;
+
+   for (o = list ? list->child : NULL; o; o = o->next)
+      if (o->type == JSON_NUMBER && (unsigned)o->num == id)
+         return true;
+   return false;
+}
+
+char *ra_list(unsigned id, unsigned total, unsigned unlocked, SDL_AtomicInt *abort)
+{
+   char path[1100], request[64], user[128], *list;
+   struct json *game, *unlocks = NULL, *achievements, *o;
+   SDL_IOStream *io;
+   SDL_Time now = 0;
+   bool first = true;
+
+   if (!ra_user(user, sizeof(user)))
+      return NULL;
+   SDL_snprintf(path, sizeof(path), "%sachievements" PATH_SEP "%u.json", library_dir(), id);
+   if ((list = saved_list(path, user, total, unlocked)))
+      return list;
+
+   SDL_snprintf(request, sizeof(request), "patch&g=%u", id);
+   game = ask(request, abort);
+   SDL_snprintf(request, sizeof(request), "unlocks&g=%u&h=0", id);
+   if (!game || !(unlocks = ask(request, abort)) || !(io = SDL_IOFromDynamicMem()))
+   {
+      json_free(game);
+      json_free(unlocks);
+      return NULL;
+   }
+   SDL_WriteU8(io, '[');
+   achievements = json_get(json_get(game, "PatchData"), "Achievements");
+   for (o = achievements ? achievements->child : NULL; o; o = o->next)
+   {
+      unsigned aid = (unsigned)number(o, "ID", 0);
+
+      /* 3: its own set, not those still being made. */
+      if ((int)number(o, "Flags", 0) != 3 || !aid || aid >= FIRST_WARNING_ID)
+         continue;
+      SDL_IOprintf(io, "%s[%u,", first ? "" : ",", aid);
+      json_write_string(io, json_str(o, "Title", ""));
+      SDL_WriteU8(io, ',');
+      json_write_string(io, json_str(o, "Description", ""));
+      SDL_WriteU8(io, ',');
+      json_write_string(io, json_str(o, "BadgeName", ""));
+      SDL_IOprintf(io, ",%.2f,%d]", number(o, "Rarity", 0), is_unlocked(unlocks, aid));
+      first = false;
+   }
+   SDL_WriteU8(io, ']');
+   SDL_WriteU8(io, '\0');
+   json_free(game);
+   json_free(unlocks);
+   list = SDL_strdup(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""));
+   SDL_CloseIO(io);
+
+   {
+      char dir[1100];
+      SDL_snprintf(dir, sizeof(dir), "%sachievements", library_dir());
+      SDL_CreateDirectory(dir);
+   }
+   if (list && (io = SDL_IOFromFile(path, "wb")))
+   {
+      SDL_GetCurrentTime(&now);
+      SDL_IOprintf(io, "{\"user\": ");
+      json_write_string(io, user);
+      SDL_IOprintf(io, ", \"total\": %u, \"unlocked\": %u, \"time\": %lld}\n", total, unlocked,
+            (long long)(now / SDL_NS_PER_SECOND));
+      SDL_WriteIO(io, list, SDL_strlen(list));
+      SDL_CloseIO(io);
+   }
+   return list;
 }

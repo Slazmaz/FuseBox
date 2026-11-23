@@ -16,6 +16,7 @@
 #include "scan.h"
 #include "sgdb.h"
 #include "steam.h"
+#include "steamui.h"
 #include "ui.h"
 
 #include <SDL3/SDL.h>
@@ -663,37 +664,63 @@ static bool wanted_in_steam(const struct game *g)
 
 struct achievements_job
 {
-   /* Asked by the user: ask RetroAchievements whatever it said minutes
-    * ago. */
-   bool force;
+   /* Steam was just started: give it time. Asked by the user: ask
+    * RetroAchievements whatever it said minutes ago. */
+   bool wait, force;
 };
 
-/* RetroAchievements of the ROMs. */
+/* RetroAchievements of the ROMs, then Steam given them. */
 static void job_achievements(void *data)
 {
    struct achievements_job *j = data;
    struct msg *m = new_msg(MSG_ACHIEVEMENTS);
-   char user[128];
+   Uint64 until = SDL_GetTicks() + (j->wait ? 180000 : 0);
+   char user[128], note[128];
+   enum steamui shown;
    bool ok = ra_refresh(j->force, jobs_abort());
+   int games = 0;
 
    library_save();
+   note[0] = '\0';
+   if (ra_active())
+   {
+      while ((shown = steamui_push(&games, jobs_abort())) <= STEAMUI_WAIT
+            && SDL_GetTicks() < until && !SDL_GetAtomicInt(jobs_abort()))
+         SDL_Delay(1000);
+      if (shown == STEAMUI_OK)
+         SDL_snprintf(note, sizeof(note), "Steam shows the achievements of %d game%s", games,
+               games == 1 ? "" : "s");
+      else if (shown == STEAMUI_UNSUPPORTED)
+         SDL_strlcpy(note, "This version of Steam isn't supported", sizeof(note));
+      else if (shown == STEAMUI_WAIT)
+         SDL_strlcpy(note, "Steam isn't ready yet", sizeof(note));
+      else
+         SDL_strlcpy(note, "Restart Steam to show them", sizeof(note));
+   }
+   if (!ok && ra_user(user, sizeof(user)))
+      SDL_strlcpy(note, "Couldn't get everything from RetroAchievements", sizeof(note));
    if (m)
    {
-      if (!ok && ra_user(user, sizeof(user)))
-         SDL_strlcpy(m->text, "Couldn't get everything from RetroAchievements", sizeof(m->text));
+      SDL_strlcpy(m->text, note, sizeof(m->text));
       post(m);
    }
    SDL_free(j);
 }
 
-static void start_achievements(bool force)
+static void start_achievements(bool wait, bool force)
 {
    struct achievements_job *j = SDL_calloc(1, sizeof(*j));
 
    if (!j)
       return;
+   j->wait = wait;
    j->force = force;
    jobs_add(job_achievements, j, JOB_NOW, false);
+}
+
+static void job_clear_steam(void *data)
+{
+   steamui_clear(jobs_abort());
 }
 
 struct login_job
@@ -766,7 +793,11 @@ static void job_steam(void *data)
    }
    library_save();
    if (was_running)
-      platform_steam_start(st);
+   {
+      steamui_start(st);
+      if (ra_active())
+         start_achievements(true, false);
+   }
    SDL_free(j);
 }
 
@@ -890,7 +921,7 @@ static struct
    char filter[128];
    char key[128];
    /* Logging in to RetroAchievements, and what came of it; and how far
-    * looking up achievements is. */
+    * showing achievements in Steam is. */
    char ra_user[128], ra_password[256];
    bool ra_busy;
    char ra_error[128], ra_note[128];
@@ -2472,12 +2503,15 @@ static float draw_rom_folders(float x, float y, float w)
    return h;
 }
 
-/* RetroAchievements: logging in. Returns the card's height. */
+static bool toggle(float x, float y, bool on, bool modal);
+
+/* RetroAchievements: logging in, and whether Steam shows them. Returns the
+ * card's height. */
 static float draw_achievements_card(float x, float y, float w)
 {
    char user[128], line[200];
-   bool in = ra_user(user, sizeof(user));
-   float h = S(in ? 176 : 150);
+   bool in = ra_user(user, sizeof(user)), on = ra_in_steam();
+   float h = S(in ? 236 : 186) + (in && on ? S(52) : in && app.ra_note[0] ? S(26) : 0);
    float cy, bw, fw, rx = x + w - S(24);
 
    cy = settings_card(x, y, w, h, "RetroAchievements");
@@ -2499,6 +2533,8 @@ static float draw_achievements_card(float x, float y, float w)
       if (button(rx - bw, cy + S(30), bw, S(44), "Log in", true,
                app.ra_user[0] && app.ra_password[0] && !app.ra_busy, false))
          log_in();
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(98), UI_LEFT, w - S(48), C_DIM, 1,
+            "Also shows achievements in Steam, through a debugging port on this computer.");
       return h;
    }
 
@@ -2509,16 +2545,45 @@ static float draw_achievements_card(float x, float y, float w)
    {
       ra_logout();
       app.ra_note[0] = '\0';
+      jobs_add(job_clear_steam, NULL, JOB_NOW, false);
    }
    cy += S(56);
-   bw = button_w("Refresh");
-   ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_DIM, 1,
-         app.ra_note);
-   if (button(rx - bw, cy, bw, S(40), "Refresh", false, true, false))
+   ui_rect(x + S(20), cy, w - S(40), S(100), S(12), 1, 1, 1, 0.04f);
+   ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1,
+         "Show achievements in Steam");
+   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(43), UI_LEFT, w - S(140), C_DIM, 1,
+         "On ROMs' pages in its library.");
+   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(61), UI_LEFT, w - S(140), C_DIM, 1,
+         "Steam then keeps a debugging port open: other programs on this");
+   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(79), UI_LEFT, w - S(140), C_DIM, 1,
+         "computer could control Steam through it.");
+   if (toggle(rx - S(12) - S(44), cy + S(38), on, false))
    {
-      SDL_strlcpy(app.ra_note, "Refreshing...", sizeof(app.ra_note));
-      start_achievements(true);
+      ra_set_in_steam(!on);
+      app.ra_note[0] = '\0';
+      if (on)
+      {
+         /* The port itself stays until Steam restarts. */
+         SDL_strlcpy(app.ra_note, "Restart Steam to close its port", sizeof(app.ra_note));
+         jobs_add(job_clear_steam, NULL, JOB_NOW, false);
+      }
+      else
+         start_achievements(false, false);
    }
+   cy += S(112);
+   if (on)
+   {
+      bw = button_w("Refresh");
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_DIM, 1,
+            app.ra_note);
+      if (button(rx - bw, cy, bw, S(40), "Refresh", false, true, false))
+      {
+         SDL_strlcpy(app.ra_note, "Refreshing...", sizeof(app.ra_note));
+         start_achievements(false, true);
+      }
+   }
+   else if (app.ra_note[0])
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(12), UI_LEFT, w - S(48), C_DIM, 1, app.ra_note);
    return h;
 }
 
@@ -2628,7 +2693,7 @@ static void search_matches(void)
 }
 
 /* An on/off switch; true when clicked. */
-static bool toggle(float x, float y, bool on)
+static bool toggle(float x, float y, bool on, bool modal)
 {
    float w = S(44), h = S(24);
 
@@ -2637,7 +2702,7 @@ static bool toggle(float x, float y, bool on)
    else
       ui_rect(x, y, w, h, h / 2, 1, 1, 1, 0.15f);
    ui_rect(on ? x + w - h + S(3) : x + S(3), y + S(3), h - S(6), h - S(6), h, C_TEXT, 1);
-   return clicked_in(x - S(4), y - S(4), w + S(8), h + S(8), true);
+   return clicked_in(x - S(4), y - S(4), w + S(8), h + S(8), modal);
 }
 
 static void open_game_settings(void)
@@ -2689,7 +2754,7 @@ static void draw_game_settings(void)
       ui_text(UI_BOLD, S(15), x + S(36), ry + S(19), UI_LEFT, w - S(140), C_TEXT, 1, labels[i][0]);
       ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(140), C_DIM, 1,
             labels[i][1]);
-      if (toggle(x + w - S(36) - S(44), ry + S(16), values[i]))
+      if (toggle(x + w - S(36) - S(44), ry + S(16), values[i], true))
       {
          library_lock();
          if (library_game(app.selected))
@@ -2937,7 +3002,7 @@ static void handle_msg(struct msg *m)
          SDL_strlcpy(app.status, m->text, sizeof(app.status));
          app.view_built_for = -1;
          start_fill();
-         start_achievements(false);
+         start_achievements(false, false);
          if (app.scan_again && !app.busy)
          {
             app.scan_again = false;
@@ -3062,7 +3127,7 @@ static void handle_msg(struct msg *m)
          if (m->count)
          {
             app.ra_user[0] = '\0';
-            start_achievements(true);
+            start_achievements(false, true);
          }
          break;
       case MSG_ACHIEVEMENTS:
