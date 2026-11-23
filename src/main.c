@@ -2370,6 +2370,7 @@ int main(int argc, char **argv)
    char fonts[1024], log_path[1100], config[1100];
    const char *base;
    bool running = true;
+   Uint64 saved_at = 0;
    struct msg *m;
    int i;
 
@@ -2509,7 +2510,12 @@ int main(int argc, char **argv)
          app.redraw = false;
          draw();
       }
-      library_save();
+      /* Not for every image of a batch: the file can be big. */
+      if (SDL_GetTicks() - saved_at >= 2000)
+      {
+         library_save();
+         saved_at = SDL_GetTicks();
+      }
    }
 
    jobs_quit();
