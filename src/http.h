@@ -22,6 +22,10 @@ int http_request(const char *url, const char *post, const char *header,
  * only left there on 200. */
 int http_download(const char *url, const char *path, SDL_AtomicInt *abort,
       SDL_AtomicInt *percent);
+/* Opens the ws:// address, sends the text and returns the first answer;
+ * SDL_free it. NULL on a failure. For this computer only: never through a
+ * proxy. */
+char *http_ws_ask(const char *url, const char *text, SDL_AtomicInt *abort, int timeout_s);
 /* Percent-encoded copy of a URL path or query part; SDL_free it. */
 char *http_escape(const char *text);
 /* At exit, once no thread uses HTTP any more. */

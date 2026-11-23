@@ -291,6 +291,66 @@ int http_download(const char *url, const char *path, SDL_AtomicInt *abort,
    return (int)status;
 }
 
+char *http_ws_ask(const char *url, const char *text, SDL_AtomicInt *abort, int timeout_s)
+{
+   struct buffer b = { NULL, 0, 0, abort };
+   Uint64 until = SDL_GetTicks() + (Uint64)timeout_s * 1000;
+   size_t left = SDL_strlen(text), n;
+   CURL *curl;
+   CURLcode res;
+   bool done = false;
+
+   if (!init() || aborted(&b) || !(curl = curl_easy_init()))
+      return NULL;
+   curl_easy_setopt(curl, CURLOPT_URL, url);
+   curl_easy_setopt(curl, CURLOPT_NOPROXY, "*");
+   curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 2L);
+   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 5L);
+   curl_easy_setopt(curl, CURLOPT_TIMEOUT, (long)timeout_s);
+   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+   res = curl_easy_perform(curl);
+   while ((res == CURLE_OK || res == CURLE_AGAIN) && left && !aborted(&b)
+         && SDL_GetTicks() < until)
+   {
+      n = 0;
+      res = curl_ws_send(curl, text, left, &n, 0, CURLWS_TEXT);
+      text += n;
+      left -= n;
+      if (res == CURLE_AGAIN)
+         SDL_Delay(2);
+   }
+   /* Its answer, in as many pieces as it comes. */
+   while (res == CURLE_OK && !left && !done && !aborted(&b) && SDL_GetTicks() < until)
+   {
+      const struct curl_ws_frame *meta = NULL;
+      char piece[16384];
+
+      n = 0;
+      res = curl_ws_recv(curl, piece, sizeof(piece), &n, &meta);
+      if (res == CURLE_AGAIN)
+      {
+         res = CURLE_OK;
+         SDL_Delay(2);
+      }
+      else if (res == CURLE_OK && meta && (meta->flags & (CURLWS_TEXT | CURLWS_CONT)))
+      {
+         if (on_data(piece, 1, n, &b) != n)
+            break;
+         done = !meta->bytesleft && !(meta->flags & CURLWS_CONT);
+      }
+   }
+   if (res != CURLE_OK)
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "HTTP: %.*s: %s", host_length(url), url,
+            curl_easy_strerror(res));
+   curl_easy_cleanup(curl);
+   if (!done)
+   {
+      SDL_free(b.data);
+      return NULL;
+   }
+   return b.data;
+}
+
 char *http_escape(const char *text)
 {
    char *escaped, *copy;
