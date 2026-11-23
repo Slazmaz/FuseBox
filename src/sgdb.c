@@ -190,7 +190,14 @@ static bool exe_icon(int index)
       SDL_RemovePath(tmp);
       return false;
    }
-   return library_set_art(index, ART_ICON, tmp, "png", 0);
+   /* Not over what the user picked meanwhile. */
+   library_lock();
+   want = !library_game(index)->art[ART_ICON].picked
+      && library_set_art(index, ART_ICON, tmp, "png", 0);
+   library_unlock();
+   if (!want)
+      SDL_RemovePath(tmp);
+   return want;
 }
 
 int sgdb_fill(int index, bool only_type_set, enum art_type only_type, SDL_AtomicInt *abort)
@@ -237,9 +244,16 @@ int sgdb_fill(int index, bool only_type_set, enum art_type only_type, SDL_Atomic
       if ((n = sgdb_list(game_id, (enum art_type)t, &arts, abort)) > 0)
       {
          library_tmp_path(index, (enum art_type)t, tmp, sizeof(tmp));
-         if (sgdb_download(arts[0].url, tmp, abort)
-               && library_set_art(index, (enum art_type)t, tmp, arts[0].ext, arts[0].id))
-            saved++;
+         if (sgdb_download(arts[0].url, tmp, abort))
+         {
+            /* Unless it has some by now (the user picked one). */
+            library_lock();
+            if (!library_game(index)->art[t].path[0])
+               saved += library_set_art(index, (enum art_type)t, tmp, arts[0].ext, arts[0].id);
+            else
+               SDL_RemovePath(tmp);
+            library_unlock();
+         }
       }
       SDL_free(arts);
    }
