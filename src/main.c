@@ -248,7 +248,7 @@ static void job_fill(void *data)
 static void start_fill(void)
 {
    if (sgdb_has_key() && SDL_CompareAndSwapAtomicInt(&filling, 0, 1))
-      jobs_add(job_fill, NULL, false);
+      jobs_add(job_fill, NULL, JOB_REST, false);
 }
 
 struct cover_job
@@ -971,7 +971,7 @@ static GLuint art_texture(struct art_tex *t, int index, const struct game *g, en
          j->max_w = max_w;
          j->max_h = max_h;
          SDL_strlcpy(j->path, path, sizeof(j->path));
-         jobs_add(job_cover, j, slot >= 0);
+         jobs_add(job_cover, j, JOB_NOW, slot >= 0);
       }
    }
    return t->tex;
@@ -1037,7 +1037,7 @@ static void picker_open(void)
    j->index = app.selected;
    j->type = app.tab;
    app.pick_loading = true;
-   jobs_add(job_list, j, true);
+   jobs_add(job_list, j, JOB_SELECTED, true);
 }
 
 static void on_art_list(struct msg *m)
@@ -1066,7 +1066,7 @@ static void on_art_list(struct msg *m)
       j->gen = m->gen;
       j->item = i;
       SDL_strlcpy(j->url, app.items[i].art.thumb, sizeof(j->url));
-      jobs_add(job_thumb, j, false);
+      jobs_add(job_thumb, j, JOB_OPTIONS, false);
    }
    SDL_free(m->ptr);
 }
@@ -1103,7 +1103,7 @@ static void start_steam_job(bool close_steam)
    j->close_steam = close_steam;
    app.busy = true;
    app.steam_note[0] = '\0';
-   jobs_add(job_steam, j, false);
+   jobs_add(job_steam, j, JOB_NOW, true);
 }
 
 /* The Open dialog's answer, on whatever thread SDL calls it from: handed
@@ -1132,7 +1132,7 @@ static void rescan(void)
 {
    /* The status line keeps the last count until the new one is in. */
    app.scanned = false;
-   jobs_add(job_scan, NULL, true);
+   jobs_add(job_scan, NULL, JOB_NOW, true);
 }
 
 /* Icons the font has no symbol for, made at the exact pixel size they're
@@ -1810,7 +1810,7 @@ static void draw_game(float x, float y, float w, float h)
             j->index = app.selected;
             j->type = app.tab;
             j->art = it->art;
-            jobs_add(job_choose, j, true);
+            jobs_add(job_choose, j, JOB_NOW, true);
          }
       }
    }
@@ -1905,7 +1905,7 @@ static void search_matches(void)
    }
    SDL_strlcpy(j->name, app.match, sizeof(j->name));
    app.matching = true;
-   jobs_add(job_matches, j, true);
+   jobs_add(job_matches, j, JOB_NOW, true);
 }
 
 /* An on/off switch; true when clicked. */
@@ -2418,8 +2418,8 @@ int main(int argc, char **argv)
    for (i = 0; i < ART_TYPES; i++)
       app.detail[i].game = -1;
    SDL_strlcpy(app.status, "Looking for games...", sizeof(app.status));
-   jobs_init(4);
-   jobs_add(job_scan, NULL, true);
+   jobs_init(8);
+   jobs_add(job_scan, NULL, JOB_NOW, true);
    SDL_ShowWindow(app.window);
    SDL_StopTextInput(app.window);
    app.redraw = true;
