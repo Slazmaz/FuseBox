@@ -1381,7 +1381,7 @@ static float stroke_distance(enum icon icon, float fx, float fy, float half)
 static float stroke_width(enum icon icon, int px)
 {
    if (icon == ICON_CHECK)
-      return px * 0.13f;
+      return px * 0.15f;
    return S(icon == ICON_GEAR ? 1.3f : 1.5f);
 }
 
@@ -1436,7 +1436,6 @@ static Uint32 icon_glyph(enum icon icon, float *em)
       case ICON_MIN: *em = 0.6f; return 0xE921;
       case ICON_MAX: *em = 0.6f; return 0xE922;
       case ICON_RESTORE: *em = 0.6f; return 0xE923;
-      case ICON_CHECK: *em = 0.7f; return 0xE73E;
       default: *em = 0; return 0;
    }
 }
