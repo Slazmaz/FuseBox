@@ -1033,6 +1033,12 @@ static int steam_changes(void)
    return n;
 }
 
+/* Ticked, but not in Steam yet. */
+static bool adding(const struct game *g)
+{
+   return !g->gone && tickable(g) && !g->steam_appid && g->selected;
+}
+
 /* What Steam has of the game and what the next update does, with its
  * colour; NULL for nothing to say. */
 static const char *steam_state(const struct game *g, float *r, float *gr, float *b)
@@ -1040,28 +1046,27 @@ static const char *steam_state(const struct game *g, float *r, float *gr, float 
    if (g->gone)
    {
       *r = 0.93f, *gr = 0.33f, *b = 0.30f;
-      /* The red tick says whether it leaves Steam. */
-      return "Uninstalled";
+      return g->selected ? "Removing" : "Uninstalled";
    }
    if (tickable(g) && g->steam_appid && !g->selected)
    {
       *r = 0.93f, *gr = 0.33f, *b = 0.30f;
-      return "Will be removed";
+      return "Removing";
    }
-   if (tickable(g) && !g->steam_appid && g->selected)
+   if (adding(g))
    {
       *r = 0.30f, *gr = 0.56f, *b = 1.00f;
-      return "Will be added";
+      return "Adding";
    }
    if (settings_differ(g))
    {
       *r = 0.30f, *gr = 0.56f, *b = 1.00f;
-      return "Will be updated";
+      return "Edited";
    }
    if (g->steam_appid)
    {
       *r = 0.40f, *gr = 0.85f, *b = 0.55f;
-      return "In Steam";
+      return "Added";
    }
    return NULL;
 }
@@ -1819,7 +1824,7 @@ static void draw_game(float x, float y, float w, float h)
 {
    struct game *g;
    char name[256], source[32], sgdb_name[256], line[300];
-   float top = y, cx, sr, sg, sb;
+   float top = y, cx, sr = 0, sg = 0, sb = 0;
    struct choice *coming;
    float tw, th, tx, content_h, ty, grid_top, grid_h;
    const char *state;
@@ -1853,7 +1858,8 @@ static void draw_game(float x, float y, float w, float h)
    gone = g->gone;
    fill_open(app.selected, g);
    icon = detail_for(ART_ICON, g);
-   state = steam_state(g, &sr, &sg, &sb);
+   /* The list says so already. */
+   state = adding(g) ? NULL : steam_state(g, &sr, &sg, &sb);
    library_unlock();
 
    /* The icon, the name, where it's from and its match, the buttons:
