@@ -78,6 +78,8 @@ struct game
    bool sc_overlay, sc_input;
    char sc_options[1024];
    char sc_name[256];
+   /* A ROM's: the program its shortcut starts. */
+   char sc_exe[1024];
 
    /* Not saved, found again by each scan:
     * installed: a launcher has it, or its Steam shortcut's folder is there.

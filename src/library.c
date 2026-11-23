@@ -178,6 +178,7 @@ int library_add(const struct game *game)
       g->sc_overlay = game->sc_overlay;
       g->sc_input = game->sc_input;
       SDL_strlcpy(g->sc_options, game->sc_options, sizeof(g->sc_options));
+      SDL_strlcpy(g->sc_exe, game->sc_exe, sizeof(g->sc_exe));
       SDL_strlcpy(g->sc_name, game->sc_name, sizeof(g->sc_name));
       g->gone |= game->gone;
       g->selected |= game->selected;

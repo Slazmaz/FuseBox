@@ -98,10 +98,31 @@ static Uint32 game_appid(const struct game *g)
    return shortcut_appid(exe, g->name);
 }
 
+/* Whether a shortcut's options start this ROM: whichever emulator it's
+ * for, it's that game's. */
+static bool starts_rom(const char *options, const struct game *g)
+{
+   size_t n = SDL_strlen(g->rom), args = SDL_strlen(g->args);
+   const char *p = options;
+
+   if (!n)
+      return false;
+   if (args && SDL_strncmp(options, g->args, args) == 0 && (!options[args] || options[args] == ' '))
+      return true;
+   while ((p = SDL_strstr(p, g->rom)))
+   {
+      if ((p == options || p[-1] == '"') && (!p[n] || p[n] == '"'))
+         return true;
+      p += n;
+   }
+   return false;
+}
+
 /* The library's game a shortcut is of, -1 if none: by the id it's known
  * to have or would be given, an installed one first (a game found again
- * under another id leaves the old one behind). */
-static int shortcut_game(Uint32 appid)
+ * under another id leaves the old one behind); else the ROM one of
+ * FuseBox's own starts. */
+static int shortcut_game(Uint32 appid, const struct vdf *s)
 {
    int i, known, old = -1;
 
@@ -117,6 +138,15 @@ static int shortcut_game(Uint32 appid)
          if (old < 0)
             old = i;
       }
+   for (i = 0; tagged(s) && i < library_count(); i++)
+   {
+      if (!starts_rom(vdf_str(s, "LaunchOptions"), library_game(i)))
+         continue;
+      if (library_game(i)->installed)
+         return i;
+      if (old < 0)
+         old = i;
+   }
    return old;
 }
 
@@ -151,18 +181,25 @@ int steam_read_shortcuts(void)
       n++;
 
       library_lock();
-      if ((i = shortcut_game(appid)) >= 0)
+      if ((i = shortcut_game(appid, s)) >= 0)
       {
          struct game *lg = library_game(i);
+         bool moved = false;
 
          lg->steam_appid = lg->shortcut_id = appid;
          read_settings(lg, s);
+         if (lg->rom[0])
+         {
+            unquote(vdf_str(s, "Exe"), lg->sc_exe, sizeof(lg->sc_exe));
+            moved = SDL_strcmp(lg->sc_exe, lg->exe) != 0;
+         }
          /* Ticked from the start: only what Steam already has. */
          lg->selected = true;
          /* Its launcher knows best: uninstalling often leaves the folder
-          * (settings, addons) behind. */
+          * (settings, addons) behind. A ROM whose shortcut is for another
+          * emulator is only updated. */
          /* Gone: kept until ticked for removal. */
-         if (!present || !lg->installed)
+         if ((!present && !moved) || !lg->installed)
          {
             lg->gone = true;
             lg->selected = false;
@@ -400,9 +437,9 @@ bool steam_sync(char *msg, size_t size)
          continue;
       quote(g->exe, exe, sizeof(exe));
       appid = shortcut_appid(exe, g->name);
-      /* A shortcut keeps its id, whatever its game is renamed to: Steam
-       * keeps play time and collections by it. A new one doesn't take one
-       * that's kept. */
+      /* A shortcut keeps its id, whatever its game is renamed to or
+       * whichever emulator it's for: Steam keeps play time and collections
+       * by it. A new one doesn't take one that's kept. */
       if (g->steam_appid && find_appid(list, g->steam_appid))
          appid = g->steam_appid;
       else

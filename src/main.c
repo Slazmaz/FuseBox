@@ -1047,7 +1047,8 @@ static bool settings_differ(const struct game *g)
 
    if (!g->steam_appid || g->gone || (tickable(g) && !g->selected))
       return false;
-   if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input)
+   if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input
+         || (g->rom[0] && SDL_strcmp(g->exe, g->sc_exe) != 0))
       return !g->no_emulator;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;
