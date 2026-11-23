@@ -58,9 +58,8 @@ static struct
    int verbose;
 } st;
 
-static bool match(const char *name, const char *pattern)
+bool disk_match(const char *name, const char *pattern)
 {
-   /* Case-insensitive glob: '*' only. */
    while (*pattern)
    {
       if (*pattern == '*')
@@ -69,7 +68,7 @@ static bool match(const char *name, const char *pattern)
          if (!*pattern)
             return true;
          for (; *name; name++)
-            if (match(name, pattern))
+            if (disk_match(name, pattern))
                return true;
          return false;
       }
@@ -86,7 +85,7 @@ static bool match_any(const char *name, const char *const *patterns, size_t n)
    size_t i;
 
    for (i = 0; i < n; i++)
-      if (match(name, patterns[i]))
+      if (disk_match(name, patterns[i]))
          return true;
    return false;
 }
@@ -250,14 +249,6 @@ static void add_game(const char *exe, const char *dir, const char *why)
       SDL_Log("found %s (%s): %s", g.name, why, exe);
 }
 
-/* One folder's entries, files and folders, not what's inside them. */
-struct listing
-{
-   char **names;
-   bool *dirs;
-   int count, alloc;
-};
-
 #ifndef _WIN32
 static SDL_EnumerationResult SDLCALL on_entry(void *user, const char *dir, const char *name)
 {
@@ -290,7 +281,7 @@ static SDL_EnumerationResult SDLCALL on_entry(void *user, const char *dir, const
 #ifdef _WIN32
 /* FindFirstFile gives each entry's type with its name: no look at each
  * one after, which is most of a scan's time otherwise. */
-static void list_dir(const char *dir, struct listing *l)
+void disk_list(const char *dir, struct listing *l)
 {
    char pattern[1100];
    WCHAR *wide;
@@ -336,14 +327,14 @@ static void list_dir(const char *dir, struct listing *l)
    FindClose(h);
 }
 #else
-static void list_dir(const char *dir, struct listing *l)
+void disk_list(const char *dir, struct listing *l)
 {
    SDL_zerop(l);
    SDL_EnumerateDirectory(dir, on_entry, l);
 }
 #endif
 
-static void free_listing(struct listing *l)
+void disk_list_free(struct listing *l)
 {
    int i;
 
@@ -365,10 +356,10 @@ static bool has(const char *dir, const char *pattern)
 
    SDL_strlcpy(part, pattern, SDL_min(sizeof(part), (size_t)(slash ? slash - pattern + 1
          : (ptrdiff_t)SDL_strlen(pattern) + 1)));
-   list_dir(dir, &l);
+   disk_list(dir, &l);
    for (i = 0; i < l.count && !found; i++)
    {
-      if (!match(l.names[i], part))
+      if (!disk_match(l.names[i], part))
          continue;
       if (!slash)
          found = !l.dirs[i];
@@ -380,7 +371,7 @@ static bool has(const char *dir, const char *pattern)
          found = has(sub, slash + 1);
       }
    }
-   free_listing(&l);
+   disk_list_free(&l);
    return found;
 }
 
@@ -394,7 +385,7 @@ static const char *fingerprint(const char *dir)
 
    /* One listing for the plain names; only paths (Content, then .xnb) list
     * further. */
-   list_dir(dir, &l);
+   disk_list(dir, &l);
    for (i = 0; i < SDL_arraysize(fingerprints) && !why; i++)
    {
       const char *f = fingerprints[i], *slash = SDL_strchr(f, '/');
@@ -408,10 +399,10 @@ static const char *fingerprint(const char *dir)
       }
       SDL_strlcpy(part, f, slash ? (size_t)(slash - f + 1) : sizeof(part));
       for (j = 0; j < l.count && !why; j++)
-         if (l.dirs[j] == (slash != NULL) && match(l.names[j], part))
+         if (l.dirs[j] == (slash != NULL) && disk_match(l.names[j], part))
             why = f;
    }
-   free_listing(&l);
+   disk_list_free(&l);
    return why;
 }
 
@@ -432,14 +423,14 @@ static void consider_exes(struct exe_pick *pick, const char *dir)
    int i;
 
    library_normalize(base_name(pick->folder), folder_norm, sizeof(folder_norm));
-   list_dir(dir, &l);
+   disk_list(dir, &l);
    for (i = 0; i < l.count; i++)
    {
       SDL_PathInfo info;
       char stem[256], *dot;
       int rank = 0;
 
-      if (l.dirs[i] || !match(l.names[i], EXE_GLOB)
+      if (l.dirs[i] || !disk_match(l.names[i], EXE_GLOB)
             || match_any(l.names[i], not_games, SDL_arraysize(not_games)))
          continue;
       SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "%s", dir, l.names[i]);
@@ -461,7 +452,7 @@ static void consider_exes(struct exe_pick *pick, const char *dir)
          SDL_strlcpy(pick->best, path, sizeof(pick->best));
       }
    }
-   free_listing(&l);
+   disk_list_free(&l);
 }
 
 /* A folder that might be a game: fingerprints in it or the folders just
@@ -477,7 +468,7 @@ static void consider_folder(const char *dir)
    if (is_steam(dir) || known(dir))
       return;
    why = fingerprint(dir);
-   list_dir(dir, &l);
+   disk_list(dir, &l);
    for (i = 0; i < l.count && !why; i++)
       if (l.dirs[i])
       {
@@ -501,7 +492,7 @@ static void consider_folder(const char *dir)
       else if (st.verbose)
          SDL_Log("skipped %s (%s): no exe", dir, why);
    }
-   free_listing(&l);
+   disk_list_free(&l);
 }
 /* Each folder in dir is a candidate; one named like "Games" holds more. */
 static void scan_children(const char *dir, int depth)
@@ -510,7 +501,7 @@ static void scan_children(const char *dir, int depth)
    char path[1100];
    int i;
 
-   list_dir(dir, &subs);
+   disk_list(dir, &subs);
    for (i = 0; i < subs.count; i++)
    {
       if (!subs.dirs[i] || match_any(subs.names[i], skip_dirs, SDL_arraysize(skip_dirs)))
@@ -518,12 +509,12 @@ static void scan_children(const char *dir, int depth)
       SDL_snprintf(path, sizeof(path), "%s%s%s", dir,
             dir[SDL_strlen(dir) - 1] == '\\' || dir[SDL_strlen(dir) - 1] == '/' ? "" : PATH_SEP,
             subs.names[i]);
-      if (depth < 2 && match(subs.names[i], "*games*"))
+      if (depth < 2 && disk_match(subs.names[i], "*games*"))
          scan_children(path, depth + 1);
       else
          consider_folder(path);
    }
-   free_listing(&subs);
+   disk_list_free(&subs);
 }
 
 #ifdef _WIN32
@@ -543,6 +534,11 @@ static void on_game_record(const char *subkey, void *user)
    parent_dir(exe, dir, sizeof(dir));
    if (!known(dir))
       add_game(exe, dir, "Windows saw it run as a game");
+}
+
+bool disk_fixed_drive(const char *root)
+{
+   return GetDriveTypeA(root) == DRIVE_FIXED;
 }
 
 static void scan_roots(void)

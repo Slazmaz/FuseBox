@@ -27,4 +27,21 @@ bool disk_main_exe(const char *dir, char *dst, size_t size);
  * each scan, which doesn't find them otherwise. */
 void disk_keep_added(void);
 
+/* One folder's entries, files and folders, not what's inside them. */
+struct listing
+{
+   char **names;
+   bool *dirs;
+   int count, alloc;
+};
+
+void disk_list(const char *dir, struct listing *l);
+void disk_list_free(struct listing *l);
+/* Case-insensitive glob: '*' only. */
+bool disk_match(const char *name, const char *pattern);
+#ifdef _WIN32
+/* root: "D:\". */
+bool disk_fixed_drive(const char *root);
+#endif
+
 #endif
