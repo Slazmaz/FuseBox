@@ -748,6 +748,8 @@ static void job_login(void *data)
 struct steam_job
 {
    bool close_steam;
+   /* Nothing to write: only to start Steam again (see steamui.h). */
+   bool only_restart;
 };
 
 /* The art first (Steam can run meanwhile), then Steam closed only as long
@@ -763,7 +765,8 @@ static void job_steam(void *data)
    library_lock();
    count = library_count();
    library_unlock();
-   for (i = 0; i < count && sgdb_has_key() && !SDL_GetAtomicInt(jobs_abort()); i++)
+   for (i = 0; i < count && !j->only_restart && sgdb_has_key()
+         && !SDL_GetAtomicInt(jobs_abort()); i++)
    {
       bool want;
       library_lock();
@@ -787,12 +790,12 @@ static void job_steam(void *data)
    {
       if (st && platform_steam_running(st))
          SDL_strlcpy(m->text, "Steam is still running: close it and try again", sizeof(m->text));
-      else
+      else if (!j->only_restart)
          steam_sync(m->text, sizeof(m->text));
       post(m);
    }
    library_save();
-   if (was_running)
+   if (st && (was_running || j->only_restart) && !platform_steam_running(st))
    {
       steamui_start(st);
       if (ra_active())
@@ -925,6 +928,8 @@ static struct
    char ra_user[128], ra_password[256];
    bool ra_busy;
    char ra_error[128], ra_note[128];
+   /* MODAL_STEAM: only to restart it. */
+   bool only_restart;
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
@@ -1522,13 +1527,14 @@ static void open_game(int index)
 
 /* ---- Sidebar ----------------------------------------------------------- */
 
-static void start_steam_job(bool close_steam)
+static void start_steam_job(bool close_steam, bool only_restart)
 {
    struct steam_job *j = SDL_calloc(1, sizeof(*j));
 
    if (!j)
       return;
    j->close_steam = close_steam;
+   j->only_restart = only_restart;
    app.busy = true;
    app.steam_note[0] = '\0';
    jobs_add(job_steam, j, JOB_NOW, true);
@@ -1969,10 +1975,11 @@ static void draw_sidebar(float w)
             app.busy ? "Working..." : "Update Steam Shortcuts", n > 0,
             steam_install() && !app.busy && app.scanned && !choosing(), false))
    {
+      app.only_restart = false;
       if (platform_steam_running(steam_install()))
          app.modal = MODAL_STEAM;
       else
-         start_steam_job(false);
+         start_steam_job(false, false);
    }
 }
 
@@ -2510,7 +2517,7 @@ static bool toggle(float x, float y, bool on, bool modal);
 static float draw_achievements_card(float x, float y, float w)
 {
    char user[128], line[200];
-   bool in = ra_user(user, sizeof(user)), on = ra_in_steam();
+   bool in = ra_user(user, sizeof(user)), on = ra_in_steam(), running;
    float h = S(in ? 236 : 186) + (in && on ? S(52) : in && app.ra_note[0] ? S(26) : 0);
    float cy, bw, fw, rx = x + w - S(24);
 
@@ -2573,10 +2580,21 @@ static float draw_achievements_card(float x, float y, float w)
    cy += S(112);
    if (on)
    {
-      bw = button_w("Refresh");
-      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_DIM, 1,
+      running = steam_install() && platform_steam_running(steam_install());
+      bw = button_w(running ? "Restart Steam" : "Start Steam");
+      fw = button_w("Refresh");
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(72) - bw - fw, C_DIM, 1,
             app.ra_note);
-      if (button(rx - bw, cy, bw, S(40), "Refresh", false, true, false))
+      if (button(rx - bw, cy, bw, S(40), running ? "Restart Steam" : "Start Steam", false,
+               steam_install() && !app.busy, false))
+      {
+         app.only_restart = true;
+         if (running)
+            app.modal = MODAL_STEAM;
+         else
+            start_steam_job(false, true);
+      }
+      if (button(rx - bw - S(8) - fw, cy, fw, S(40), "Refresh", false, true, false))
       {
          SDL_strlcpy(app.ra_note, "Refreshing...", sizeof(app.ra_note));
          start_achievements(false, true);
@@ -2938,12 +2956,13 @@ static void draw_modal(void)
       h = S(196);
       modal_box(w, h, &x, &y, "Restart Steam?");
       ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_DIM, 1,
-            "Steam will restart to take the new shortcuts.");
+            app.only_restart ? "Running games close with it."
+            : "Steam will restart to take the new shortcuts.");
       if (button(x + w - S(28) - S(170), y + h - S(66), S(170), S(42), "Restart Steam",
                true, true, true))
       {
          close_modal();
-         start_steam_job(true);
+         start_steam_job(true, app.only_restart);
       }
       if (button(x + w - S(28) - S(290), y + h - S(66), S(110), S(42), "Cancel", false, true,
                true))
