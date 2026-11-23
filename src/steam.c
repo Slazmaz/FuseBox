@@ -97,6 +97,28 @@ static Uint32 game_appid(const struct game *g)
    return shortcut_appid(exe, g->name);
 }
 
+/* The library's game a shortcut is of, -1 if none: by the id it's known
+ * to have or would be given, an installed one first (a game found again
+ * under another id leaves the old one behind). */
+static int shortcut_game(Uint32 appid)
+{
+   int i, known, old = -1;
+
+   for (known = 1; known >= 0; known--)
+      for (i = 0; i < library_count(); i++)
+      {
+         const struct game *g = library_game(i);
+         if (SDL_strcmp(g->source, "Steam") == 0 || !g->exe[0]
+               || (known ? g->shortcut_id : game_appid(g)) != appid)
+            continue;
+         if (g->installed)
+            return i;
+         if (old < 0)
+            old = i;
+      }
+   return old;
+}
+
 /* After the launchers' scan: each shortcut in Steam, whoever made it,
  * either belongs to a launcher game (which is then in Steam) or is listed
  * as Steam's own. One whose game's folder is gone marks it gone. */
@@ -128,27 +150,23 @@ int steam_read_shortcuts(void)
       n++;
 
       library_lock();
-      for (i = 0; i < library_count() && !matched; i++)
+      if ((i = shortcut_game(appid)) >= 0)
       {
          struct game *lg = library_game(i);
-         if (SDL_strcmp(lg->source, "Steam") == 0 || !lg->exe[0])
-            continue;
-         if (game_appid(lg) == appid)
+
+         lg->steam_appid = lg->shortcut_id = appid;
+         read_settings(lg, s);
+         /* Ticked from the start: only what Steam already has. */
+         lg->selected = true;
+         /* Its launcher knows best: uninstalling often leaves the folder
+          * (settings, addons) behind. */
+         /* Gone: kept until ticked for removal. */
+         if (!present || !lg->installed)
          {
-            lg->steam_appid = appid;
-            read_settings(lg, s);
-            /* Ticked from the start: only what Steam already has. */
-            lg->selected = true;
-            /* Its launcher knows best: uninstalling often leaves the
-             * folder (settings, addons) behind. */
-            /* Gone: kept until ticked for removal. */
-            if (!present || !lg->installed)
-            {
-               lg->gone = true;
-               lg->selected = false;
-            }
-            matched = true;
+            lg->gone = true;
+            lg->selected = false;
          }
+         matched = true;
       }
       library_unlock();
       if (matched)
@@ -352,7 +370,7 @@ bool steam_sync(char *msg, size_t size)
             remove_art(g->steam_appid);
             removed++;
          }
-         g->steam_appid = 0;
+         g->steam_appid = g->shortcut_id = 0;
          g->gone = false;
          if (own)
             g->installed = false;
@@ -378,6 +396,21 @@ bool steam_sync(char *msg, size_t size)
       }
       quote(g->exe, exe, sizeof(exe));
       appid = shortcut_appid(exe, g->name);
+      /* A shortcut keeps its id, whatever its game is renamed to: Steam
+       * keeps play time and collections by it. A new one doesn't take one
+       * that's kept. */
+      if (g->steam_appid && find_appid(list, g->steam_appid))
+         appid = g->steam_appid;
+      else
+      {
+         int other;
+         for (other = 0; other < library_count(); other++)
+            if (other != i && library_game(other)->steam_appid == appid)
+            {
+               appid = shortcut_appid(exe, g->id);
+               break;
+            }
+      }
       /* Ours from before, perhaps under an older id (renamed, moved). */
       s = find_appid(list, appid);
       if (!s && g->steam_appid)
@@ -391,7 +424,7 @@ bool steam_sync(char *msg, size_t size)
       }
       copy_art(g, appid, icon, sizeof(icon));
       fill_shortcut(s, g, appid, icon);
-      g->steam_appid = appid;
+      g->steam_appid = g->shortcut_id = appid;
    }
 
    /* Steam numbers its shortcuts 0, 1, 2...: no gaps after removing. */

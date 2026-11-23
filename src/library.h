@@ -53,6 +53,8 @@ struct game
    char args[1024];
    /* The Steam shortcut's app id once it's in Steam, else 0. */
    Uint32 steam_appid;
+   /* The id its shortcut last had: how it's told again after a rename. */
+   Uint32 shortcut_id;
    /* The SteamGridDB game its art comes from, 0 until matched. */
    unsigned sgdb_id;
    char sgdb_name[256];

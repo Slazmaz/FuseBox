@@ -286,6 +286,7 @@ static bool game_from_json(const struct json *o, struct game *g)
    copy_str(g->args, sizeof(g->args), o, "args");
    copy_str(g->sgdb_name, sizeof(g->sgdb_name), o, "sgdb_name");
    g->steam_appid = (Uint32)json_num(o, "steam_appid", 0);
+   g->shortcut_id = (Uint32)json_num(o, "shortcut_id", g->steam_appid);
    g->sgdb_id = (unsigned)json_num(o, "sgdb_id", 0);
    /* Steam's own defaults where not set. */
    g->steam_overlay = json_bool(o, "steam_overlay", true);
@@ -430,8 +431,8 @@ static void write_game(SDL_IOStream *io, const struct game *g)
          g->steam_overlay ? "true" : "false", g->steam_input ? "true" : "false",
          g->art_edited ? "true" : "false");
    json_write_string(io, g->launch_options);
-   SDL_IOprintf(io, ",\n      \"steam_appid\": %u,\n      \"sgdb_id\": %u,\n      \"sgdb_name\": ",
-         (unsigned)g->steam_appid, g->sgdb_id);
+   SDL_IOprintf(io, ",\n      \"steam_appid\": %u,\n      \"shortcut_id\": %u,\n      \"sgdb_id\": %u,\n      \"sgdb_name\": ",
+         (unsigned)g->steam_appid, (unsigned)g->shortcut_id, g->sgdb_id);
    json_write_string(io, g->sgdb_name);
    SDL_IOprintf(io, ",\n      \"art\": {");
    for (t = 0; t < ART_TYPES; t++)
