@@ -29,6 +29,7 @@ add_library(fusebox_core STATIC
    src/steam.c
    src/scan.c
    src/disk.c
+   src/roms.c
    src/jobs.c
 )
 target_include_directories(fusebox_core PUBLIC src)

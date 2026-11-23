@@ -12,6 +12,7 @@
 #include "disk.h"
 #include "http.h"
 #include "library.h"
+#include "roms.h"
 #include "scan.h"
 #include "sgdb.h"
 
@@ -37,6 +38,10 @@ static void scan(void)
 
    launchers = scan_launchers();
    disks = scan_disks(1);
+   scan_roms();
+   library_lock();
+   printf("emulators: %s\n", roms_emulators()[0] ? roms_emulators() : "none");
+   library_unlock();
    printf("%d from launchers, %d on disk, in %llu ms\n", launchers, disks,
          (unsigned long long)(SDL_GetTicks() - start));
    library_discard();
