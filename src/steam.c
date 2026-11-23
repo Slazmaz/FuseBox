@@ -263,7 +263,11 @@ static void copy_art(const struct game *g, Uint32 appid, char *icon, size_t size
       SDL_RemovePath(dst);
       SDL_snprintf(dst, sizeof(dst), "%s.jpg", base);
       SDL_RemovePath(dst);
-      SDL_snprintf(dst, sizeof(dst), "%s%s", base, ext ? ext : ".png");
+      /* Steam only looks for .png and .jpg, but goes by what's in them: a
+       * .webp named .png shows, and moves. */
+      if (!ext || SDL_strcasecmp(ext, ".webp") == 0)
+         ext = ".png";
+      SDL_snprintf(dst, sizeof(dst), "%s%s", base, ext);
       if (!SDL_CopyFile(src, dst))
          SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't copy art to %s: %s", dst, SDL_GetError());
       else if (t == ART_ICON)
