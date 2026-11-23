@@ -326,16 +326,20 @@ struct list_job
    enum art_type type;
 };
 
+/* The picker's current generation: lists and thumbnails for an older one
+ * are skipped before they're fetched. */
+static SDL_AtomicInt picker_gen;
+
 /* A game's art of one type on SteamGridDB, matching the game first if it
  * isn't yet. */
 static void job_list(void *data)
 {
    struct list_job *j = data;
-   struct msg *m = new_msg(MSG_ART_LIST);
+   struct msg *m;
    char name[256];
    unsigned id;
 
-   if (!m)
+   if (SDL_GetAtomicInt(&picker_gen) != j->gen || !(m = new_msg(MSG_ART_LIST)))
    {
       SDL_free(j);
       return;
@@ -405,14 +409,11 @@ static void job_list(void *data)
    SDL_free(j);
 }
 
-/* The picker's current generation: thumbnails for an older one are
- * skipped before they're downloaded. */
-static SDL_AtomicInt picker_gen;
-
 struct thumb_job
 {
    int gen, item;
-   char url[512];
+   /* "file:" and a path for one on disk. */
+   char url[1100];
 };
 
 static void job_thumb(void *data)
@@ -429,13 +430,15 @@ static void job_thumb(void *data)
    }
    m->gen = j->gen;
    m->index = j->item;
-   /* "file:": the game's own icon, already on disk. */
+   /* "file:": already on disk (the game's own icon, the art in use). */
    if (SDL_strncmp(j->url, "file:", 5) == 0)
+      body = SDL_LoadFile(j->url + 5, &size);
+   else if (http_request(j->url, NULL, NULL, NULL, jobs_abort(), &body, &size, 30) != 200)
    {
-      if ((body = SDL_LoadFile(j->url + 5, &size)))
-         m->pixels = decode(body, size, 400, 400, &m->w, &m->h);
+      SDL_free(body);
+      body = NULL;
    }
-   else if (http_request(j->url, NULL, NULL, NULL, jobs_abort(), &body, &size, 30) == 200)
+   if (body && SDL_GetAtomicInt(&picker_gen) == j->gen)
       m->pixels = decode(body, size, 400, 400, &m->w, &m->h);
    SDL_free(body);
    post(m);
@@ -601,6 +604,9 @@ struct pick_item
    GLuint tex;
    int w, h;
    bool failed;
+   /* The game's own art of that type when it was listed. */
+   bool in_use;
+   char url[1100];
 };
 
 /* Where the window can't be dragged by (widgets in the top bar). */
@@ -1080,8 +1086,24 @@ static void picker_open(void)
    jobs_add(job_list, j, JOB_SELECTED, true);
 }
 
+static void ask_thumb(int item)
+{
+   struct pick_item *it = &app.items[item];
+   struct thumb_job *j;
+
+   if (!(j = SDL_calloc(1, sizeof(*j))))
+      return;
+   j->gen = SDL_GetAtomicInt(&picker_gen);
+   j->item = item;
+   SDL_strlcpy(j->url, it->url, sizeof(j->url));
+   jobs_add(job_thumb, j, SDL_strncmp(j->url, "file:", 5) == 0 ? JOB_NOW
+         : it->in_use ? JOB_SELECTED : JOB_OPTIONS, false);
+}
+
 static void on_art_list(struct msg *m)
 {
+   char saved[1024] = "";
+   unsigned chosen = 0;
    int i;
 
    if (m->gen != SDL_GetAtomicInt(&picker_gen))
@@ -1097,16 +1119,24 @@ static void on_art_list(struct msg *m)
       return;
    }
    app.item_count = m->count;
+   library_lock();
+   if (library_game(m->index))
+   {
+      chosen = library_game(m->index)->art[app.tab].sgdb_id;
+      SDL_strlcpy(saved, library_game(m->index)->art[app.tab].path, sizeof(saved));
+   }
+   library_unlock();
    for (i = 0; i < m->count; i++)
    {
-      struct thumb_job *j = SDL_calloc(1, sizeof(*j));
-      app.items[i].art = ((struct sgdb_art *)m->ptr)[i];
-      if (!j)
-         continue;
-      j->gen = m->gen;
-      j->item = i;
-      SDL_strlcpy(j->url, app.items[i].art.thumb, sizeof(j->url));
-      jobs_add(job_thumb, j, JOB_OPTIONS, false);
+      struct pick_item *it = &app.items[i];
+      it->art = ((struct sgdb_art *)m->ptr)[i];
+      it->in_use = chosen && it->art.id == chosen;
+      /* The one in use is on disk: shown at once. */
+      if (it->in_use && saved[0])
+         SDL_snprintf(it->url, sizeof(it->url), "file:%s", saved);
+      else
+         SDL_strlcpy(it->url, it->art.thumb, sizeof(it->url));
+      ask_thumb(i);
    }
    SDL_free(m->ptr);
 }
