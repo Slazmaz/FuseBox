@@ -148,6 +148,7 @@ int main(int argc, char **argv)
    }
    SDL_snprintf(config, sizeof(config), "%sconfig", data);
    sgdb_init(config);
+   roms_init(config);
 
    if (argc >= 4 && SDL_strcmp(argv[1], "art") == 0)
       code = art(argv[2], argv[3], !(argc >= 5 && SDL_strcmp(argv[4], "--no-fetch") == 0));

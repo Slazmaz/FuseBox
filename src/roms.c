@@ -1,5 +1,6 @@
 #include "roms.h"
 #include "disk.h"
+#include "json.h"
 #include "library.h"
 #include "platform.h"
 
@@ -177,11 +178,15 @@ static const char arcade_bios[] = "neogeo|qsound|qsound_hle|pgm|decocass|skns|nm
    "|bubsys|cchip|coleco|naomi|naomi2|naomigd|hikaru|awbios|stvbios|konamigx|megaplay|megatech"
    "|playch10|midssio|taitofx1|tps|cpzn1|cpzn2|neocdz";
 
-/* Under the library's lock. */
+/* Under the library's lock, but for file. */
 static struct
 {
+   char file[1100];
    struct rom_folder *folders;
    int folder_count;
+   /* Found folders the user removed: not listed again. */
+   char (*ignored)[1024];
+   int ignored_count;
    /* What the last scan found. */
    struct rom_option *options;
    int option_count;
@@ -305,6 +310,77 @@ static int system_by_folder(const char *name)
    return -1;
 }
 
+/* ---- roms.json ---------------------------------------------------------- */
+
+static void save(void)
+{
+   char tmp[1200];
+   SDL_IOStream *io;
+   int i, n;
+
+   SDL_snprintf(tmp, sizeof(tmp), "%s.tmp", cfg.file);
+   if (!cfg.file[0] || !(io = SDL_IOFromFile(tmp, "wb")))
+   {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", tmp, SDL_GetError());
+      return;
+   }
+   /* Found folders are found again, but for a system picked for one. */
+   SDL_IOprintf(io, "{\n  \"folders\": [");
+   for (i = n = 0; i < cfg.folder_count; i++)
+      if (!cfg.folders[i].found || cfg.folders[i].system[0])
+      {
+         SDL_IOprintf(io, "%s\n    { \"path\": ", n++ ? "," : "");
+         json_write_string(io, cfg.folders[i].path);
+         SDL_IOprintf(io, ", \"system\": ");
+         json_write_string(io, cfg.folders[i].system);
+         SDL_IOprintf(io, " }");
+      }
+   SDL_IOprintf(io, "\n  ],\n  \"ignored\": [");
+   for (i = 0; i < cfg.ignored_count; i++)
+   {
+      SDL_IOprintf(io, "%s\n    ", i ? "," : "");
+      json_write_string(io, cfg.ignored[i]);
+   }
+   SDL_IOprintf(io, "\n  ]\n}\n");
+   if (!SDL_CloseIO(io) || !SDL_RenamePath(tmp, cfg.file))
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", cfg.file, SDL_GetError());
+}
+
+static struct json *list_of(const struct json *root, const char *key)
+{
+   struct json *list = json_get(root, key);
+   return list ? list->child : NULL;
+}
+
+void roms_init(const char *config_dir)
+{
+   struct json *root, *o;
+   char *text;
+
+   SDL_CreateDirectory(config_dir);
+   SDL_snprintf(cfg.file, sizeof(cfg.file), "%s" PATH_SEP "roms.json", config_dir);
+   if (!(text = SDL_LoadFile(cfg.file, NULL)))
+      return;
+   root = json_parse(text);
+   SDL_free(text);
+   for (o = list_of(root, "folders"); o; o = o->next)
+   {
+      struct rom_folder *f;
+      if (json_str(o, "path", "")[0] && (f = grow(&cfg.folders, &cfg.folder_count, sizeof(*f))))
+      {
+         SDL_strlcpy(f->path, json_str(o, "path", ""), sizeof(f->path));
+         SDL_strlcpy(f->system, json_str(o, "system", ""), sizeof(f->system));
+      }
+   }
+   for (o = list_of(root, "ignored"); o; o = o->next)
+   {
+      char *path;
+      if (o->type == JSON_STRING && (path = grow(&cfg.ignored, &cfg.ignored_count, 1024)))
+         SDL_strlcpy(path, o->str, 1024);
+   }
+   json_free(root);
+}
+
 /* ---- What the window asks ------------------------------------------------ */
 
 int roms_folder_count(void)
@@ -317,9 +393,78 @@ const struct rom_folder *roms_folder(int i)
    return i >= 0 && i < cfg.folder_count ? &cfg.folders[i] : NULL;
 }
 
+static bool ignored(const char *path)
+{
+   int i;
+
+   for (i = 0; i < cfg.ignored_count; i++)
+      if (same_path(cfg.ignored[i], path))
+         return true;
+   return false;
+}
+
+void roms_add_folder(const char *path)
+{
+   struct rom_folder *f;
+   int i;
+
+   for (i = 0; i < cfg.ignored_count; i++)
+      if (same_path(cfg.ignored[i], path))
+      {
+         SDL_memmove(cfg.ignored + i, cfg.ignored + i + 1,
+               sizeof(*cfg.ignored) * (size_t)(cfg.ignored_count - i - 1));
+         cfg.ignored_count--;
+         break;
+      }
+   for (i = 0; i < cfg.folder_count; i++)
+      if (same_path(cfg.folders[i].path, path))
+      {
+         cfg.folders[i].found = false;
+         save();
+         return;
+      }
+   if ((f = grow(&cfg.folders, &cfg.folder_count, sizeof(*f))))
+      SDL_strlcpy(f->path, path, sizeof(f->path));
+   save();
+}
+
+void roms_remove_folder(int i)
+{
+   char *path;
+
+   if (!roms_folder(i))
+      return;
+   /* Whoever added it, the scan might find it. */
+   if (!ignored(cfg.folders[i].path)
+         && (path = grow(&cfg.ignored, &cfg.ignored_count, sizeof(*cfg.ignored))))
+      SDL_strlcpy(path, cfg.folders[i].path, sizeof(*cfg.ignored));
+   SDL_memmove(cfg.folders + i, cfg.folders + i + 1,
+         sizeof(*cfg.folders) * (size_t)(cfg.folder_count - i - 1));
+   cfg.folder_count--;
+   save();
+}
+
+void roms_set_folder_system(int i, const char *system)
+{
+   if (!roms_folder(i))
+      return;
+   SDL_strlcpy(cfg.folders[i].system, system, sizeof(cfg.folders[i].system));
+   save();
+}
+
 int roms_unknown(void)
 {
    return cfg.unknown;
+}
+
+int roms_system_count(void)
+{
+   return SYSTEMS;
+}
+
+const char *roms_system_name(int system)
+{
+   return systems[system].name;
 }
 
 static const struct rom_option *chosen_of(const struct rom_option *options, int count, int system)
@@ -1291,7 +1436,7 @@ static void update_folders(const struct scan *sc)
 
    for (n = 0; n < cfg.folder_count; n++)
    {
-      bool still = false;
+      bool still = !cfg.folders[n].found;
       for (i = 0; i < sc->folder_count && !still; i++)
          still = same_path(cfg.folders[n].path, sc->folders[i]);
       if (still)
@@ -1304,11 +1449,14 @@ static void update_folders(const struct scan *sc)
    for (i = 0; i < sc->folder_count; i++)
    {
       struct rom_folder *f;
-      bool known = false;
+      bool known = ignored(sc->folders[i]);
       for (n = 0; n < cfg.folder_count && !known; n++)
          known = same_path(cfg.folders[n].path, sc->folders[i]);
       if (!known && (f = grow(&cfg.folders, &cfg.folder_count, sizeof(*f))))
+      {
          SDL_strlcpy(f->path, sc->folders[i], sizeof(f->path));
+         f->found = true;
+      }
    }
 }
 
@@ -1356,7 +1504,10 @@ int scan_roms(void)
    }
    library_unlock();
    for (i = 0; i < count; i++)
-      rom_dir(&sc, folders[i].path, system_by_folder(base_name(folders[i].path)), 0);
+   {
+      n = folders[i].system[0] ? system_by_name(folders[i].system) : -1;
+      rom_dir(&sc, folders[i].path, n >= 0 ? n : system_by_folder(base_name(folders[i].path)), 0);
+   }
    SDL_free(folders);
 
    /* One file per game, the one to start it with. */

@@ -33,7 +33,8 @@ enum msg_kind
    MSG_MATCHES,
    MSG_STATUS,
    MSG_STEAM_DONE,
-   MSG_ADD_EXE
+   MSG_ADD_EXE,
+   MSG_ROM_FOLDER
 };
 
 struct msg
@@ -707,7 +708,9 @@ enum modal
    MODAL_NONE,
    MODAL_MATCH,
    MODAL_STEAM,
-   MODAL_GAME
+   MODAL_GAME,
+   /* Picks a ROM folder's system. */
+   MODAL_SYSTEM
 };
 
 /* A texture made from one of a game's saved images. */
@@ -795,6 +798,9 @@ static struct
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
+   /* The folder MODAL_SYSTEM is for. */
+   int modal_item;
+   float modal_scroll;
    /* A game's name while it's edited on its page: whose, and where. */
    char name[256];
    int name_game;
@@ -1381,6 +1387,17 @@ static void pick_exe(void)
 #else
    SDL_ShowOpenFileDialog(on_exe_picked, NULL, app.window, NULL, 0, NULL, false);
 #endif
+}
+
+/* A folder picked: handed on like the exe above. */
+static void SDLCALL on_rom_folder(void *user, const char *const *files, int filter)
+{
+   struct msg *m;
+
+   if (!files || !files[0] || !(m = new_msg(MSG_ROM_FOLDER)))
+      return;
+   m->ptr = SDL_strdup(files[0]);
+   post(m);
 }
 
 /* keep_ticks: what's ticked but not in Steam yet (or the other way) stays
@@ -2198,6 +2215,66 @@ static float settings_card(float x, float y, float w, float h, const char *title
    return y + S(58);
 }
 
+static void open_list_modal(enum modal modal, int what)
+{
+   app.modal = modal;
+   app.modal_item = what;
+   app.modal_scroll = 0;
+}
+
+/* The ROM folders: each with its system (or told by each ROM), and an x
+ * to leave it out. Returns the card's height. */
+static float draw_rom_folders(float x, float y, float w)
+{
+   float row = S(48), cy, h;
+   int i, n, unknown, removed = -1;
+   char line[256];
+
+   library_lock();
+   n = roms_folder_count();
+   unknown = roms_unknown();
+   h = S(152) + row * n + (unknown ? S(46) : 0);
+   cy = settings_card(x, y, w, h, "ROM folders");
+   ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
+         "Folders named ROMs are found by themselves. Add others here.");
+   cy += S(28);
+   for (i = 0; i < n; i++, cy += row)
+   {
+      const struct rom_folder *f = roms_folder(i);
+      const char *system = f->system[0] ? f->system : "Any system";
+      float bw = button_w(system), xx = x + w - S(24) - S(36);
+
+      ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(48) - S(56) - bw, C_TEXT, 1,
+            f->path);
+      if (button(xx - S(8) - bw, cy, bw, S(40), system, false, true, false))
+         open_list_modal(MODAL_SYSTEM, i);
+      if (hover(xx, cy, S(36), S(40)))
+         ui_rect(xx, cy, S(36), S(40), S(12), 1, 1, 1, 0.09f);
+      draw_icon(ICON_CLOSE, xx + S(18), cy + S(20), 15, C_TEXT, 0.8f);
+      if (clicked_in(xx, cy, S(36), S(40), false))
+         removed = i;
+   }
+   library_unlock();
+   if (unknown)
+   {
+      SDL_snprintf(line, sizeof(line), "%d file%s of no known system: name %s folder for the system "
+            "(PSX, SNES...), or pick it above.", unknown, unknown == 1 ? "" : "s",
+            unknown == 1 ? "its" : "their");
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(18), UI_LEFT, w - S(48), C_DIM, 1, line);
+      cy += S(46);
+   }
+   if (button(x + S(24), cy + S(6), button_w("Add folder"), S(40), "Add folder", false, true, false))
+      SDL_ShowOpenFolderDialog(on_rom_folder, NULL, app.window, NULL, false);
+   if (removed >= 0)
+   {
+      library_lock();
+      roms_remove_folder(removed);
+      library_unlock();
+      rescan(true);
+   }
+   return h;
+}
+
 static void draw_settings(float x, float y, float w, float h)
 {
    char line[1200];
@@ -2238,6 +2315,8 @@ static void draw_settings(float x, float y, float w, float h)
       SDL_strlcpy(line, "Not found", sizeof(line));
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1, line);
    y += S(100) + S(20);
+
+   y += draw_rom_folders(x, y, cw) + S(20);
    glDisable(GL_SCISSOR_TEST);
 
    /* What's left to scroll to, now that it's all been placed. */
@@ -2375,11 +2454,87 @@ static void draw_game_settings(void)
       close_modal();
 }
 
+/* One of a list, each with a smaller line under it (empty for none):
+ * which was clicked, -1 none, -2 closed. */
+static int draw_list_modal(const char *title, const char *const *labels, const char *const *subs,
+      int count, int current)
+{
+   float row = S(54), w = S(600), x, y, top, list_h, h, most;
+   int i, clicked = -1;
+
+   list_h = SDL_min(row * count, app.height - S(220));
+   h = list_h + S(160);
+   modal_box(w, h, &x, &y, title);
+   top = y + S(76);
+   if (app.wheel != 0)
+      app.modal_scroll -= app.wheel * row;
+   app.wheel = 0;
+   most = SDL_max(0, row * count - list_h);
+   app.modal_scroll = SDL_clamp(app.modal_scroll, 0, most);
+   glEnable(GL_SCISSOR_TEST);
+   glScissor((int)x, app.height - (int)(top + list_h), (int)w, (int)list_h);
+   for (i = 0; i < count; i++)
+   {
+      float ry = top + row * i - app.modal_scroll;
+      bool in = inside(app.mx, app.my, x, top, w, list_h);
+
+      if (ry + row < top || ry > top + list_h)
+         continue;
+      if (i == current)
+         ui_rect(x + S(20), ry + S(1), w - S(40), row - S(2), S(10), C_ACCENT, 0.16f);
+      else if (in && inside(app.mx, app.my, x + S(20), ry, w - S(40), row))
+         ui_rect(x + S(20), ry + S(1), w - S(40), row - S(2), S(10), 1, 1, 1, 0.07f);
+      ui_text(UI_BOLD, S(15), x + S(34), ry + (subs[i][0] ? S(18) : row / 2), UI_LEFT, w - S(68),
+            C_TEXT, 1, labels[i]);
+      if (subs[i][0])
+         ui_text(UI_MEDIUM, S(12.5f), x + S(34), ry + S(37), UI_LEFT, w - S(68), C_DIM, 1, subs[i]);
+      if (inside(app.cx, app.cy, x, top, w, list_h)
+            && clicked_in(x + S(20), ry, w - S(40), row, true))
+         clicked = i;
+   }
+   glDisable(GL_SCISSOR_TEST);
+   if (button(x + w - S(28) - S(110), y + h - S(62), S(110), S(42), "Cancel", false, true, true))
+      return -2;
+   return clicked;
+}
+
+static void draw_system_modal(void)
+{
+   const char *labels[64], *subs[64];
+   int i, n = SDL_min(roms_system_count() + 1, 64), current = 0, picked = -2;
+   const struct rom_folder *f;
+
+   library_lock();
+   if ((f = roms_folder(app.modal_item)))
+   {
+      for (i = 0; i < n; i++)
+      {
+         labels[i] = i ? roms_system_name(i - 1) : "Any system";
+         subs[i] = i ? "" : "Told by folder names, file types and what's on each disc";
+         if (i && SDL_strcmp(f->system, labels[i]) == 0)
+            current = i;
+      }
+      picked = draw_list_modal("What's in this folder?", labels, subs, n, current);
+      if (picked >= 0)
+         roms_set_folder_system(app.modal_item, picked ? labels[picked] : "");
+   }
+   library_unlock();
+   if (picked != -1)
+      close_modal();
+   if (picked >= 0)
+      rescan(true);
+}
+
 static void draw_modal(void)
 {
    float x, y, w, h;
    int i;
 
+   if (app.modal == MODAL_SYSTEM)
+   {
+      draw_system_modal();
+      return;
+   }
    if (app.modal == MODAL_GAME)
       draw_game_settings();
    else if (app.modal == MODAL_STEAM)
@@ -2526,6 +2681,12 @@ static void handle_msg(struct msg *m)
          }
          break;
       }
+      case MSG_ROM_FOLDER:
+         library_lock();
+         roms_add_folder(m->ptr);
+         library_unlock();
+         rescan(true);
+         break;
       case MSG_STEAM_DONE:
          app.busy = false;
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));
@@ -2790,6 +2951,7 @@ int main(int argc, char **argv)
       SDL_SetLogOutputFunction(log_to_file, NULL);
    SDL_snprintf(config, sizeof(config), "%sconfig", base);
    sgdb_init(config);
+   roms_init(config);
    steam_init();
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);
