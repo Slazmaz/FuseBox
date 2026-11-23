@@ -773,6 +773,8 @@ static struct
    char filter[128];
    char key[128];
    char match[256];
+   /* And how far it goes, as it was last drawn. */
+   float settings_scroll, settings_most;
    /* A game's name while it's edited on its page: whose, and where. */
    char name[256];
    int name_game;
@@ -2171,7 +2173,21 @@ static float settings_card(float x, float y, float w, float h, const char *title
 static void draw_settings(float x, float y, float w, float h)
 {
    char line[1200];
-   float cw = SDL_min(w, S(720)), cy;
+   float cw = SDL_min(w, S(720)), cy, top = y, start;
+   /* Scrolled out under the top bar, nothing is there to click. */
+   bool held = app.click && app.cy < top;
+
+   if (held)
+      app.click = false;
+   if (app.wheel != 0 && inside(app.wx, app.wy, x - S(32), top, w + S(64), h))
+   {
+      app.settings_scroll -= app.wheel * S(120);
+      app.wheel = 0;
+   }
+   app.settings_scroll = SDL_clamp(app.settings_scroll, 0, app.settings_most);
+   glEnable(GL_SCISSOR_TEST);
+   glScissor((int)(x - S(16)), 0, app.width, (int)h);
+   start = y -= app.settings_scroll;
 
    ui_text(UI_BOLD, S(22), x, y + S(30), UI_LEFT, 0, C_TEXT, 1, "Settings");
    y += S(64);
@@ -2193,6 +2209,18 @@ static void draw_settings(float x, float y, float w, float h)
    else
       SDL_strlcpy(line, "Not found", sizeof(line));
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1, line);
+   y += S(100) + S(20);
+   glDisable(GL_SCISSOR_TEST);
+
+   /* What's left to scroll to, now that it's all been placed. */
+   {
+      float most = SDL_max(0, y - start - h);
+      if (app.settings_scroll > most)
+         app.redraw = true;
+      app.settings_most = most;
+   }
+   if (held)
+      app.click = true;
 }
 
 /* ---- Modals ------------------------------------------------------------ */
