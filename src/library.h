@@ -57,6 +57,8 @@ struct game
    unsigned sgdb_id;
    char sgdb_name[256];
    struct art_choice art[ART_TYPES];
+   /* The user picked art since it was last sent to Steam. */
+   bool art_edited;
    /* Its shortcut's settings in Steam, kept whether it has one yet or not:
     * the overlay, Steam Input, and options added after its own. */
    bool steam_overlay;
@@ -103,8 +105,9 @@ int library_add(const struct game *game);
  * art of that type (replacing the old one) and marks the library changed. */
 bool library_set_art(int index, enum art_type type, const char *tmp_path,
       const char *ext, unsigned sgdb_id);
-/* Marks the game's art of that type as the user's pick. */
-void library_set_picked(int index, enum art_type type);
+/* Marks the game's art of that type as the user's pick; changed: it's not
+ * the one it had. */
+void library_set_picked(int index, enum art_type type, bool changed);
 /* Where a download for the game's art can go before library_set_art. */
 void library_tmp_path(int index, enum art_type type, char *dst, size_t size);
 void library_changed(void);

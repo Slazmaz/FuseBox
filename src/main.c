@@ -476,7 +476,7 @@ static void job_choose(void *data)
    struct choose_job *j = data;
    struct msg *m = new_msg(MSG_ART_SAVED);
    char tmp[1100];
-   bool ok;
+   bool ok, changed;
 
    library_tmp_path(j->index, j->type, tmp, sizeof(tmp));
    ok = SDL_strncmp(j->art.url, "file:", 5) == 0 ? SDL_CopyFile(j->art.url + 5, tmp)
@@ -488,9 +488,11 @@ static void job_choose(void *data)
          SDL_RemovePath(tmp);
       else
       {
+         const struct art_choice *a = &library_game(j->index)->art[j->type];
+         changed = !a->path[0] || a->sgdb_id != j->art.id;
          /* The user's pick: FuseBox leaves it as it is from now on. */
          if (library_set_art(j->index, j->type, tmp, j->art.ext, j->art.id))
-            library_set_picked(j->index, j->type);
+            library_set_picked(j->index, j->type, changed);
       }
       library_unlock();
    }
@@ -1005,7 +1007,7 @@ static bool settings_differ(const struct game *g)
 
    if (!g->steam_appid || g->gone || (tickable(g) && !g->selected))
       return false;
-   if (g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input)
+   if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input)
       return true;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;

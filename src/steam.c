@@ -393,8 +393,6 @@ bool steam_sync(char *msg, size_t size)
       fill_shortcut(s, g, appid, icon);
       g->steam_appid = appid;
    }
-   library_unlock();
-   library_changed();
 
    /* Steam numbers its shortcuts 0, 1, 2...: no gaps after removing. */
    {
@@ -411,6 +409,15 @@ bool steam_sync(char *msg, size_t size)
 
    ok = vdf_save(root, path);
    vdf_free(root);
+   /* Their art is in Steam now (still locked: none was picked since). */
+   for (i = 0; ok && i < library_count(); i++)
+   {
+      struct game *g = library_game(i);
+      if (g->installed && g->steam_appid)
+         g->art_edited = false;
+   }
+   library_unlock();
+   library_changed();
    if (ok)
       SDL_snprintf(msg, size, "Steam shortcuts: %d added, %d updated, %d removed", added,
             updated + art_only, removed);

@@ -245,11 +245,14 @@ void library_discard(void)
    library_unlock();
 }
 
-void library_set_picked(int index, enum art_type type)
+void library_set_picked(int index, enum art_type type, bool changed)
 {
    library_lock();
    if (library_game(index))
+   {
       library_game(index)->art[type].picked = true;
+      library_game(index)->art_edited |= changed;
+   }
    library_unlock();
    library_changed();
 }
@@ -287,6 +290,7 @@ static bool game_from_json(const struct json *o, struct game *g)
    /* Steam's own defaults where not set. */
    g->steam_overlay = json_bool(o, "steam_overlay", true);
    g->steam_input = json_bool(o, "steam_input", true);
+   g->art_edited = json_bool(o, "art_edited", false);
    copy_str(g->launch_options, sizeof(g->launch_options), o, "launch_options");
    for (t = 0; t < ART_TYPES; t++)
    {
@@ -422,8 +426,9 @@ static void write_game(SDL_IOStream *io, const struct game *g)
    json_write_string(io, g->start_dir);
    SDL_IOprintf(io, ",\n      \"args\": ");
    json_write_string(io, g->args);
-   SDL_IOprintf(io, ",\n      \"steam_overlay\": %s,\n      \"steam_input\": %s,\n      \"launch_options\": ",
-         g->steam_overlay ? "true" : "false", g->steam_input ? "true" : "false");
+   SDL_IOprintf(io, ",\n      \"steam_overlay\": %s,\n      \"steam_input\": %s,\n      \"art_edited\": %s,\n      \"launch_options\": ",
+         g->steam_overlay ? "true" : "false", g->steam_input ? "true" : "false",
+         g->art_edited ? "true" : "false");
    json_write_string(io, g->launch_options);
    SDL_IOprintf(io, ",\n      \"steam_appid\": %u,\n      \"sgdb_id\": %u,\n      \"sgdb_name\": ",
          (unsigned)g->steam_appid, g->sgdb_id);
