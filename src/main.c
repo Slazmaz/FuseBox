@@ -1635,7 +1635,7 @@ static void draw_sidebar(float w)
 
       pic = list_art(index, g);
       if (pic)
-         draw_cover(pic->tex, pic->w, pic->h, x + S(38), ry + S(8), S(28), S(28), S(7), 1);
+         draw_cover(pic->tex, pic->w, pic->h, x + S(38), ry + S(8), S(28), S(28), 0, 1);
       else
          ui_rect(x + S(38), ry + S(8), S(28), S(28), S(7), C_CARD, 1);
 
@@ -1879,7 +1879,7 @@ static void draw_game(float x, float y, float w, float h)
       }
       if (icon)
          draw_cover(icon, app.detail[ART_ICON].w, app.detail[ART_ICON].h, x + S(16), y + S(16),
-               sh - S(32), sh - S(32), S(14), 1);
+               sh - S(32), sh - S(32), 0, 1);
       else
          ui_rect(x + S(16), y + S(16), sh - S(32), sh - S(32), S(14), C_CARD, 1);
 
@@ -1988,8 +1988,9 @@ static void draw_game(float x, float y, float w, float h)
          continue;
       over = hover(ix, ty, tw, th) && inside(app.mx, app.my, x - S(8), grid_top, w + S(16), grid_h);
       ui_rect(ix, ty, tw, th, S(12), 1, 1, 1, over ? 0.09f : 0.04f);
+      /* Icons as they are, square corners; other art in rounded tiles. */
       if (it->tex)
-         draw_fit(it->tex, it->w, it->h, ix, ty, tw, th, S(12));
+         draw_fit(it->tex, it->w, it->h, ix, ty, tw, th, app.tab == ART_ICON ? 0 : S(12));
       else
          ui_text(UI_MEDIUM, S(13), ix + tw / 2, ty + th / 2, UI_CENTER, tw, C_DIM, 1,
                it->failed ? "No preview" : "...");
