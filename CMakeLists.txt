@@ -5,6 +5,7 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 find_package(SDL3 REQUIRED CONFIG)
+find_package(OpenGL REQUIRED)
 find_package(CURL REQUIRED)
 
 # stb_image (public domain): PNG/JPEG for art; stb_truetype: the UI's text.
@@ -36,20 +37,30 @@ if(WIN32)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
 endif()
 
+add_executable(fusebox src/main.c src/ui.c src/gl.c)
+target_link_libraries(fusebox PRIVATE fusebox_core stb_image stb_truetype OpenGL::GL)
+# A window app on Windows: no console of its own.
+set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
+
 # A console app, so other programs can read what it prints.
 add_executable(fusebox-cli src/cli.c)
 target_link_libraries(fusebox-cli PRIVATE fusebox_core)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-   foreach(t fusebox-cli fusebox_core)
+   foreach(t fusebox fusebox-cli fusebox_core)
       target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
    endforeach()
 endif()
 
+# The font next to the exe.
+add_custom_command(TARGET fusebox POST_BUILD
+   COMMAND ${CMAKE_COMMAND} -E copy_directory
+      ${CMAKE_SOURCE_DIR}/fonts $<TARGET_FILE_DIR:fusebox>/fonts)
+
 # SDL3, libcurl and their DLLs next to the exes, so they run outside the
 # build shell.
 if(WIN32)
-   foreach(t fusebox-cli)
+   foreach(t fusebox fusebox-cli)
       add_custom_command(TARGET ${t} POST_BUILD
          COMMAND ${CMAKE_COMMAND}
             -DEXE=$<TARGET_FILE:${t}>
