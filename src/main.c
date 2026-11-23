@@ -181,17 +181,25 @@ static GLuint make_texture(const Uint8 *pixels, int w, int h)
 
 /* ---- Jobs -------------------------------------------------------------- */
 
+/* data not NULL: ticks the user changed since the last scan are kept. */
 static void job_scan(void *data)
 {
    struct msg *m = new_msg(MSG_SCANNED);
-   int steam_n, found, i;
+   /* What each game's changed tick is (1 off, 2 on), 0 if it's as Steam has it. */
+   Uint8 *ticks = NULL;
+   int steam_n, found, i, count;
 
    /* What's installed and what Steam has is found again each time: the
     * launchers first, then Steam's shortcuts matched to their games. */
    library_lock();
-   for (i = 0; i < library_count(); i++)
+   count = library_count();
+   if (data)
+      ticks = SDL_calloc((size_t)SDL_max(1, count), 1);
+   for (i = 0; i < count; i++)
    {
       struct game *g = library_game(i);
+      if (ticks && (g->gone ? g->selected : g->installed && g->selected != (g->steam_appid != 0)))
+         ticks[i] = g->selected ? 2 : 1;
       g->installed = g->gone = g->selected = false;
       g->steam_appid = 0;
    }
@@ -203,6 +211,16 @@ static void job_scan(void *data)
    /* ROMs last: what their emulators' folders hold is for the others. */
    found += scan_roms();
    steam_n = steam_read_shortcuts();
+   if (ticks)
+   {
+      library_lock();
+      for (i = 0; i < count; i++)
+         if (ticks[i] && (library_game(i)->installed || library_game(i)->gone))
+            library_game(i)->selected = ticks[i] == 2;
+      library_unlock();
+      SDL_free(ticks);
+   }
+   SDL_free(data);
 
    library_save();
    if (m)
@@ -743,6 +761,8 @@ static struct
    char steam_note[128];
    bool busy;
    bool scanned;
+   /* Something changed while a scan ran: scan again after it. */
+   bool scan_again;
    enum page page;
 
    /* The library: indices shown, in name order. */
@@ -1363,11 +1383,19 @@ static void pick_exe(void)
 #endif
 }
 
-static void rescan(void)
+/* keep_ticks: what's ticked but not in Steam yet (or the other way) stays
+ * so. */
+static void rescan(bool keep_ticks)
 {
+   /* One at a time, and not while Steam is updated (which scans after). */
+   if (!app.scanned || app.busy)
+   {
+      app.scan_again = true;
+      return;
+   }
    /* The status line keeps the last count until the new one is in. */
    app.scanned = false;
-   jobs_add(job_scan, NULL, JOB_NOW, true);
+   jobs_add(job_scan, keep_ticks ? SDL_strdup("") : NULL, JOB_NOW, true);
 }
 
 /* Icons the font has no symbol for, made at the exact pixel size they're
@@ -1732,7 +1760,7 @@ static void draw_sidebar(float w)
    /* Always there: it also sends art picked since the last update. */
    if (button(x + S(14), card_y + ch - S(54), lw - S(28), S(40),
             app.busy ? "Working..." : "Update Steam Shortcuts", n > 0,
-            steam_install() && !app.busy && !choosing(), false))
+            steam_install() && !app.busy && app.scanned && !choosing(), false))
    {
       if (platform_steam_running(steam_install()))
          app.modal = MODAL_STEAM;
@@ -2424,6 +2452,11 @@ static void handle_msg(struct msg *m)
          SDL_strlcpy(app.status, m->text, sizeof(app.status));
          app.view_built_for = -1;
          start_fill();
+         if (app.scan_again && !app.busy)
+         {
+            app.scan_again = false;
+            rescan(true);
+         }
          if (!sgdb_has_key())
          {
             app.page = PAGE_SETTINGS;
@@ -2497,7 +2530,7 @@ static void handle_msg(struct msg *m)
          app.busy = false;
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));
          /* Scanned again: the counts up top, and what Steam has now. */
-         rescan();
+         rescan(false);
          break;
    }
    if (m->kind != MSG_MATCHES && m->kind != MSG_ART_LIST)
