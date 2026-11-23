@@ -11,6 +11,7 @@
 #include "disk.h"
 #include "jobs.h"
 #include "library.h"
+#include "ra.h"
 #include "roms.h"
 #include "scan.h"
 #include "sgdb.h"
@@ -36,7 +37,8 @@ enum msg_kind
    MSG_STEAM_DONE,
    MSG_ADD_EXE,
    MSG_ROM_FOLDER,
-   MSG_EMULATOR
+   MSG_EMULATOR,
+   MSG_LOGIN
 };
 
 struct msg
@@ -658,6 +660,28 @@ static bool wanted_in_steam(const struct game *g)
       && SDL_strcmp(g->source, "Steam") != 0;
 }
 
+struct login_job
+{
+   char user[128], password[256];
+};
+
+static void job_login(void *data)
+{
+   struct login_job *j = data;
+   struct msg *m = new_msg(MSG_LOGIN);
+   char error[128];
+   bool ok = ra_login(j->user, j->password, jobs_abort(), error, sizeof(error));
+
+   SDL_zerop(j);
+   SDL_free(j);
+   if (m)
+   {
+      m->count = ok;
+      SDL_strlcpy(m->text, error, sizeof(m->text));
+      post(m);
+   }
+}
+
 struct steam_job
 {
    bool close_steam;
@@ -723,6 +747,8 @@ enum field
    FIELD_NONE,
    FIELD_FILTER,
    FIELD_KEY,
+   FIELD_RA_USER,
+   FIELD_RA_PASSWORD,
    FIELD_MATCH,
    FIELD_OPTIONS,
    FIELD_NAME
@@ -827,6 +853,10 @@ static struct
    enum field field;
    char filter[128];
    char key[128];
+   /* Logging in to RetroAchievements, and what came of it. */
+   char ra_user[128], ra_password[256];
+   bool ra_busy;
+   char ra_error[128];
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
@@ -995,6 +1025,8 @@ static char *field_text(enum field f, size_t *size)
    {
       case FIELD_FILTER: *size = sizeof(app.filter); return app.filter;
       case FIELD_KEY: *size = sizeof(app.key); return app.key;
+      case FIELD_RA_USER: *size = sizeof(app.ra_user); return app.ra_user;
+      case FIELD_RA_PASSWORD: *size = sizeof(app.ra_password); return app.ra_password;
       case FIELD_MATCH: *size = sizeof(app.match); return app.match;
       case FIELD_NAME: *size = sizeof(app.name); return app.name;
       case FIELD_OPTIONS: *size = sizeof(app.options); return app.options;
@@ -1944,6 +1976,8 @@ static void draw_top(float x0)
       {
          app.page = on ? PAGE_GAME : PAGE_SETTINGS;
          app.key[0] = '\0';
+         SDL_zeroa(app.ra_password);
+         app.ra_error[0] = '\0';
       }
       right = sx + bw;
    }
@@ -2311,6 +2345,23 @@ static void save_key(void)
    start_fill();
 }
 
+static void log_in(void)
+{
+   struct login_job *j;
+
+   if (!app.ra_user[0] || !app.ra_password[0] || app.ra_busy
+         || !(j = SDL_calloc(1, sizeof(*j))))
+      return;
+   SDL_strlcpy(j->user, app.ra_user, sizeof(j->user));
+   SDL_strlcpy(j->password, app.ra_password, sizeof(j->password));
+   SDL_zeroa(app.ra_password);
+   app.ra_error[0] = '\0';
+   app.ra_busy = true;
+   app.field = FIELD_NONE;
+   SDL_StopTextInput(app.window);
+   jobs_add(job_login, j, JOB_NOW, true);
+}
+
 static float settings_card(float x, float y, float w, float h, const char *title)
 {
    ui_rect(x, y, w, h, S(18), C_CARD, 1);
@@ -2378,6 +2429,44 @@ static float draw_rom_folders(float x, float y, float w)
    return h;
 }
 
+/* RetroAchievements: logging in. Returns the card's height. */
+static float draw_achievements_card(float x, float y, float w)
+{
+   char user[128], line[200];
+   bool in = ra_user(user, sizeof(user));
+   float h = S(in ? 124 : 150);
+   float cy, bw, fw, rx = x + w - S(24);
+
+   cy = settings_card(x, y, w, h, "RetroAchievements");
+   if (!in)
+   {
+      if (app.ra_error[0])
+         ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_RED, 1,
+               app.ra_error);
+      else
+         ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
+               app.ra_busy ? "Logging in..."
+               : "Your retroachievements.org login. The password isn't kept.");
+      bw = S(108);
+      fw = (w - S(48) - bw - S(24)) / 2;
+      text_field(x + S(24), cy + S(30), fw, S(44), FIELD_RA_USER, app.ra_user, "Username", false,
+            false, 0);
+      text_field(x + S(24) + fw + S(12), cy + S(30), fw, S(44), FIELD_RA_PASSWORD,
+            app.ra_password, "Password", true, false, 0);
+      if (button(rx - bw, cy + S(30), bw, S(44), "Log in", true,
+               app.ra_user[0] && app.ra_password[0] && !app.ra_busy, false))
+         log_in();
+      return h;
+   }
+
+   bw = button_w("Log out");
+   SDL_snprintf(line, sizeof(line), "Logged in as %s", user);
+   ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_TEXT, 1, line);
+   if (button(rx - bw, cy, bw, S(40), "Log out", false, true, false))
+      ra_logout();
+   return h;
+}
+
 static void draw_settings(float x, float y, float w, float h)
 {
    char line[1200];
@@ -2419,6 +2508,7 @@ static void draw_settings(float x, float y, float w, float h)
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1, line);
    y += S(100) + S(20);
 
+   y += draw_achievements_card(x, y, cw) + S(20);
    y += draw_rom_folders(x, y, cw) + S(20);
    glDisable(GL_SCISSOR_TEST);
 
@@ -2910,6 +3000,12 @@ static void handle_msg(struct msg *m)
                   sizeof(app.emulator_note));
          break;
       }
+      case MSG_LOGIN:
+         app.ra_busy = false;
+         SDL_strlcpy(app.ra_error, m->text, sizeof(app.ra_error));
+         if (m->count)
+            app.ra_user[0] = '\0';
+         break;
       case MSG_STEAM_DONE:
          app.busy = false;
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));
@@ -2950,7 +3046,9 @@ static void on_key(const SDL_KeyboardEvent *k)
    }
    if (!text)
       return;
-   if (k->key == SDLK_BACKSPACE && text[0])
+   if (k->key == SDLK_TAB && (app.field == FIELD_RA_USER || app.field == FIELD_RA_PASSWORD))
+      app.field = app.field == FIELD_RA_USER ? FIELD_RA_PASSWORD : FIELD_RA_USER;
+   else if (k->key == SDLK_BACKSPACE && text[0])
    {
       size_t len = SDL_strlen(text);
       /* A whole UTF-8 character. */
@@ -2982,6 +3080,10 @@ static void on_key(const SDL_KeyboardEvent *k)
    {
       if (app.field == FIELD_KEY)
          save_key();
+      else if (app.field == FIELD_RA_USER)
+         app.field = FIELD_RA_PASSWORD;
+      else if (app.field == FIELD_RA_PASSWORD)
+         log_in();
       else if (app.field == FIELD_NAME)
          save_name();
       else if (app.field == FIELD_MATCH)
@@ -3175,6 +3277,7 @@ int main(int argc, char **argv)
    SDL_snprintf(config, sizeof(config), "%sconfig", base);
    sgdb_init(config);
    roms_init(config);
+   ra_init(config);
    steam_init();
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);

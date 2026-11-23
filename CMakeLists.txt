@@ -62,6 +62,7 @@ add_library(fusebox_core STATIC
    src/disk.c
    src/roms.c
    src/jobs.c
+   src/ra.c
    src/rahash.c
    src/disc.c
    src/crypto.c
