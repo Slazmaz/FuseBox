@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <SDL3/SDL_stdinc.h>
 
-/* Animated WebP and PNG (APNG): what SteamGridDB's animated art is. */
+/* Animated WebP and PNG (APNG): what SteamGridDB's animated art is; and
+ * WebM video: its previews of it (the art itself is many megabytes). */
 
 /* An animation's frames, RGBA, in one block: SDL_free it. */
 struct anim

@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 #include <stb_image.h>
+#include <vpx/vp8dx.h>
+#include <vpx/vpx_decoder.h>
 #include <webp/demux.h>
 
 /* More than any has: past it, shown still. */
@@ -285,8 +287,204 @@ static struct anim *load_apng(const Uint8 *d, size_t size, int max_w, int max_h,
    return anim_done(a);
 }
 
+/* A video frame's data, and its transparency's (a video of its own). */
+struct packet
+{
+   const Uint8 *data, *alpha;
+   size_t size, alpha_size;
+   int ms;
+};
+
+struct webm
+{
+   struct packet *packets;
+   int count, alloc;
+   int cluster_ms;
+   bool vp9;
+};
+
+/* WebM's numbers start with how long they are: the zeros before the first
+ * 1. An id keeps that 1, a size doesn't. */
+static bool ebml_number(const Uint8 **p, const Uint8 *end, bool id, Uint64 *v)
+{
+   int len = 1, i;
+
+   if (*p >= end || !**p)
+      return false;
+   while (!(**p & (0x80 >> (len - 1))))
+      len++;
+   if (end - *p < len)
+      return false;
+   *v = id ? **p : **p & (0xFF >> len);
+   for (i = 1; i < len; i++)
+      *v = *v << 8 | (*p)[i];
+   /* All ones: to the end of what it's in. */
+   if (!id && *v == ((Uint64)1 << (7 * len)) - 1)
+      *v = SDL_MAX_UINT64;
+   *p += len;
+   return true;
+}
+
+/* A block: its track, its time in the cluster, flags, then the frame. */
+static void add_packet(struct webm *m, const Uint8 *p, const Uint8 *end)
+{
+   Uint64 track;
+   struct packet *k;
+
+   /* Several frames in one (lacing) is for sound. */
+   if (!ebml_number(&p, end, false, &track) || end - p < 4 || (p[2] & 0x06))
+      return;
+   if (m->count >= FRAMES_MAX)
+      return;
+   if (m->count == m->alloc)
+   {
+      int alloc = m->alloc ? m->alloc * 2 : 64;
+      struct packet *grown = SDL_realloc(m->packets, sizeof(*grown) * (size_t)alloc);
+      if (!grown)
+         return;
+      m->packets = grown;
+      m->alloc = alloc;
+   }
+   k = &m->packets[m->count++];
+   SDL_zerop(k);
+   k->ms = m->cluster_ms + (Sint16)(p[0] << 8 | p[1]);
+   k->data = p + 3;
+   k->size = (size_t)(end - k->data);
+}
+
+static void read_webm(struct webm *m, const Uint8 *p, const Uint8 *end, int depth)
+{
+   Uint64 id, size, v;
+   int i;
+
+   while (ebml_number(&p, end, true, &id) && ebml_number(&p, end, false, &size))
+   {
+      const Uint8 *stop = size > (Uint64)(end - p) ? end : p + size;
+
+      switch (id)
+      {
+         /* Segment, cluster, block group, tracks, track; block additions. */
+         case 0x18538067: case 0x1F43B675: case 0xA0: case 0x1654AE6B: case 0xAE:
+         case 0x75A1: case 0xA6:
+            if (depth < 8)
+               read_webm(m, p, stop, depth + 1);
+            break;
+         case 0xE7: /* The cluster's time. */
+            for (v = 0, i = 0; p + i < stop; i++)
+               v = v << 8 | p[i];
+            m->cluster_ms = (int)v;
+            break;
+         case 0x86: /* The codec. */
+            m->vp9 = stop - p >= 5 && SDL_memcmp(p, "V_VP9", 5) == 0;
+            break;
+         case 0xA1: case 0xA3: /* A block, in a group or alone. */
+            add_packet(m, p, stop);
+            break;
+         case 0xA5: /* The transparency, after its block. */
+            if (m->count)
+            {
+               m->packets[m->count - 1].alpha = p;
+               m->packets[m->count - 1].alpha_size = (size_t)(stop - p);
+            }
+            break;
+         default:
+            break;
+      }
+      p = stop;
+   }
+}
+
+static const vpx_image_t *decode_frame(vpx_codec_ctx_t *ctx, const Uint8 *data, size_t size)
+{
+   vpx_codec_iter_t iter = NULL;
+
+   if (vpx_codec_decode(ctx, data, (unsigned)size, NULL, 0) != VPX_CODEC_OK)
+      return NULL;
+   /* None for a frame only others build on. */
+   return vpx_codec_get_frame(ctx, &iter);
+}
+
+static Uint8 clamp8(int v)
+{
+   return (Uint8)SDL_clamp(v, 0, 255);
+}
+
+static struct anim *load_webm(const Uint8 *d, size_t size, int max_w, int max_h, size_t max_bytes)
+{
+   vpx_codec_ctx_t colour, alpha;
+   vpx_codec_iface_t *codec;
+   struct webm m;
+   struct anim *a = NULL;
+   Uint8 *rgba = NULL;
+   int i, w = 0, h = 0;
+
+   SDL_zero(m);
+   read_webm(&m, d, d + size, 0);
+   codec = m.vp9 ? vpx_codec_vp9_dx() : vpx_codec_vp8_dx();
+   if (m.count < 2 || vpx_codec_dec_init(&colour, codec, NULL, 0) != VPX_CODEC_OK)
+   {
+      SDL_free(m.packets);
+      return NULL;
+   }
+   if (vpx_codec_dec_init(&alpha, codec, NULL, 0) != VPX_CODEC_OK)
+   {
+      vpx_codec_destroy(&colour);
+      SDL_free(m.packets);
+      return NULL;
+   }
+   for (i = 0; i < m.count; i++)
+   {
+      const struct packet *k = &m.packets[i];
+      const vpx_image_t *c = decode_frame(&colour, k->data, k->size), *t = NULL;
+      int x, y, end;
+
+      if (k->alpha)
+         t = decode_frame(&alpha, k->alpha, k->alpha_size);
+      if (!c || c->fmt != VPX_IMG_FMT_I420)
+         continue;
+      if (!a)
+      {
+         w = (int)c->d_w;
+         h = (int)c->d_h;
+         if (!(a = anim_new(w, h, m.count, max_w, max_h, max_bytes))
+               || !(rgba = SDL_malloc((size_t)w * h * 4)))
+            break;
+      }
+      if ((int)c->d_w != w || (int)c->d_h != h)
+         continue;
+      if (t && ((int)t->d_w != w || (int)t->d_h != h))
+         t = NULL;
+      for (y = 0; y < h; y++)
+      {
+         const Uint8 *py = c->planes[0] + (ptrdiff_t)y * c->stride[0];
+         const Uint8 *pu = c->planes[1] + (ptrdiff_t)(y / 2) * c->stride[1];
+         const Uint8 *pv = c->planes[2] + (ptrdiff_t)(y / 2) * c->stride[2];
+         Uint8 *o = rgba + (size_t)y * w * 4;
+         for (x = 0; x < w; x++, o += 4)
+         {
+            /* BT.601, 16-235. */
+            int l = (py[x] - 16) * 298, u = pu[x / 2] - 128, v = pv[x / 2] - 128;
+            o[0] = clamp8((l + 409 * v + 128) >> 8);
+            o[1] = clamp8((l - 100 * u - 208 * v + 128) >> 8);
+            o[2] = clamp8((l + 516 * u + 128) >> 8);
+            o[3] = t ? t->planes[0][(ptrdiff_t)y * t->stride[0] + x] : 255;
+         }
+      }
+      /* Until the next one; the last as long as the one before it. */
+      end = i + 1 < m.count ? m.packets[i + 1].ms : 2 * k->ms - m.packets[i - 1].ms;
+      anim_add(a, rgba, w, h, end - m.packets[0].ms);
+   }
+   vpx_codec_destroy(&colour);
+   vpx_codec_destroy(&alpha);
+   SDL_free(m.packets);
+   SDL_free(rgba);
+   return anim_done(a);
+}
+
 struct anim *anim_load(const void *data, size_t size, int max_w, int max_h, size_t max_bytes)
 {
+   if (size > 4 && SDL_memcmp(data, "\x1A\x45\xDF\xA3", 4) == 0)
+      return load_webm(data, size, max_w, max_h, max_bytes);
    if (size > 8 && SDL_memcmp(data, "\x89PNG\r\n\x1a\n", 8) == 0)
       return load_apng(data, size, max_w, max_h, max_bytes);
    return load_webp(data, size, max_w, max_h, max_bytes);

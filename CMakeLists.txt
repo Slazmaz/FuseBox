@@ -10,6 +10,14 @@ find_package(CURL REQUIRED)
 # WebP: animated art.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebpdemux libwebp)
+# VP8: SteamGridDB's previews of it. Windows: linked in, no DLL of its own.
+pkg_check_modules(VPX REQUIRED IMPORTED_TARGET vpx)
+if(WIN32)
+   find_library(VPX_STATIC NAMES libvpx.a HINTS ${VPX_LIBDIR} REQUIRED)
+   set(VPX_LIB ${VPX_STATIC})
+else()
+   set(VPX_LIB PkgConfig::VPX)
+endif()
 
 # stb_image (public domain): PNG/JPEG for art; stb_truetype: the UI's text.
 add_library(stb_image STATIC third_party/stb/stb_image.c)
@@ -42,7 +50,7 @@ if(WIN32)
 endif()
 
 add_executable(fusebox src/main.c src/ui.c src/gl.c src/anim.c)
-target_link_libraries(fusebox PRIVATE fusebox_core stb_image stb_truetype OpenGL::GL PkgConfig::WEBP)
+target_link_libraries(fusebox PRIVATE fusebox_core stb_image stb_truetype OpenGL::GL PkgConfig::WEBP ${VPX_LIB})
 # A window app on Windows: no console of its own.
 set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
 
