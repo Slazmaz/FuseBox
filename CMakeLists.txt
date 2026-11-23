@@ -7,6 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 find_package(SDL3 REQUIRED CONFIG)
 find_package(OpenGL REQUIRED)
 find_package(CURL REQUIRED)
+# WebP: animated art.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebpdemux libwebp)
 
 # stb_image (public domain): PNG/JPEG for art; stb_truetype: the UI's text.
 add_library(stb_image STATIC third_party/stb/stb_image.c)
@@ -38,8 +41,8 @@ if(WIN32)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
 endif()
 
-add_executable(fusebox src/main.c src/ui.c src/gl.c)
-target_link_libraries(fusebox PRIVATE fusebox_core stb_image stb_truetype OpenGL::GL)
+add_executable(fusebox src/main.c src/ui.c src/gl.c src/anim.c)
+target_link_libraries(fusebox PRIVATE fusebox_core stb_image stb_truetype OpenGL::GL PkgConfig::WEBP)
 # A window app on Windows: no console of its own.
 set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
 

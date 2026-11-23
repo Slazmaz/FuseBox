@@ -5,6 +5,7 @@
  * The window is drawn immediate-mode: a click is remembered, then the
  * frame's widgets each check whether it landed on them. Nothing is drawn
  * while nothing changes (events or finished jobs wake it). */
+#include "anim.h"
 #include "gl.h"
 #include "http.h"
 #include "disk.h"
@@ -160,7 +161,7 @@ static Uint8 *decode(const void *data, size_t size, int max_w, int max_h, int *w
    int n, iw, ih;
    Uint8 *px = stbi_load_from_memory(data, (int)size, &iw, &ih, &n, 4);
 
-   if (!px)
+   if (!px && !(px = anim_first(data, size, &iw, &ih)))
       return NULL;
    return shrink(px, iw, ih, max_w, max_h, w, h);
 }
