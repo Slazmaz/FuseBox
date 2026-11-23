@@ -3398,16 +3398,46 @@ static void SDLCALL log_to_file(void *user, int category, SDL_LogPriority priori
    }
 }
 
+/* fusebox --steam: starts Steam (unless it runs) showing achievements as
+ * the settings say, with no window; ends once Steam has them. */
+static int start_steam(void)
+{
+   const struct steam_install *st = steam_install();
+   Uint64 until = SDL_GetTicks() + 180000;
+   enum steamui shown;
+   bool started = false;
+   int games = 0;
+
+   if (!st)
+      return 1;
+   if (!platform_steam_running(st))
+   {
+      steamui_start(st);
+      started = true;
+   }
+   if (!ra_active())
+      return 0;
+   ra_refresh(false, NULL);
+   /* The window's to write. */
+   library_discard();
+   /* One that ran already either has its port or never will. */
+   while (((shown = steamui_push(&games, NULL)) == STEAMUI_WAIT
+            || (started && shown == STEAMUI_NO_PORT)) && SDL_GetTicks() < until)
+      SDL_Delay(1000);
+   return shown == STEAMUI_OK ? 0 : 1;
+}
+
 int main(int argc, char **argv)
 {
    char fonts[1024], log_path[1100], config[1100];
    const char *base;
    bool running = true;
    Uint64 saved_at = 0;
+   bool only_steam = argc == 2 && SDL_strcmp(argv[1], "--steam") == 0;
    struct msg *m;
    int i;
 
-   if (!SDL_Init(SDL_INIT_VIDEO))
+   if (!SDL_Init(only_steam ? 0 : SDL_INIT_VIDEO))
       return 1;
    /* Portable: everything FuseBox keeps is next to fusebox.exe. */
    base = SDL_GetBasePath();
@@ -3425,6 +3455,14 @@ int main(int argc, char **argv)
    roms_init(config);
    ra_init(config);
    steam_init();
+   if (only_steam)
+   {
+      int code = start_steam();
+      library_quit();
+      http_quit();
+      SDL_Quit();
+      return code;
+   }
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);
 
