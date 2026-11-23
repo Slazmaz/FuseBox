@@ -34,7 +34,8 @@ enum msg_kind
    MSG_STATUS,
    MSG_STEAM_DONE,
    MSG_ADD_EXE,
-   MSG_ROM_FOLDER
+   MSG_ROM_FOLDER,
+   MSG_EMULATOR
 };
 
 struct msg
@@ -709,8 +710,9 @@ enum modal
    MODAL_MATCH,
    MODAL_STEAM,
    MODAL_GAME,
-   /* Picks a ROM folder's system. */
-   MODAL_SYSTEM
+   /* Picks a ROM folder's system, or a game's emulator. */
+   MODAL_SYSTEM,
+   MODAL_EMULATOR
 };
 
 /* A texture made from one of a game's saved images. */
@@ -798,7 +800,9 @@ static struct
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
-   /* The folder MODAL_SYSTEM is for. */
+   /* What was wrong with the last emulator picked, if anything. */
+   char emulator_note[128];
+   /* The folder or game MODAL_SYSTEM or MODAL_EMULATOR is for. */
    int modal_item;
    float modal_scroll;
    /* A game's name while it's edited on its page: whose, and where. */
@@ -1389,7 +1393,7 @@ static void pick_exe(void)
 #endif
 }
 
-/* A folder picked: handed on like the exe above. */
+/* A folder or an emulator picked: handed on like the exe above. */
 static void SDLCALL on_rom_folder(void *user, const char *const *files, int filter)
 {
    struct msg *m;
@@ -1398,6 +1402,29 @@ static void SDLCALL on_rom_folder(void *user, const char *const *files, int filt
       return;
    m->ptr = SDL_strdup(files[0]);
    post(m);
+}
+
+/* user: the game's index. */
+static void SDLCALL on_emulator_picked(void *user, const char *const *files, int filter)
+{
+   struct msg *m;
+
+   if (!files || !files[0] || !(m = new_msg(MSG_EMULATOR)))
+      return;
+   m->index = (int)(intptr_t)user;
+   m->ptr = SDL_strdup(files[0]);
+   post(m);
+}
+
+static void pick_emulator(int game)
+{
+   void *user = (void *)(intptr_t)game;
+#ifdef _WIN32
+   static const SDL_DialogFileFilter filters[] = { { "Programs", "exe" } };
+   SDL_ShowOpenFileDialog(on_emulator_picked, user, app.window, filters, 1, NULL, false);
+#else
+   SDL_ShowOpenFileDialog(on_emulator_picked, user, app.window, NULL, 0, NULL, false);
+#endif
 }
 
 /* keep_ticks: what's ticked but not in Steam yet (or the other way) stays
@@ -2343,6 +2370,12 @@ static void modal_box(float w, float h, float *x, float *y, const char *title)
 
 static void close_modal(void)
 {
+   /* Opened from the game's settings: back to them. */
+   if (app.modal == MODAL_EMULATOR)
+   {
+      app.modal = MODAL_GAME;
+      return;
+   }
    /* The launch options are kept as they were typed. */
    if (app.modal == MODAL_GAME)
    {
@@ -2392,6 +2425,7 @@ static void open_game_settings(void)
    if (library_game(app.selected))
       SDL_strlcpy(app.options, library_game(app.selected)->launch_options, sizeof(app.options));
    library_unlock();
+   app.emulator_note[0] = '\0';
    app.modal = MODAL_GAME;
 }
 
@@ -2403,9 +2437,10 @@ static void draw_game_settings(void)
       { "Steam Input", "Steam's controller support and remapping" },
    };
    float x, y, w = S(560), h, ry;
-   bool values[2], own;
-   char name[256];
-   int i;
+   bool values[2], own, rom;
+   char name[256], emulator[96];
+   const struct rom_option *chosen;
+   int i, options;
 
    library_lock();
    if (!library_game(app.selected))
@@ -2418,9 +2453,13 @@ static void draw_game_settings(void)
    values[0] = library_game(app.selected)->steam_overlay;
    values[1] = library_game(app.selected)->steam_input;
    own = SDL_strcmp(library_game(app.selected)->source, "Steam") == 0;
+   rom = library_game(app.selected)->rom[0] != '\0';
+   options = roms_options(library_game(app.selected), NULL, 0);
+   chosen = roms_chosen(library_game(app.selected));
+   SDL_strlcpy(emulator, chosen ? chosen->label : "No emulator", sizeof(emulator));
    library_unlock();
 
-   h = S(own ? 256 : 360);
+   h = S((own ? 256 : 360) + (rom ? 64 : 0));
    modal_box(w, h, &x, &y, name);
    ry = y + S(70);
    for (i = 0; i < 2; i++, ry += S(64))
@@ -2443,6 +2482,35 @@ static void draw_game_settings(void)
          library_changed();
       }
    }
+   /* A ROM's emulator, to change. */
+   if (rom)
+   {
+      /* None found: straight to picking its program. */
+      const char *label = options ? "Change" : "Browse";
+      float bw = button_w(label);
+
+      ui_rect(x + S(20), ry, w - S(40), S(56), S(12), 1, 1, 1, 0.04f);
+      ui_text(UI_BOLD, S(15), x + S(36), ry + S(19), UI_LEFT, w - S(180), C_TEXT, 1, "Emulator");
+      if (options && !app.emulator_note[0])
+         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(180), C_DIM, 1, emulator);
+      else
+         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(180), C_RED, 1,
+               app.emulator_note[0] ? app.emulator_note : emulator);
+      if (button(x + w - S(36) - bw, ry + S(9), bw, S(38), label, false, true, true))
+      {
+         app.field = FIELD_NONE;
+         SDL_StopTextInput(app.window);
+         app.emulator_note[0] = '\0';
+         if (!options)
+            pick_emulator(app.selected);
+         else
+         {
+            open_list_modal(MODAL_EMULATOR, app.selected);
+            return;
+         }
+      }
+      ry += S(64);
+   }
    /* Steam's own shortcuts keep their launch options in Steam. */
    if (!own)
    {
@@ -2455,9 +2523,10 @@ static void draw_game_settings(void)
 }
 
 /* One of a list, each with a smaller line under it (empty for none):
- * which was clicked, -1 none, -2 closed. */
+ * which was clicked, -1 none, -2 closed, -3 the other button (extra, NULL
+ * for none). */
 static int draw_list_modal(const char *title, const char *const *labels, const char *const *subs,
-      int count, int current)
+      int count, int current, const char *extra)
 {
    float row = S(54), w = S(600), x, y, top, list_h, h, most;
    int i, clicked = -1;
@@ -2495,6 +2564,8 @@ static int draw_list_modal(const char *title, const char *const *labels, const c
    glDisable(GL_SCISSOR_TEST);
    if (button(x + w - S(28) - S(110), y + h - S(62), S(110), S(42), "Cancel", false, true, true))
       return -2;
+   if (extra && button(x + S(28), y + h - S(62), button_w(extra), S(42), extra, false, true, true))
+      return -3;
    return clicked;
 }
 
@@ -2514,7 +2585,8 @@ static void draw_system_modal(void)
          if (i && SDL_strcmp(f->system, labels[i]) == 0)
             current = i;
       }
-      picked = draw_list_modal("What's in this folder?", labels, subs, n, current);
+      picked = draw_list_modal("What's in this folder?", labels, subs, n, current,
+            NULL);
       if (picked >= 0)
          roms_set_folder_system(app.modal_item, picked ? labels[picked] : "");
    }
@@ -2525,6 +2597,38 @@ static void draw_system_modal(void)
       rescan(true);
 }
 
+static void draw_emulator_modal(void)
+{
+   const struct rom_option *options[64], *chosen;
+   const char *labels[64], *subs[64];
+   struct game *g;
+   int i, n = 0, current = -1, picked = -2;
+
+   library_lock();
+   if ((g = library_game(app.modal_item)))
+   {
+      n = SDL_min(roms_options(g, options, 64), 64);
+      chosen = roms_chosen(g);
+      for (i = 0; i < n; i++)
+      {
+         labels[i] = options[i]->label;
+         subs[i] = options[i]->exe;
+         if (options[i] == chosen)
+            current = i;
+      }
+   }
+   if (n)
+      picked = draw_list_modal("Emulator", labels, subs, n, current, "Browse");
+   if (picked >= 0)
+      roms_choose(g, options[picked]);
+   library_unlock();
+   /* Any other program, by its file. */
+   if (picked == -3)
+      pick_emulator(app.modal_item);
+   else if (picked != -1)
+      close_modal();
+}
+
 static void draw_modal(void)
 {
    float x, y, w, h;
@@ -2533,6 +2637,11 @@ static void draw_modal(void)
    if (app.modal == MODAL_SYSTEM)
    {
       draw_system_modal();
+      return;
+   }
+   if (app.modal == MODAL_EMULATOR)
+   {
+      draw_emulator_modal();
       return;
    }
    if (app.modal == MODAL_GAME)
@@ -2687,6 +2796,25 @@ static void handle_msg(struct msg *m)
          library_unlock();
          rescan(true);
          break;
+      case MSG_EMULATOR:
+      {
+         struct game *g;
+         bool ok = false;
+         library_lock();
+         if ((g = library_game(m->index)))
+            ok = roms_add_emulator(g, m->ptr);
+         library_unlock();
+         if (app.modal == MODAL_EMULATOR)
+            close_modal();
+         app.emulator_note[0] = '\0';
+         /* For the system's other games too, where they had none. */
+         if (ok)
+            rescan(true);
+         else
+            SDL_strlcpy(app.emulator_note, "RetroArch has no core for this system",
+                  sizeof(app.emulator_note));
+         break;
+      }
       case MSG_STEAM_DONE:
          app.busy = false;
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));

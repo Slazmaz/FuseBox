@@ -57,6 +57,10 @@ struct game
    /* A console game's ROM, which exe (an emulator) is started with; else
     * empty. */
    char rom[1024];
+   /* The emulator (and RetroArch core) the user picked for it, empty for
+    * the first that can run it. */
+   char emulator[1024];
+   char core[64];
    /* The Steam shortcut's app id once it's in Steam, else 0. */
    Uint32 steam_appid;
    /* The id its shortcut last had: how it's told again after a rename. */

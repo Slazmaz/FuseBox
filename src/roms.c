@@ -178,6 +178,14 @@ static const char arcade_bios[] = "neogeo|qsound|qsound_hle|pgm|decocass|skns|nm
    "|bubsys|cchip|coleco|naomi|naomi2|naomigd|hikaru|awbios|stvbios|konamigx|megaplay|megatech"
    "|playch10|midssio|taitofx1|tps|cpzn1|cpzn2|neocdz";
 
+/* An emulator the user added: one FuseBox knows, or (with the system it's
+ * for) any other. */
+struct added
+{
+   char exe[1024];
+   char system[32];
+};
+
 /* Under the library's lock, but for file. */
 static struct
 {
@@ -187,6 +195,8 @@ static struct
    /* Found folders the user removed: not listed again. */
    char (*ignored)[1024];
    int ignored_count;
+   struct added *added;
+   int added_count;
    /* What the last scan found. */
    struct rom_option *options;
    int option_count;
@@ -341,6 +351,15 @@ static void save(void)
       SDL_IOprintf(io, "%s\n    ", i ? "," : "");
       json_write_string(io, cfg.ignored[i]);
    }
+   SDL_IOprintf(io, "\n  ],\n  \"emulators\": [");
+   for (i = 0; i < cfg.added_count; i++)
+   {
+      SDL_IOprintf(io, "%s\n    { \"exe\": ", i ? "," : "");
+      json_write_string(io, cfg.added[i].exe);
+      SDL_IOprintf(io, ", \"system\": ");
+      json_write_string(io, cfg.added[i].system);
+      SDL_IOprintf(io, " }");
+   }
    SDL_IOprintf(io, "\n  ]\n}\n");
    if (!SDL_CloseIO(io) || !SDL_RenamePath(tmp, cfg.file))
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", cfg.file, SDL_GetError());
@@ -377,6 +396,15 @@ void roms_init(const char *config_dir)
       char *path;
       if (o->type == JSON_STRING && (path = grow(&cfg.ignored, &cfg.ignored_count, 1024)))
          SDL_strlcpy(path, o->str, 1024);
+   }
+   for (o = list_of(root, "emulators"); o; o = o->next)
+   {
+      struct added *a;
+      if (json_str(o, "exe", "")[0] && (a = grow(&cfg.added, &cfg.added_count, sizeof(*a))))
+      {
+         SDL_strlcpy(a->exe, json_str(o, "exe", ""), sizeof(a->exe));
+         SDL_strlcpy(a->system, json_str(o, "system", ""), sizeof(a->system));
+      }
    }
    json_free(root);
 }
@@ -467,19 +495,43 @@ const char *roms_system_name(int system)
    return systems[system].name;
 }
 
-static const struct rom_option *chosen_of(const struct rom_option *options, int count, int system)
+int roms_options(const struct game *g, const struct rom_option **out, int max)
 {
+   int i, n = 0, system = g->rom[0] ? system_by_name(g->source) : -1;
+
+   for (i = 0; i < cfg.option_count; i++)
+      if (cfg.options[i].system == system)
+      {
+         if (n < max)
+            out[n] = &cfg.options[i];
+         n++;
+      }
+   return n;
+}
+
+/* g NULL: a game not in the library yet, with no choice. */
+static const struct rom_option *chosen_of(const struct rom_option *options, int count, int system,
+      const struct game *g)
+{
+   const struct rom_option *first = NULL;
    int i;
 
    for (i = 0; i < count; i++)
-      if (options[i].system == system)
+   {
+      if (options[i].system != system)
+         continue;
+      if (!first)
+         first = &options[i];
+      if (g && g->emulator[0] && same_path(g->emulator, options[i].exe)
+            && SDL_strcmp(g->core, options[i].core) == 0)
          return &options[i];
-   return NULL;
+   }
+   return first;
 }
 
 const struct rom_option *roms_chosen(const struct game *g)
 {
-   return chosen_of(cfg.options, cfg.option_count, g->rom[0] ? system_by_name(g->source) : -1);
+   return chosen_of(cfg.options, cfg.option_count, g->rom[0] ? system_by_name(g->source) : -1, g);
 }
 
 /* A quoted argument: on Linux what a shell would take for its own is
@@ -511,7 +563,7 @@ static bool append_quoted(char *dst, size_t size, const char *text)
 static bool make_args(const struct rom_option *o, const char *rom, char *dst, size_t size)
 {
    char dir[1024], stem[256], *dot;
-   const char *t = emulators[o->emulator].args;
+   const char *t = o->emulator >= 0 ? emulators[o->emulator].args : "{rom}";
    const struct
    {
       const char *token, *value;
@@ -556,6 +608,16 @@ static bool set_emulator(struct game *g, const struct rom_option *o)
    SDL_strlcpy(g->exe, o->exe, sizeof(g->exe));
    parent_dir(o->exe, g->start_dir, sizeof(g->start_dir));
    return true;
+}
+
+void roms_choose(struct game *g, const struct rom_option *option)
+{
+   if (!set_emulator(g, option))
+      return;
+   g->no_emulator = false;
+   SDL_strlcpy(g->emulator, option->exe, sizeof(g->emulator));
+   SDL_strlcpy(g->core, option->core, sizeof(g->core));
+   library_changed();
 }
 
 const char *roms_emulators(void)
@@ -855,11 +917,19 @@ static struct rom_option *add_option(struct scan *sc, int system, const struct f
    o->system = system;
    o->emulator = f->emulator;
    SDL_strlcpy(o->exe, f->exe, sizeof(o->exe));
-   SDL_strlcpy(o->label, emulators[f->emulator].name, sizeof(o->label));
+   if (f->emulator >= 0)
+      SDL_strlcpy(o->label, emulators[f->emulator].name, sizeof(o->label));
+   else
+   {
+      char *dot;
+      SDL_strlcpy(o->label, base_name(f->exe), sizeof(o->label));
+      if ((dot = SDL_strrchr(o->label, '.')) && dot > o->label)
+         *dot = '\0';
+   }
    return o;
 }
 
-/* What an emulator can start. */
+/* What a known emulator can start. */
 static void emulator_options(struct scan *sc, const struct found_emulator *f)
 {
    const struct emulator *e = &emulators[f->emulator];
@@ -887,6 +957,75 @@ static void emulator_options(struct scan *sc, const struct found_emulator *f)
       }
 }
 
+/* The first option with that program for the system, NULL if none. */
+static const struct rom_option *option_of(const struct rom_option *options, int count, int system,
+      const char *exe)
+{
+   int i;
+
+   for (i = 0; i < count; i++)
+      if (options[i].system == system && same_path(options[i].exe, exe))
+         return &options[i];
+   return NULL;
+}
+
+bool roms_add_emulator(struct game *g, const char *exe)
+{
+   const struct rom_option *o;
+   struct found_emulator f;
+   struct scan sc;
+   struct added *a;
+   int i, system = system_by_name(g->source);
+
+   if (!g->rom[0] || system < 0 || SDL_strlen(exe) >= sizeof(f.exe))
+      return false;
+   /* Already known for the system: only picked. */
+   if (!(o = option_of(cfg.options, cfg.option_count, system, exe)))
+   {
+      SDL_zero(sc);
+      SDL_zero(f);
+      SDL_strlcpy(f.exe, exe, sizeof(f.exe));
+      if ((f.emulator = emulator_by_exe(base_name(exe), &f.rank)) >= 0)
+         emulator_options(&sc, &f);
+      if (!option_of(sc.options, sc.option_count, system, exe))
+      {
+         /* RetroArch does nothing without a core. */
+         if (f.emulator >= 0 && !emulators[f.emulator].systems)
+         {
+            SDL_free(sc.options);
+            return false;
+         }
+         f.emulator = -1;
+         add_option(&sc, system, &f);
+      }
+      /* Those it isn't offered for yet. */
+      for (i = 0; i < sc.option_count; i++)
+      {
+         struct rom_option *n;
+         int k;
+         for (k = 0; k < cfg.option_count; k++)
+            if (cfg.options[k].system == sc.options[i].system
+                  && same_path(cfg.options[k].exe, sc.options[i].exe)
+                  && SDL_strcmp(cfg.options[k].core, sc.options[i].core) == 0)
+               break;
+         if (k == cfg.option_count && (n = grow(&cfg.options, &cfg.option_count, sizeof(*n))))
+            *n = sc.options[i];
+      }
+      SDL_free(sc.options);
+      if ((a = grow(&cfg.added, &cfg.added_count, sizeof(*a))))
+      {
+         SDL_strlcpy(a->exe, exe, sizeof(a->exe));
+         if (f.emulator < 0)
+            SDL_strlcpy(a->system, systems[system].name, sizeof(a->system));
+      }
+      save();
+      if (!(o = option_of(cfg.options, cfg.option_count, system, exe)))
+         return false;
+   }
+   roms_choose(g, o);
+   return true;
+}
+
 /* Every way to start each system, in the order of the emulators' table. */
 static void make_options(struct scan *sc)
 {
@@ -902,6 +1041,22 @@ static void make_options(struct scan *sc)
          SDL_Log("Emulator: %s (%s)", emulators[e].name, f->exe);
          emulator_options(sc, f);
       }
+   /* Then the user's own, for what they were added for. */
+   library_lock();
+   for (i = 0; i < cfg.added_count; i++)
+   {
+      struct found_emulator f;
+      int s = system_by_name(cfg.added[i].system);
+
+      if (s < 0 || !platform_exists(cfg.added[i].exe)
+            || option_of(sc->options, sc->option_count, s, cfg.added[i].exe))
+         continue;
+      SDL_zero(f);
+      f.emulator = -1;
+      SDL_strlcpy(f.exe, cfg.added[i].exe, sizeof(f.exe));
+      add_option(sc, s, &f);
+   }
+   library_unlock();
 }
 
 /* ---- ROMs --------------------------------------------------------------- */
@@ -1408,7 +1563,7 @@ static void add_games(struct scan *sc)
          g->steam_overlay = g->steam_input = true;
          library_lock();
          index = library_find(r->id);
-         o = chosen_of(sc->options, sc->option_count, r->system);
+         o = chosen_of(sc->options, sc->option_count, r->system, library_game(index));
          if (!o || !set_emulator(g, o))
          {
             g->no_emulator = true;
@@ -1469,6 +1624,14 @@ int scan_roms(void)
 
    SDL_zero(sc);
    find_emulators(&sc);
+   library_lock();
+   for (i = 0; i < cfg.added_count; i++)
+      if (!cfg.added[i].system[0] && platform_exists(cfg.added[i].exe))
+      {
+         parent_dir(cfg.added[i].exe, dir, sizeof(dir));
+         add_emulator(&sc, dir, base_name(cfg.added[i].exe));
+      }
+   library_unlock();
    make_options(&sc);
 
    /* RPCS3 keeps installed games itself; others often a folder of ROMs. */
