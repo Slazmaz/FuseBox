@@ -1017,6 +1017,83 @@ static void rom_file(struct scan *sc, const char *dir, const char *name, int fol
    add_rom(sc, system, path, stem, disc * 100 + ext_rank);
 }
 
+static Uint32 le(const Uint8 *d, int bytes)
+{
+   Uint32 v = 0;
+
+   while (bytes--)
+      v = v << 8 | d[bytes];
+   return v;
+}
+
+/* A text in a PARAM.SFO (PlayStation 3's description of a game). */
+static bool sfo_text(const Uint8 *d, size_t size, const char *key, char *dst, size_t dst_size)
+{
+   Uint32 count, i;
+   char *p;
+
+   dst[0] = '\0';
+   if (size < 20 || SDL_memcmp(d, "\0PSF", 4) != 0)
+      return false;
+   count = le(d + 16, 4);
+   for (i = 0; i < count && 20 + ((size_t)i + 1) * 16 <= size; i++)
+   {
+      const Uint8 *e = d + 20 + (size_t)i * 16;
+      size_t k = (size_t)le(d + 8, 4) + le(e, 2), v = (size_t)le(d + 12, 4) + le(e + 12, 4);
+      size_t len = le(e + 4, 4);
+
+      /* SDL_LoadFile's data ends with a 0 past size. */
+      if (k >= size || SDL_strcmp((const char *)d + k, key) != 0)
+         continue;
+      if (v >= size || len > size - v)
+         return false;
+      SDL_strlcpy(dst, (const char *)d + v, SDL_min(dst_size, len + 1));
+      for (p = dst; *p; p++)
+         if ((Uint8)*p < ' ')
+            *p = ' ';
+      return dst[0] != '\0';
+   }
+   return false;
+}
+
+/* A PlayStation 3 game's folder (a disc's, or an installed one's): adds
+ * it and returns true, so it isn't looked into for anything else. */
+static bool ps3_folder(struct scan *sc, const char *dir, const struct listing *l)
+{
+   char base[1300], sfo[1400], boot[1400], id[64], title[256], category[16];
+   bool disc = false, installed = false;
+   struct rom *r;
+   Uint8 *data;
+   size_t size;
+   int i;
+
+   for (i = 0; i < l->count; i++)
+   {
+      disc |= l->dirs[i] && SDL_strcasecmp(l->names[i], "PS3_GAME") == 0;
+      installed |= l->dirs[i] && SDL_strcasecmp(l->names[i], "USRDIR") == 0;
+   }
+   if (!disc && !installed)
+      return false;
+   if (disc)
+      join(base, sizeof(base), dir, "PS3_GAME");
+   else
+      SDL_strlcpy(base, dir, sizeof(base));
+   join(sfo, sizeof(sfo), base, "PARAM.SFO");
+   SDL_snprintf(boot, sizeof(boot), "%s" PATH_SEP "USRDIR" PATH_SEP "EBOOT.BIN", base);
+   if (!(data = SDL_LoadFile(sfo, &size)))
+      return disc;
+   sfo_text(data, size, "CATEGORY", category, sizeof(category));
+   /* Discs and installed games; not updates, DLC or saves. */
+   if ((SDL_strcmp(category, "DG") == 0 || SDL_strcmp(category, "HG") == 0)
+         && platform_exists(boot) && sfo_text(data, size, "TITLE", title, sizeof(title))
+         && sfo_text(data, size, "TITLE_ID", id, sizeof(id))
+         && (r = add_rom(sc, system_by_name("PlayStation 3"), boot, title, 0)))
+      /* Its own id is surer than its title. */
+      SDL_snprintf(r->id, sizeof(r->id), "rom:PlayStation 3/%s", id);
+   SDL_free(data);
+   return true;
+}
+
 /* More than anyone has, and an end to folders linked in circles. */
 #define ROMS_MAX 20000
 
@@ -1026,22 +1103,23 @@ static void rom_dir(struct scan *sc, const char *dir, int folder_system, int dep
    int i;
 
    disk_list(dir, &l);
-   for (i = 0; i < l.count && sc->rom_count < ROMS_MAX; i++)
-   {
-      char sub[1200];
-      int s;
-
-      if (!l.dirs[i])
+   if (!ps3_folder(sc, dir, &l))
+      for (i = 0; i < l.count && sc->rom_count < ROMS_MAX; i++)
       {
-         rom_file(sc, dir, l.names[i], folder_system);
-         continue;
+         char sub[1200];
+         int s;
+
+         if (!l.dirs[i])
+         {
+            rom_file(sc, dir, l.names[i], folder_system);
+            continue;
+         }
+         if (l.names[i][0] == '.' || depth >= 6 || SDL_strcasecmp(l.names[i], "bios") == 0)
+            continue;
+         join(sub, sizeof(sub), dir, l.names[i]);
+         s = system_by_folder(l.names[i]);
+         rom_dir(sc, sub, s >= 0 ? s : folder_system, depth + 1);
       }
-      if (l.names[i][0] == '.' || depth >= 6 || SDL_strcasecmp(l.names[i], "bios") == 0)
-         continue;
-      join(sub, sizeof(sub), dir, l.names[i]);
-      s = system_by_folder(l.names[i]);
-      rom_dir(sc, sub, s >= 0 ? s : folder_system, depth + 1);
-   }
    disk_list_free(&l);
 }
 
@@ -1245,10 +1323,24 @@ int scan_roms(void)
    find_emulators(&sc);
    make_options(&sc);
 
-   /* Emulators often have a folder of ROMs. */
+   /* RPCS3 keeps installed games itself; others often a folder of ROMs. */
    for (i = 0; i < sc.emulator_count; i++)
    {
       parent_dir(sc.emulators[i].exe, dir, sizeof(dir));
+      if (SDL_strcmp(emulators[sc.emulators[i].emulator].name, "RPCS3") == 0)
+      {
+#ifdef _WIN32
+         SDL_snprintf(path, sizeof(path), "%s\\dev_hdd0\\game", dir);
+#else
+         char home[1024];
+         platform_home(home, sizeof(home));
+         SDL_snprintf(path, sizeof(path), "%s%s/rpcs3/dev_hdd0/game", home,
+               SDL_strstr(sc.emulators[i].exe, "flatpak") ? "/.var/app/net.rpcs3.RPCS3/config"
+               : "/.config");
+#endif
+         if (platform_exists(path))
+            found_folder(&sc, path);
+      }
       join(path, sizeof(path), dir, "Roms");
       if (platform_exists(path))
          found_folder(&sc, path);
