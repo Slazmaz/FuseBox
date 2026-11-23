@@ -6,7 +6,9 @@
 #include <stb_truetype.h>
 
 /* Sizes baked at once (font and pixel size); the oldest goes when full. */
-#define ATLASES 8
+/* More than the sizes on screen at once: one that doesn't fit is made again
+ * every time it's drawn, 10 ms each. */
+#define ATLASES 24
 
 /* What's baked: Latin-1, dashes and quotes, the trademark sign. */
 static const struct { int first, count; } ranges[] = {
