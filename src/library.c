@@ -170,6 +170,8 @@ int library_add(const struct game *game)
          SDL_strlcpy(g->game_exe, game->game_exe, sizeof(g->game_exe));
       SDL_strlcpy(g->start_dir, game->start_dir, sizeof(g->start_dir));
       SDL_strlcpy(g->args, game->args, sizeof(g->args));
+      SDL_strlcpy(g->rom, game->rom, sizeof(g->rom));
+      g->no_emulator = game->no_emulator;
       if (game->steam_appid)
          g->steam_appid = game->steam_appid;
       g->installed |= game->installed;
@@ -324,6 +326,7 @@ static bool game_from_json(const struct json *o, struct game *g)
    copy_str(g->game_exe, sizeof(g->game_exe), o, "game_exe");
    copy_str(g->start_dir, sizeof(g->start_dir), o, "start_dir");
    copy_str(g->args, sizeof(g->args), o, "args");
+   copy_str(g->rom, sizeof(g->rom), o, "rom");
    copy_str(g->sgdb_name, sizeof(g->sgdb_name), o, "sgdb_name");
    g->steam_appid = (Uint32)json_num(o, "steam_appid", 0);
    g->shortcut_id = (Uint32)json_num(o, "shortcut_id", g->steam_appid);
@@ -471,6 +474,8 @@ static void write_game(SDL_IOStream *io, const struct game *g)
    json_write_string(io, g->start_dir);
    SDL_IOprintf(io, ",\n      \"args\": ");
    json_write_string(io, g->args);
+   SDL_IOprintf(io, ",\n      \"rom\": ");
+   json_write_string(io, g->rom);
    SDL_IOprintf(io, ",\n      \"steam_overlay\": %s,\n      \"steam_input\": %s,\n      \"art_edited\": %s,\n      \"launch_options\": ",
          g->steam_overlay ? "true" : "false", g->steam_input ? "true" : "false",
          g->art_edited ? "true" : "false");

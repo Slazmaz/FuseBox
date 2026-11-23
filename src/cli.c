@@ -34,15 +34,30 @@ static void usage(void)
 static void scan(void)
 {
    Uint64 start = SDL_GetTicks();
-   int launchers, disks;
+   int launchers, disks, roms, i;
 
    launchers = scan_launchers();
    disks = scan_disks(1);
-   scan_roms();
+   roms = scan_roms();
    library_lock();
    printf("emulators: %s\n", roms_emulators()[0] ? roms_emulators() : "none");
+   for (i = 0; i < roms_folder_count(); i++)
+      printf("ROM folder: %s\n", roms_folder(i)->path);
+   for (i = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+      if (!g->installed || !g->rom[0])
+         continue;
+      printf("%s: %s: ", g->source, g->name);
+      if (g->no_emulator)
+         printf("no emulator (%s)\n", g->rom);
+      else
+         printf("\"%s\" %s\n", g->exe, g->args);
+   }
+   if (roms_unknown())
+      printf("%d files of no known system\n", roms_unknown());
    library_unlock();
-   printf("%d from launchers, %d on disk, in %llu ms\n", launchers, disks,
+   printf("%d from launchers, %d on disk, %d ROMs, in %llu ms\n", launchers, disks, roms,
          (unsigned long long)(SDL_GetTicks() - start));
    library_discard();
 }

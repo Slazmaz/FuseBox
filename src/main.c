@@ -10,6 +10,7 @@
 #include "disk.h"
 #include "jobs.h"
 #include "library.h"
+#include "roms.h"
 #include "scan.h"
 #include "sgdb.h"
 #include "steam.h"
@@ -199,6 +200,8 @@ static void job_scan(void *data)
    /* Then what no launcher knows: Windows' record of games, folders that
     * look like games. */
    found += scan_disks(0);
+   /* ROMs last: what their emulators' folders hold is for the others. */
+   found += scan_roms();
    steam_n = steam_read_shortcuts();
 
    library_save();
@@ -1006,7 +1009,9 @@ static void draw_fit(GLuint tex, int tw, int th, float x, float y, float w, floa
  * own shortcuts that are still there only get their art. */
 static bool tickable(const struct game *g)
 {
-   return g->gone || (g->installed && g->exe[0] && SDL_strcmp(g->source, "Steam") != 0);
+   /* A ROM without an emulator can't be added, only taken out. */
+   return g->gone || (g->installed && g->exe[0] && SDL_strcmp(g->source, "Steam") != 0
+         && (!g->no_emulator || g->steam_appid));
 }
 
 /* Whether its shortcut in Steam has other settings than the game's (and
@@ -1019,13 +1024,13 @@ static bool settings_differ(const struct game *g)
    if (!g->steam_appid || g->gone || (tickable(g) && !g->selected))
       return false;
    if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input)
-      return true;
+      return !g->no_emulator;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;
    if (SDL_strcmp(g->name, g->sc_name) != 0)
-      return true;
+      return !g->no_emulator;
    library_launch_options(g, options, sizeof(options));
-   return SDL_strcmp(options, g->sc_options) != 0;
+   return SDL_strcmp(options, g->sc_options) != 0 && !g->no_emulator;
 }
 
 /* Games to add to or take out of Steam, or whose settings change, on the
@@ -1857,13 +1862,14 @@ static void save_name(void)
 static void draw_game(float x, float y, float w, float h)
 {
    struct game *g;
-   char name[256], own_name[256], source[32], sgdb_name[256], line[300];
-   float top = y, cx, sr = 0, sg = 0, sb = 0;
+   char name[256], own_name[256], source[32], sgdb_name[256], emulator[96], line[300];
+   const struct rom_option *chosen_emulator;
    struct choice *coming;
+   float top = y, cx, sr = 0, sg = 0, sb = 0;
    float tw, th, tx, content_h, ty, grid_top, grid_h;
    const char *state;
    unsigned chosen;
-   bool removing, gone, chosen_own;
+   bool removing, gone, chosen_own, no_emulator;
    GLuint icon;
    int i, t, cols;
 
@@ -1891,6 +1897,9 @@ static void draw_game(float x, float y, float w, float h)
    }
    removing = g->gone && g->selected;
    gone = g->gone;
+   no_emulator = g->no_emulator;
+   chosen_emulator = no_emulator ? NULL : roms_chosen(g);
+   SDL_strlcpy(emulator, chosen_emulator ? chosen_emulator->label : "", sizeof(emulator));
    fill_open(app.selected, g);
    icon = detail_for(ART_ICON, g);
    /* The list says so already. */
@@ -1966,7 +1975,7 @@ static void draw_game(float x, float y, float w, float h)
       }
       else
       {
-         /* Its tags: where it's from, what Steam has of it.
+         /* Its tags: where it's from, its emulator, what Steam has of it.
           * A long name is cut short for them, to half at most. */
          const struct
          {
@@ -1974,6 +1983,8 @@ static void draw_game(float x, float y, float w, float h)
             float r, g, b;
          } tags[] = {
             { source, C_TEXT },
+            { emulator, C_TEXT },
+            { no_emulator ? "No emulator" : "", C_RED },
             { state ? state : "", sr, sg, sb },
          };
          float room = bx - cx - S(16), tags_w = 0, max_w, nw, chip_x;

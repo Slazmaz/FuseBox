@@ -395,6 +395,9 @@ bool steam_sync(char *msg, size_t size)
          art_only++;
          continue;
       }
+      /* A ROM without an emulator: nothing to start it with. */
+      if (g->no_emulator)
+         continue;
       quote(g->exe, exe, sizeof(exe));
       appid = shortcut_appid(exe, g->name);
       /* A shortcut keeps its id, whatever its game is renamed to: Steam
@@ -447,7 +450,7 @@ bool steam_sync(char *msg, size_t size)
    for (i = 0; ok && i < library_count(); i++)
    {
       struct game *g = library_game(i);
-      if (g->installed && g->steam_appid)
+      if (g->installed && g->steam_appid && !g->no_emulator)
          g->art_edited = false;
    }
    library_unlock();

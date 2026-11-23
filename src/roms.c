@@ -172,12 +172,20 @@ static const struct emulator emulators[] = {
 
 #define EMULATORS ((int)SDL_arraysize(emulators))
 
+/* Arcade boards' own chips: they come with the games but don't start. */
+static const char arcade_bios[] = "neogeo|qsound|qsound_hle|pgm|decocass|skns|nmk004|ym2608|isgsm"
+   "|bubsys|cchip|coleco|naomi|naomi2|naomigd|hikaru|awbios|stvbios|konamigx|megaplay|megatech"
+   "|playch10|midssio|taitofx1|tps|cpzn1|cpzn2|neocdz";
+
 /* Under the library's lock. */
 static struct
 {
+   struct rom_folder *folders;
+   int folder_count;
    /* What the last scan found. */
    struct rom_option *options;
    int option_count;
+   int unknown;
    char found[512];
 } cfg;
 
@@ -275,7 +283,135 @@ static int in_list(const char *list, const char *name)
    return -1;
 }
 
+static int system_by_name(const char *name)
+{
+   int i;
+
+   for (i = 0; i < SYSTEMS; i++)
+      if (SDL_strcmp(systems[i].name, name) == 0)
+         return i;
+   return -1;
+}
+
+static int system_by_folder(const char *name)
+{
+   char norm[256];
+   int i;
+
+   library_normalize(name, norm, sizeof(norm));
+   for (i = 0; norm[0] && i < SYSTEMS; i++)
+      if (in_list(systems[i].folders, norm) >= 0)
+         return i;
+   return -1;
+}
+
 /* ---- What the window asks ------------------------------------------------ */
+
+int roms_folder_count(void)
+{
+   return cfg.folder_count;
+}
+
+const struct rom_folder *roms_folder(int i)
+{
+   return i >= 0 && i < cfg.folder_count ? &cfg.folders[i] : NULL;
+}
+
+int roms_unknown(void)
+{
+   return cfg.unknown;
+}
+
+static const struct rom_option *chosen_of(const struct rom_option *options, int count, int system)
+{
+   int i;
+
+   for (i = 0; i < count; i++)
+      if (options[i].system == system)
+         return &options[i];
+   return NULL;
+}
+
+const struct rom_option *roms_chosen(const struct game *g)
+{
+   return chosen_of(cfg.options, cfg.option_count, g->rom[0] ? system_by_name(g->source) : -1);
+}
+
+/* A quoted argument: on Linux what a shell would take for its own is
+ * escaped (Steam starts shortcuts through one). */
+static bool append_quoted(char *dst, size_t size, const char *text)
+{
+   size_t n = SDL_strlen(dst);
+
+   if (n + 1 < size)
+      dst[n++] = '"';
+   for (; *text && n + 3 < size; text++)
+   {
+#ifndef _WIN32
+      if (*text == '"' || *text == '\\' || *text == '$' || *text == '`')
+         dst[n++] = '\\';
+#endif
+      dst[n++] = *text;
+   }
+   if (*text || n + 1 >= size)
+   {
+      dst[n] = '\0';
+      return false;
+   }
+   dst[n++] = '"';
+   dst[n] = '\0';
+   return true;
+}
+
+static bool make_args(const struct rom_option *o, const char *rom, char *dst, size_t size)
+{
+   char dir[1024], stem[256], *dot;
+   const char *t = emulators[o->emulator].args;
+   const struct
+   {
+      const char *token, *value;
+   } values[] = { { "{rom}", rom }, { "{dir}", dir }, { "{stem}", stem },
+      { "{core}", o->core_path } };
+   size_t i, n;
+
+   parent_dir(rom, dir, sizeof(dir));
+   SDL_strlcpy(stem, base_name(rom), sizeof(stem));
+   if ((dot = SDL_strrchr(stem, '.')))
+      *dot = '\0';
+   dst[0] = '\0';
+   while (*t)
+   {
+      for (i = 0; i < SDL_arraysize(values); i++)
+         if (SDL_strncmp(t, values[i].token, SDL_strlen(values[i].token)) == 0)
+            break;
+      if (i < SDL_arraysize(values))
+      {
+         if (!append_quoted(dst, size, values[i].value))
+            return false;
+         t += SDL_strlen(values[i].token);
+         continue;
+      }
+      n = SDL_strlen(dst);
+      if (n + 1 >= size)
+         return false;
+      dst[n] = *t++;
+      dst[n + 1] = '\0';
+   }
+   return true;
+}
+
+/* How the game is started with it; false where that gets too long. */
+static bool set_emulator(struct game *g, const struct rom_option *o)
+{
+   char args[1024];
+
+   if (!make_args(o, g->rom, args, sizeof(args)))
+      return false;
+   SDL_strlcpy(g->args, args, sizeof(g->args));
+   SDL_strlcpy(g->exe, o->exe, sizeof(g->exe));
+   parent_dir(o->exe, g->start_dir, sizeof(g->start_dir));
+   return true;
+}
 
 const char *roms_emulators(void)
 {
@@ -292,12 +428,30 @@ struct found_emulator
    char exe[1024];
 };
 
+struct rom
+{
+   /* Its game's id: the system and the name, so it stays the same game
+    * when its folder moves or its file type changes. */
+   char id[256];
+   char path[1024];
+   /* The file's name without type and disc, for the game's name. */
+   char stem[256];
+   int system;
+   /* The lowest is the one to start, where a game has several files. */
+   int rank;
+};
+
 struct scan
 {
    struct found_emulator *emulators;
    int emulator_count;
+   char (*folders)[1024];
+   int folder_count;
    struct rom_option *options;
    int option_count;
+   struct rom *roms;
+   int rom_count;
+   int unknown;
 };
 
 /* The emulator a program's name is of, -1 if none. */
@@ -357,6 +511,20 @@ static void add_emulator(struct scan *sc, const char *dir, const char *name)
    SDL_strlcpy(f->exe, path, sizeof(f->exe));
 }
 
+static void found_folder(struct scan *sc, const char *path)
+{
+   char *f;
+   int i;
+
+   if (SDL_strlen(path) >= 1024)
+      return;
+   for (i = 0; i < sc->folder_count; i++)
+      if (same_path(sc->folders[i], path))
+         return;
+   if ((f = grow(&sc->folders, &sc->folder_count, sizeof(*sc->folders))))
+      SDL_strlcpy(f, path, sizeof(*sc->folders));
+}
+
 /* Whether the folder's name says there are emulators further in. */
 static bool emulator_folder(const char *name)
 {
@@ -373,7 +541,7 @@ static bool emulator_folder(const char *name)
 }
 
 /* Emulators in dir and the folders in it (further in those named for
- * it). */
+ * it), and folders named ROMs on the way. */
 static void walk(struct scan *sc, const char *dir, int depth, bool named)
 {
    struct listing l;
@@ -395,6 +563,11 @@ static void walk(struct scan *sc, const char *dir, int depth, bool named)
             || SDL_strcasecmp(l.names[i], "cheats") == 0)
          continue;
       join(sub, sizeof(sub), dir, l.names[i]);
+      if (SDL_strcasecmp(l.names[i], "roms") == 0)
+      {
+         found_folder(sc, sub);
+         continue;
+      }
       in = named || emulator_folder(l.names[i]);
       /* One look into any folder; further only into those named for it,
        * and Games as another place to start from. */
@@ -586,21 +759,426 @@ static void make_options(struct scan *sc)
       }
 }
 
+/* ---- ROMs --------------------------------------------------------------- */
+
+/* The file's system: its folder's where that has files of its type, else
+ * by the type alone. *ext_rank gets how soon among the system's types it
+ * comes. */
+static int rom_system(const char *ext, int folder_system, int *ext_rank)
+{
+   int i, n;
+
+   if (folder_system >= 0)
+   {
+      const struct system *s = &systems[folder_system];
+      if ((n = in_list(s->exts, ext)) >= 0 || (n = in_list(s->shared, ext)) >= 0)
+      {
+         *ext_rank = n;
+         return folder_system;
+      }
+   }
+   for (i = 0; i < SYSTEMS; i++)
+      if ((*ext_rank = in_list(systems[i].exts, ext)) >= 0)
+         return i;
+   return -1;
+}
+
+/* Takes "(Disc 2)" and the like out of a name; the disc's number, 0 if
+ * it has none. */
+static int take_disc(char *stem)
+{
+   static const char *const marks[] = { "(Disc ", "(Disk ", "(CD ", "(CD" };
+   size_t i;
+
+   for (i = 0; i < SDL_arraysize(marks); i++)
+   {
+      char *p = SDL_strcasestr(stem, marks[i]), *end;
+      int c, disc;
+
+      if (!p)
+         continue;
+      c = SDL_tolower((unsigned char)p[SDL_strlen(marks[i])]);
+      disc = c >= '0' && c <= '9' ? SDL_atoi(p + SDL_strlen(marks[i]))
+         : c >= 'a' && c <= 'd' ? c - 'a' + 1 : 0;
+      if (!disc || !(end = SDL_strchr(p, ')')))
+         continue;
+      end++;
+      while (*end == ' ')
+         end++;
+      while (p > stem && p[-1] == ' ')
+         p--;
+      /* What follows keeps its space: "Game (Disc 1) (Rev 1)". */
+      if (*end && p > stem)
+         *p++ = ' ';
+      SDL_memmove(p, end, SDL_strlen(end) + 1);
+      return disc;
+   }
+   return 0;
+}
+
+static struct rom *add_rom(struct scan *sc, int system, const char *path, const char *stem,
+      int rank)
+{
+   struct rom *r;
+
+   /* A path too long to keep can't be started. */
+   if (SDL_strlen(path) >= sizeof(r->path)
+         || !(r = grow(&sc->roms, &sc->rom_count, sizeof(*r))))
+      return NULL;
+   r->system = system;
+   r->rank = rank;
+   SDL_strlcpy(r->path, path, sizeof(r->path));
+   SDL_strlcpy(r->stem, stem, sizeof(r->stem));
+   /* A name too long for an id keeps its start, and a crc of it all. */
+   if (SDL_snprintf(r->id, sizeof(r->id), "rom:%s/%s", systems[system].name, stem)
+         >= (int)sizeof(r->id))
+   {
+      char tail[16];
+      size_t at = sizeof(r->id) - 1;
+      SDL_snprintf(tail, sizeof(tail), "-%08x", (unsigned)fb_crc32(stem, SDL_strlen(stem)));
+      at -= SDL_strlen(tail);
+      while (at && ((Uint8)r->id[at] & 0xC0) == 0x80)
+         at--;
+      SDL_strlcpy(r->id + at, tail, sizeof(r->id) - at);
+   }
+   return r;
+}
+
+/* A Switch file that's an update or DLC: its title id doesn't end in 000. */
+static bool switch_extra(const char *stem)
+{
+   const char *p;
+   int n;
+
+   if (SDL_strcasestr(stem, "[UPD]") || SDL_strcasestr(stem, "[DLC"))
+      return true;
+   for (p = stem; (p = SDL_strchr(p, '[')); p++)
+   {
+      for (n = 0; SDL_isxdigit((unsigned char)p[1 + n]); n++)
+         ;
+      if (n == 16 && p[17] == ']')
+         return SDL_strncmp(p + 14, "000", 3) != 0;
+   }
+   return false;
+}
+
+static void rom_file(struct scan *sc, const char *dir, const char *name, int folder_system)
+{
+   char path[1500], stem[256], parent[1300];
+   const char *dot = SDL_strrchr(name, '.'), *ext;
+   int system, ext_rank = 0, disc;
+   size_t n;
+
+   if (!dot || dot == name || name[0] == '.')
+      return;
+   ext = dot + 1;
+   SDL_strlcpy(stem, name, SDL_min(sizeof(stem), (size_t)(dot - name + 1)));
+   /* "Game.nkit.iso" */
+   n = SDL_strlen(stem);
+   if (n > 5 && SDL_strcasecmp(stem + n - 5, ".nkit") == 0)
+      stem[n - 5] = '\0';
+   if (SDL_strncasecmp(stem, "readme", 6) == 0 || SDL_strcasestr(stem, "[BIOS]")
+         || SDL_strcasestr(stem, "(Track "))
+      return;
+   join(path, sizeof(path), dir, name);
+   if ((system = rom_system(ext, folder_system, &ext_rank)) < 0)
+   {
+      /* Only what could be a game is worth a word about. */
+      if (in_list("iso|cue|chd|cso|pbp|m3u|zip|7z", ext) >= 0)
+         sc->unknown++;
+      return;
+   }
+   if (SDL_strcmp(systems[system].name, "Switch") == 0 && switch_extra(stem))
+      return;
+   if (SDL_strcmp(systems[system].name, "Arcade") == 0 && in_list(arcade_bios, stem) >= 0)
+      return;
+   /* Installed games' programs, named by their folder: an Xbox 360 game's
+    * default.xex, a Wii U game's code\<program>.rpx. */
+   if (SDL_strcasecmp(ext, "xex") == 0)
+   {
+      if (SDL_strcasecmp(stem, "default") != 0)
+         return;
+      SDL_strlcpy(stem, base_name(dir), sizeof(stem));
+   }
+   else if (SDL_strcasecmp(ext, "rpx") == 0)
+   {
+      if (SDL_strcasecmp(base_name(dir), "code") != 0)
+         return;
+      parent_dir(dir, parent, sizeof(parent));
+      SDL_strlcpy(stem, base_name(parent), sizeof(stem));
+   }
+   disc = take_disc(stem);
+   add_rom(sc, system, path, stem, disc * 100 + ext_rank);
+}
+
+/* More than anyone has, and an end to folders linked in circles. */
+#define ROMS_MAX 20000
+
+static void rom_dir(struct scan *sc, const char *dir, int folder_system, int depth)
+{
+   struct listing l;
+   int i;
+
+   disk_list(dir, &l);
+   for (i = 0; i < l.count && sc->rom_count < ROMS_MAX; i++)
+   {
+      char sub[1200];
+      int s;
+
+      if (!l.dirs[i])
+      {
+         rom_file(sc, dir, l.names[i], folder_system);
+         continue;
+      }
+      if (l.names[i][0] == '.' || depth >= 6 || SDL_strcasecmp(l.names[i], "bios") == 0)
+         continue;
+      join(sub, sizeof(sub), dir, l.names[i]);
+      s = system_by_folder(l.names[i]);
+      rom_dir(sc, sub, s >= 0 ? s : folder_system, depth + 1);
+   }
+   disk_list_free(&l);
+}
+
+static int SDLCALL compare_roms(const void *a, const void *b)
+{
+   const struct rom *ra = a, *rb = b;
+   int c = SDL_strcasecmp(ra->id, rb->id);
+
+   if (!c)
+      c = ra->rank - rb->rank;
+   return c ? c : SDL_strcmp(ra->path, rb->path);
+}
+
+/* "Legend of Zelda, The - A Link to the Past (USA) [!]" -> "The Legend of
+ * Zelda: A Link to the Past". */
+static void clean_name(const char *stem, char *dst, size_t size)
+{
+   char text[300], moved[300], *p, *sep;
+   size_t n = 0, depth = 0;
+   const char *s;
+
+   for (s = stem; *s && n + 1 < sizeof(text); s++)
+   {
+      if (*s == '(' || *s == '[')
+         depth++;
+      else if ((*s == ')' || *s == ']') && depth)
+         depth--;
+      else if (!depth)
+      {
+         char c = *s == '_' ? ' ' : *s;
+         if (c != ' ' || (n && text[n - 1] != ' '))
+            text[n++] = c;
+      }
+   }
+   while (n && text[n - 1] == ' ')
+      n--;
+   text[n] = '\0';
+   if (!n)
+   {
+      SDL_strlcpy(dst, stem, size);
+      return;
+   }
+   sep = SDL_strstr(text, " - ");
+   if ((p = SDL_strstr(text, ", The")) && p > text && (!p[5] || p + 5 == sep))
+   {
+      *p = '\0';
+      SDL_strlcpy(moved, "The ", sizeof(moved));
+      SDL_strlcat(moved, text, sizeof(moved));
+      SDL_strlcat(moved, p + 5, sizeof(moved));
+      SDL_strlcpy(text, moved, sizeof(text));
+      sep = SDL_strstr(text, " - ");
+   }
+   /* File names can't have a colon. */
+   if (sep)
+   {
+      sep[0] = ':';
+      SDL_memmove(sep + 1, sep + 2, SDL_strlen(sep + 2) + 1);
+   }
+   SDL_strlcpy(dst, text, size);
+}
+
 /* ---- The scan ------------------------------------------------------------ */
+
+static bool name_taken(char (*names)[256], int count, const char *name)
+{
+   int i;
+
+   for (i = 0; i < count; i++)
+      if (SDL_strcasecmp(names[i], name) == 0)
+         return true;
+   return false;
+}
+
+/* A name for each ROM, no two the same: Steam tells shortcuts apart by
+ * the program (the same emulator) and the name. A game keeps the name it
+ * has; a new one that's taken gets its system, or its region and all. */
+static void name_roms(const struct scan *sc, char (*names)[256], char (*taken)[256])
+{
+   int i, n, index, count = 0;
+
+   library_lock();
+   for (i = 0; i < sc->rom_count; i++)
+   {
+      names[i][0] = '\0';
+      if ((index = library_find(sc->roms[i].id)) < 0)
+         continue;
+      SDL_strlcpy(names[i], library_game(index)->own_name, 256);
+      if (names[i][0])
+         SDL_strlcpy(taken[count++], names[i], 256);
+      /* What the user renamed it to is taken too. */
+      if (library_game(index)->custom_name[0])
+         SDL_strlcpy(taken[count++], library_game(index)->custom_name, 256);
+   }
+   library_unlock();
+   for (i = 0; i < sc->rom_count; i++)
+   {
+      const struct rom *r = &sc->roms[i];
+      char base[256], name[256];
+
+      if (names[i][0])
+         continue;
+      clean_name(r->stem, base, sizeof(base));
+      SDL_strlcpy(name, base, sizeof(name));
+      /* Another system's game, or another region or version of one. */
+      for (n = 0; n < sc->rom_count; n++)
+         if (n != i && sc->roms[n].system == r->system && SDL_strcasecmp(names[n], base) == 0)
+            break;
+      if (n == sc->rom_count && name_taken(taken, count, name))
+         SDL_snprintf(name, sizeof(name), "%.200s (%s)", base, systems[r->system].name);
+      if (name_taken(taken, count, name))
+         SDL_strlcpy(name, r->stem, sizeof(name));
+      for (n = 2; name_taken(taken, count, name); n++)
+         SDL_snprintf(name, sizeof(name), "%.200s (%s) %d", base, systems[r->system].name, n);
+      SDL_strlcpy(names[i], name, 256);
+      SDL_strlcpy(taken[count++], name, 256);
+   }
+}
+
+static void add_games(struct scan *sc)
+{
+   size_t size = 256 * (size_t)SDL_max(1, sc->rom_count);
+   char (*names)[256] = SDL_malloc(size), (*taken)[256] = SDL_malloc(size * 2);
+   struct game *g = SDL_malloc(sizeof(*g));
+   int i, index;
+
+   if (names && taken && g)
+   {
+      name_roms(sc, names, taken);
+      for (i = 0; i < sc->rom_count; i++)
+      {
+         const struct rom *r = &sc->roms[i];
+         const struct rom_option *o;
+
+         SDL_zerop(g);
+         SDL_strlcpy(g->id, r->id, sizeof(g->id));
+         SDL_strlcpy(g->name, names[i], sizeof(g->name));
+         SDL_strlcpy(g->source, systems[r->system].name, sizeof(g->source));
+         SDL_strlcpy(g->rom, r->path, sizeof(g->rom));
+         g->installed = true;
+         /* Steam's own defaults for a new shortcut. */
+         g->steam_overlay = g->steam_input = true;
+         library_lock();
+         index = library_find(r->id);
+         o = chosen_of(sc->options, sc->option_count, r->system);
+         if (!o || !set_emulator(g, o))
+         {
+            g->no_emulator = true;
+            /* What it last had, so a shortcut in Steam stays its own. */
+            if (index >= 0)
+            {
+               SDL_strlcpy(g->exe, library_game(index)->exe, sizeof(g->exe));
+               SDL_strlcpy(g->start_dir, library_game(index)->start_dir, sizeof(g->start_dir));
+               SDL_strlcpy(g->args, library_game(index)->args, sizeof(g->args));
+            }
+         }
+         library_add(g);
+         library_unlock();
+      }
+   }
+   SDL_free(g);
+   SDL_free(taken);
+   SDL_free(names);
+}
+
+/* The found folders into the list: new ones added, those gone dropped. */
+static void update_folders(const struct scan *sc)
+{
+   int i, n;
+
+   for (n = 0; n < cfg.folder_count; n++)
+   {
+      bool still = false;
+      for (i = 0; i < sc->folder_count && !still; i++)
+         still = same_path(cfg.folders[n].path, sc->folders[i]);
+      if (still)
+         continue;
+      SDL_memmove(cfg.folders + n, cfg.folders + n + 1,
+            sizeof(*cfg.folders) * (size_t)(cfg.folder_count - n - 1));
+      cfg.folder_count--;
+      n--;
+   }
+   for (i = 0; i < sc->folder_count; i++)
+   {
+      struct rom_folder *f;
+      bool known = false;
+      for (n = 0; n < cfg.folder_count && !known; n++)
+         known = same_path(cfg.folders[n].path, sc->folders[i]);
+      if (!known && (f = grow(&cfg.folders, &cfg.folder_count, sizeof(*f))))
+         SDL_strlcpy(f->path, sc->folders[i], sizeof(f->path));
+   }
+}
 
 int scan_roms(void)
 {
    struct scan sc;
-   int i, n;
+   struct rom_folder *folders = NULL;
+   int i, n, count = 0;
+   char dir[1024], path[1100];
 
    SDL_zero(sc);
    find_emulators(&sc);
    make_options(&sc);
 
+   /* Emulators often have a folder of ROMs. */
+   for (i = 0; i < sc.emulator_count; i++)
+   {
+      parent_dir(sc.emulators[i].exe, dir, sizeof(dir));
+      join(path, sizeof(path), dir, "Roms");
+      if (platform_exists(path))
+         found_folder(&sc, path);
+   }
+
+   library_lock();
+   update_folders(&sc);
+   for (i = 0; i < cfg.folder_count; i++)
+   {
+      struct rom_folder *f = grow(&folders, &count, sizeof(*f));
+      if (f)
+         *f = cfg.folders[i];
+   }
+   library_unlock();
+   for (i = 0; i < count; i++)
+      rom_dir(&sc, folders[i].path, system_by_folder(base_name(folders[i].path)), 0);
+   SDL_free(folders);
+
+   /* One file per game, the one to start it with. */
+   if (sc.rom_count)
+      SDL_qsort(sc.roms, (size_t)sc.rom_count, sizeof(*sc.roms), compare_roms);
+   for (i = n = 0; i < sc.rom_count; i++)
+      if (!n || SDL_strcasecmp(sc.roms[i].id, sc.roms[n - 1].id) != 0)
+      {
+         if (i != n)
+            sc.roms[n] = sc.roms[i];
+         n++;
+      }
+   sc.rom_count = n;
+   add_games(&sc);
+
    library_lock();
    SDL_free(cfg.options);
    cfg.options = sc.options;
    cfg.option_count = sc.option_count;
+   cfg.unknown = sc.unknown;
    cfg.found[0] = '\0';
    for (n = 0; n < EMULATORS; n++)
       for (i = 0; i < sc.emulator_count; i++)
@@ -611,7 +1189,9 @@ int scan_roms(void)
             break;
          }
    library_unlock();
-   n = sc.emulator_count;
+   n = sc.rom_count;
+   SDL_free(sc.roms);
    SDL_free(sc.emulators);
+   SDL_free(sc.folders);
    return n;
 }

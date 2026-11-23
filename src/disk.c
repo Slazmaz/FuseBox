@@ -134,7 +134,8 @@ static bool known(const char *dir)
    for (i = 0; i < library_count() && !seen; i++)
    {
       const struct game *g = library_game(i);
-      if (g->installed && g->start_dir[0] && SDL_strncmp(g->id, "disk:", 5) != 0)
+      if (g->installed && g->start_dir[0] && SDL_strncmp(g->id, "disk:", 5) != 0
+            && !g->rom[0])
          seen = within(g->start_dir, dir) || within(dir, g->start_dir);
    }
    library_unlock();
@@ -588,10 +589,11 @@ int disk_add_exe(const char *exe)
 
    if (!platform_exists(exe))
       return -1;
-   /* Already known (a scan found it, or it was added before). */
+   /* Already known (a scan found it, or it was added before). An
+    * emulator isn't one of the ROMs it starts. */
    library_lock();
    for (index = 0; index < library_count(); index++)
-      if (SDL_strcasecmp(library_game(index)->exe, exe) == 0)
+      if (!library_game(index)->rom[0] && SDL_strcasecmp(library_game(index)->exe, exe) == 0)
       {
          library_game(index)->installed = true;
          library_game(index)->selected = true;

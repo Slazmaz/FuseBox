@@ -54,6 +54,9 @@ struct game
    char game_exe[1024];
    char start_dir[1024];
    char args[1024];
+   /* A console game's ROM, which exe (an emulator) is started with; else
+    * empty. */
+   char rom[1024];
    /* The Steam shortcut's app id once it's in Steam, else 0. */
    Uint32 steam_appid;
    /* The id its shortcut last had: how it's told again after a rename. */
@@ -86,6 +89,8 @@ struct game
    bool gone;
    bool selected;
    unsigned art_version;
+   /* A ROM nothing here can start (exe is empty, or what it last was). */
+   bool no_emulator;
    /* Art being looked up now, or waiting to be (the window's fill bits). */
    Uint8 filling;
 };
