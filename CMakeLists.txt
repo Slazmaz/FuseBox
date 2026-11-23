@@ -36,8 +36,24 @@ if(WIN32)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
 endif()
 
+# A console app, so other programs can read what it prints.
+add_executable(fusebox-cli src/cli.c)
+target_link_libraries(fusebox-cli PRIVATE fusebox_core)
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-   foreach(t fusebox_core)
+   foreach(t fusebox-cli fusebox_core)
       target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
+   endforeach()
+endif()
+
+# SDL3, libcurl and their DLLs next to the exes, so they run outside the
+# build shell.
+if(WIN32)
+   foreach(t fusebox-cli)
+      add_custom_command(TARGET ${t} POST_BUILD
+         COMMAND ${CMAKE_COMMAND}
+            -DEXE=$<TARGET_FILE:${t}>
+            -DDIRS=$<TARGET_FILE_DIR:SDL3::SDL3>
+            -P ${CMAKE_SOURCE_DIR}/cmake/copy_dlls.cmake)
    endforeach()
 endif()
