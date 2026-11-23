@@ -19,6 +19,7 @@ target_link_libraries(stb_truetype PRIVATE SDL3::SDL3)
 # and fusebox-cli.
 add_library(fusebox_core STATIC
    src/http.c
+   src/jobs.c
 )
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl)
