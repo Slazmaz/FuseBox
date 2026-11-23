@@ -43,6 +43,13 @@ bool platform_exe_icon(const char *exe, const char *png_path);
  * elsewhere). */
 void platform_window_shadow(void *sdl_window);
 
+/* fusebox --background (background.h) at login, or no more. */
+void platform_autostart(bool on);
+/* Starts it now, unless it runs. */
+void platform_start_background(void);
+/* Whether the caller is the only background one; stays so till it ends. */
+bool platform_only_background(void);
+
 #ifdef _WIN32
 /* hive: "HKLM" or "HKCU". value NULL reads the key's default value. */
 bool platform_reg_string(const char *hive, const char *key, const char *value,

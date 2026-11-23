@@ -23,12 +23,15 @@ enum steamui
    STEAMUI_OK
 };
 
+/* Whether Steam has what was given to it: STEAMUI_OK, STEAMUI_WAIT (not
+ * yet, or it forgot) or STEAMUI_NO_PORT. */
+enum steamui steamui_check(SDL_AtomicInt *abort);
 /* Starts Steam: with a port when achievements are to be shown in it. */
 void steamui_start(const struct steam_install *steam);
 /* Gives Steam every game's achievements and the friends who play it (and
- * takes back those of games that left). Blocking. *games: how many have
- * them. */
-enum steamui steamui_push(int *games, SDL_AtomicInt *abort);
+ * takes back those of games that left); only_friends: the friends again,
+ * who may have started playing. Blocking. *games: how many have them. */
+enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);
 

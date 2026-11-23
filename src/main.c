@@ -6,6 +6,7 @@
  * frame's widgets each check whether it landed on them. Nothing is drawn
  * while nothing changes (events or finished jobs wake it). */
 #include "anim.h"
+#include "background.h"
 #include "gl.h"
 #include "http.h"
 #include "disk.h"
@@ -684,7 +685,7 @@ static void job_achievements(void *data)
    note[0] = '\0';
    if (ra_active())
    {
-      while ((shown = steamui_push(&games, jobs_abort())) <= STEAMUI_WAIT
+      while ((shown = steamui_push(false, &games, jobs_abort())) <= STEAMUI_WAIT
             && SDL_GetTicks() < until && !SDL_GetAtomicInt(jobs_abort()))
          SDL_Delay(1000);
       if (shown == STEAMUI_OK)
@@ -2518,7 +2519,7 @@ static float draw_achievements_card(float x, float y, float w)
 {
    char user[128], line[200];
    bool in = ra_user(user, sizeof(user)), on = ra_in_steam(), running;
-   float h = S(in ? 236 : 186) + (in && on ? S(52) : in && app.ra_note[0] ? S(26) : 0);
+   float h = S(in ? 236 : 186) + (in && on ? S(124) : in && app.ra_note[0] ? S(26) : 0);
    float cy, bw, fw, rx = x + w - S(24);
 
    cy = settings_card(x, y, w, h, "RetroAchievements");
@@ -2551,6 +2552,7 @@ static float draw_achievements_card(float x, float y, float w)
    if (button(rx - bw, cy, bw, S(40), "Log out", false, true, false))
    {
       ra_logout();
+      background_apply();
       app.ra_note[0] = '\0';
       jobs_add(job_clear_steam, NULL, JOB_NOW, false);
    }
@@ -2567,6 +2569,7 @@ static float draw_achievements_card(float x, float y, float w)
    if (toggle(rx - S(12) - S(44), cy + S(38), on, false))
    {
       ra_set_in_steam(!on);
+      background_apply();
       app.ra_note[0] = '\0';
       if (on)
       {
@@ -2580,6 +2583,16 @@ static float draw_achievements_card(float x, float y, float w)
    cy += S(112);
    if (on)
    {
+      ui_rect(x + S(20), cy, w - S(40), S(60), S(12), 1, 1, 1, 0.04f);
+      ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1, "Auto start");
+      ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(42), UI_LEFT, w - S(140), C_DIM, 1,
+            "FuseBox waits in the background from login, with no window.");
+      if (toggle(rx - S(12) - S(44), cy + S(18), ra_autostart(), false))
+      {
+         ra_set_autostart(!ra_autostart());
+         background_apply();
+      }
+      cy += S(72);
       running = steam_install() && platform_steam_running(steam_install());
       bw = button_w(running ? "Restart Steam" : "Start Steam");
       fw = button_w("Refresh");
@@ -3146,6 +3159,7 @@ static void handle_msg(struct msg *m)
          if (m->count)
          {
             app.ra_user[0] = '\0';
+            background_apply();
             start_achievements(false, true);
          }
          break;
@@ -3421,7 +3435,7 @@ static int start_steam(void)
    /* The window's to write. */
    library_discard();
    /* One that ran already either has its port or never will. */
-   while (((shown = steamui_push(&games, NULL)) == STEAMUI_WAIT
+   while (((shown = steamui_push(false, &games, NULL)) == STEAMUI_WAIT
             || (started && shown == STEAMUI_NO_PORT)) && SDL_GetTicks() < until)
       SDL_Delay(1000);
    return shown == STEAMUI_OK ? 0 : 1;
@@ -3437,10 +3451,23 @@ int main(int argc, char **argv)
    struct msg *m;
    int i;
 
-   if (!SDL_Init(only_steam ? 0 : SDL_INIT_VIDEO))
-      return 1;
    /* Portable: everything FuseBox keeps is next to fusebox.exe. */
    base = SDL_GetBasePath();
+   SDL_snprintf(config, sizeof(config), "%sconfig", base ? base : "");
+   /* With no window, and no log: the window's is open. */
+   if (argc == 2 && SDL_strcmp(argv[1], "--background") == 0)
+   {
+      int code;
+      SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
+      if (!SDL_Init(0) || !base)
+         return 1;
+      code = background_run(base, config);
+      http_quit();
+      SDL_Quit();
+      return code;
+   }
+   if (!SDL_Init(only_steam ? 0 : SDL_INIT_VIDEO))
+      return 1;
    if (!base || !library_init(base))
    {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", "Can't open FuseBox's folder", NULL);
@@ -3450,7 +3477,6 @@ int main(int argc, char **argv)
    SDL_snprintf(log_path, sizeof(log_path), "%sfusebox.log", base);
    if ((log_file = SDL_IOFromFile(log_path, "w")))
       SDL_SetLogOutputFunction(log_to_file, NULL);
-   SDL_snprintf(config, sizeof(config), "%sconfig", base);
    sgdb_init(config);
    roms_init(config);
    ra_init(config);
@@ -3463,6 +3489,7 @@ int main(int argc, char **argv)
       SDL_Quit();
       return code;
    }
+   background_apply();
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);
 

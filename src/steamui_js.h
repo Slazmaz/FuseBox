@@ -290,6 +290,10 @@
    "         if (first) mark(app);\n" \
    "         return 'ok';\n" \
    "      },\n" \
+   "      whole() {\n" \
+   "         return [...games.keys()].every(app => names(app).every(queryKey =>\n" \
+   "            ours(cache.getQueryCache().find({ queryKey }))));\n" \
+   "      },\n" \
    "      keep(apps) {\n" \
    "         [...games.keys()].filter(a => !apps.includes(a)).forEach(drop);\n" \
    "         return 'ok';\n" \

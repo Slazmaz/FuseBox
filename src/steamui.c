@@ -9,6 +9,8 @@
 
 /* On this computer: quick, or not there. */
 #define TIMEOUT_S 15
+/* The port Steam opens when nothing says which (background.c). */
+#define STEAM_PORT 8080
 
 void steamui_start(const struct steam_install *steam)
 {
@@ -42,6 +44,7 @@ static bool find_at(int port, char *url, size_t size, SDL_AtomicInt *abort)
    root = json_parse(body);
    SDL_free(body);
    for (o = root && root->type == JSON_ARRAY ? root->child : NULL; o; o = o->next)
+      /* By its address too: 8080 is many programs' port. */
       if (SDL_strcmp(json_str(o, "title", ""), "SharedJSContext") == 0
             && SDL_strncmp(json_str(o, "url", ""), "https://steamloopback.host/", 27) == 0)
       {
@@ -56,7 +59,7 @@ static bool find_at(int port, char *url, size_t size, SDL_AtomicInt *abort)
 
 static bool find_target(char *url, size_t size, SDL_AtomicInt *abort)
 {
-   return find_at(ra_port(), url, size, abort);
+   return find_at(ra_port(), url, size, abort) || find_at(STEAM_PORT, url, size, abort);
 }
 
 /* Runs the script there; what it returned (text) in result. */
@@ -124,7 +127,7 @@ static struct shown *collect(int *count)
    return games;
 }
 
-enum steamui steamui_push(int *games, SDL_AtomicInt *abort)
+enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
 {
    char url[512], result[64];
    struct shown *list;
@@ -152,9 +155,9 @@ enum steamui steamui_push(int *games, SDL_AtomicInt *abort)
 
       /* One whose list can't be had now keeps what Steam has. */
       SDL_IOprintf(keep, "%s%u", i ? "," : "", (unsigned)list[i].appid);
-      if (achievements && SDL_asprintf(&script, "__fusebox.set(%u,%s)",
-               (unsigned)list[i].appid, achievements) > 0
-            && evaluate(url, script, result, sizeof(result), abort))
+      if (achievements && (only_friends || (SDL_asprintf(&script, "__fusebox.set(%u,%s)",
+                     (unsigned)list[i].appid, achievements) > 0
+                  && evaluate(url, script, result, sizeof(result), abort))))
          done++;
       SDL_free(script);
       script = NULL;
@@ -178,6 +181,18 @@ enum steamui steamui_push(int *games, SDL_AtomicInt *abort)
    *games = done;
    SDL_Log("Steam shows the achievements of %d games", done);
    return STEAMUI_OK;
+}
+
+enum steamui steamui_check(SDL_AtomicInt *abort)
+{
+   char url[512], result[64];
+
+   if (!find_target(url, sizeof(url), abort))
+      return STEAMUI_NO_PORT;
+   return evaluate(url, "window.__fusebox && __fusebox.version === 13"
+         " && __fusebox.me === App.m_CurrentUser.strSteamID"
+         " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
+      && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

@@ -11,11 +11,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
+#include <wchar.h>
 #else
+#include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdlib.h>
+#include <sys/file.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 void platform_home(char *dst, size_t size)
@@ -377,3 +381,146 @@ void platform_steam_start(const struct steam_install *steam, int port)
 {
    run(steam, false, port);
 }
+
+/* --- Without a window (background.h) --- */
+
+#ifdef _WIN32
+#define RUN_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+#define ONE_NAME L"Local\\FuseBoxBackground"
+
+/* "<this exe>" --background */
+static void background_command(WCHAR *dst, size_t count)
+{
+   WCHAR exe[1024];
+
+   exe[0] = 0;
+   GetModuleFileNameW(NULL, exe, SDL_arraysize(exe));
+   _snwprintf(dst, count, L"\"%ls\" --background", exe);
+   dst[count - 1] = 0;
+}
+
+void platform_autostart(bool on)
+{
+   WCHAR want[1100], have[1100];
+   DWORD size = sizeof(have) - sizeof(WCHAR);
+   HKEY key;
+
+   if (RegCreateKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, NULL, 0, KEY_READ | KEY_WRITE, NULL, &key,
+            NULL) != ERROR_SUCCESS)
+      return;
+   SDL_zeroa(have);
+   if (RegQueryValueExW(key, L"FuseBox", NULL, NULL, (BYTE *)have, &size) != ERROR_SUCCESS)
+      have[0] = 0;
+   background_command(want, SDL_arraysize(want));
+   if (!on && have[0])
+      RegDeleteValueW(key, L"FuseBox");
+   /* Again when FuseBox's folder was moved. */
+   else if (on && wcscmp(have, want) != 0)
+      RegSetValueExW(key, L"FuseBox", 0, REG_SZ, (const BYTE *)want,
+            (DWORD)((wcslen(want) + 1) * sizeof(WCHAR)));
+   RegCloseKey(key);
+}
+
+bool platform_only_background(void)
+{
+   /* Never closed: Windows does when the process ends. */
+   return CreateMutexW(NULL, FALSE, ONE_NAME) && GetLastError() != ERROR_ALREADY_EXISTS;
+}
+
+void platform_start_background(void)
+{
+   HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, ONE_NAME);
+   STARTUPINFOW si;
+   PROCESS_INFORMATION pi;
+   WCHAR command[1100];
+
+   if (running)
+   {
+      CloseHandle(running);
+      return;
+   }
+   SDL_zero(si);
+   si.cb = sizeof(si);
+   background_command(command, SDL_arraysize(command));
+   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   {
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+   }
+}
+
+#else
+
+static bool own_exe(char *dst, size_t size)
+{
+   ssize_t n = readlink("/proc/self/exe", dst, size - 1);
+
+   dst[n > 0 ? n : 0] = '\0';
+   return n > 0;
+}
+
+void platform_autostart(bool on)
+{
+   char home[1024], path[1100], exe[1024], text[1400];
+   const char *xdg = SDL_getenv("XDG_CONFIG_HOME");
+
+   platform_home(home, sizeof(home));
+   if (xdg && xdg[0])
+      SDL_snprintf(path, sizeof(path), "%s/autostart", xdg);
+   else
+      SDL_snprintf(path, sizeof(path), "%s/.config/autostart", home);
+   if (on)
+      SDL_CreateDirectory(path);
+   SDL_strlcat(path, "/fusebox.desktop", sizeof(path));
+   if (!on)
+   {
+      if (platform_exists(path))
+         SDL_RemovePath(path);
+      return;
+   }
+   if (!own_exe(exe, sizeof(exe)))
+      return;
+   SDL_snprintf(text, sizeof(text), "[Desktop Entry]\nType=Application\nName=FuseBox\n"
+         "Exec=\"%s\" --background\nNoDisplay=true\n", exe);
+   SDL_SaveFile(path, text, SDL_strlen(text));
+}
+
+/* Locked by the background one while it runs. */
+static int one_file(void)
+{
+   const char *dir = SDL_getenv("XDG_RUNTIME_DIR");
+   char path[1100];
+
+   if (dir && dir[0])
+      SDL_snprintf(path, sizeof(path), "%s/fusebox-background", dir);
+   else
+      SDL_snprintf(path, sizeof(path), "/tmp/fusebox-background-%d", (int)getuid());
+   return open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+}
+
+bool platform_only_background(void)
+{
+   int fd = one_file();
+
+   return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
+}
+
+void platform_start_background(void)
+{
+   const char *args[3];
+   char exe[1024];
+   SDL_Process *p;
+   int n = 0, fd = one_file();
+   bool runs = fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) != 0;
+
+   if (fd >= 0)
+      close(fd);
+   if (runs || !own_exe(exe, sizeof(exe)))
+      return;
+   args[n++] = exe;
+   args[n++] = "--background";
+   args[n] = NULL;
+   if ((p = SDL_CreateProcess(args, false)))
+      SDL_DestroyProcess(p);
+}
+#endif
