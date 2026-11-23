@@ -74,7 +74,7 @@ static struct json *get(const char *path, SDL_AtomicInt *abort, int *status_out)
    return root;
 }
 
-int sgdb_search(const char *name, struct sgdb_game *games, int max, SDL_AtomicInt *abort,
+static int search(const char *name, struct sgdb_game *games, int max, SDL_AtomicInt *abort,
       int *status)
 {
    char path[600], *term;
@@ -113,6 +113,23 @@ int sgdb_search(const char *name, struct sgdb_game *games, int max, SDL_AtomicIn
          n++;
    }
    json_free(root);
+   return n;
+}
+
+int sgdb_search(const char *name, struct sgdb_game *games, int max, SDL_AtomicInt *abort,
+      int *status)
+{
+   int n = search(name, games, max, abort, status);
+   const char *tag = SDL_strstr(name, " (");
+   char plain[256];
+
+   /* "Tetris (Game Boy)", "Sonic (Europe)": without what tells versions
+    * apart, when that isn't found. */
+   if (n == 0 && tag)
+   {
+      SDL_strlcpy(plain, name, SDL_min(sizeof(plain), (size_t)(tag - name + 1)));
+      n = search(plain, games, max, abort, status);
+   }
    return n;
 }
 
