@@ -43,7 +43,10 @@ struct game
 {
    /* "<source>:<the launcher's id>", e.g. "epic:Fortnite". */
    char id[256];
+   /* As it's shown: the user's name for it, else its own. */
    char name[256];
+   char own_name[256];
+   char custom_name[256];
    char source[32];
    /* How to start it (empty for one only looked up for its art). */
    char exe[1024];
@@ -71,6 +74,7 @@ struct game
     * to tell when the settings above differ. */
    bool sc_overlay, sc_input;
    char sc_options[1024];
+   char sc_name[256];
 
    /* Not saved, found again by each scan:
     * installed: a launcher has it, or its Steam shortcut's folder is there.
@@ -102,6 +106,9 @@ int library_match(const char *name_or_id);
 /* Adds the game, or updates the one with its id (keeping its art and
  * match); returns its index. */
 int library_add(const struct game *game);
+
+/* The user's name for the game; empty for its own again. */
+void library_rename(int index, const char *name);
 
 /* Moves the downloaded image at tmp_path into the game's folder as its
  * art of that type (replacing the old one) and marks the library changed. */

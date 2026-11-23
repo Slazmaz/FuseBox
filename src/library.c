@@ -124,6 +124,13 @@ int library_match(const char *name_or_id)
       if (SDL_strcmp(want, have) == 0)
          return i;
    }
+   /* Other apps may not know what it was renamed to. */
+   for (i = 0; i < lib.count; i++)
+   {
+      library_normalize(lib.games[i].own_name, have, sizeof(have));
+      if (SDL_strcmp(want, have) == 0)
+         return i;
+   }
    return -1;
 }
 
@@ -139,6 +146,8 @@ static int append(const struct game *g)
       lib.alloc = alloc;
    }
    lib.games[lib.count] = *g;
+   if (!g->own_name[0])
+      SDL_strlcpy(lib.games[lib.count].own_name, g->name, sizeof(g->own_name));
    return lib.count++;
 }
 
@@ -153,7 +162,8 @@ int library_add(const struct game *game)
    {
       struct game *g = &lib.games[i];
       /* What the scan knows is newest; the art and match are the user's. */
-      SDL_strlcpy(g->name, game->name, sizeof(g->name));
+      SDL_strlcpy(g->own_name, game->name, sizeof(g->own_name));
+      SDL_strlcpy(g->name, g->custom_name[0] ? g->custom_name : g->own_name, sizeof(g->name));
       SDL_strlcpy(g->source, game->source, sizeof(g->source));
       SDL_strlcpy(g->exe, game->exe, sizeof(g->exe));
       if (game->game_exe[0])
@@ -166,12 +176,40 @@ int library_add(const struct game *game)
       g->sc_overlay = game->sc_overlay;
       g->sc_input = game->sc_input;
       SDL_strlcpy(g->sc_options, game->sc_options, sizeof(g->sc_options));
+      SDL_strlcpy(g->sc_name, game->sc_name, sizeof(g->sc_name));
       g->gone |= game->gone;
       g->selected |= game->selected;
    }
    lib.dirty = true;
    library_unlock();
    return i;
+}
+
+void library_rename(int index, const char *name)
+{
+   char text[256];
+   size_t n;
+   struct game *g;
+
+   while (*name == ' ')
+      name++;
+   SDL_strlcpy(text, name, sizeof(text));
+   for (n = SDL_strlen(text); n && text[n - 1] == ' '; n--)
+      text[n - 1] = '\0';
+
+   library_lock();
+   if (!(g = library_game(index)))
+   {
+      library_unlock();
+      return;
+   }
+   if (!text[0])
+      SDL_strlcpy(text, g->own_name, sizeof(text));
+   SDL_strlcpy(g->name, text, sizeof(g->name));
+   SDL_strlcpy(g->custom_name, SDL_strcmp(text, g->own_name) == 0 ? "" : text,
+         sizeof(g->custom_name));
+   lib.dirty = true;
+   library_unlock();
 }
 
 /* art/<id, made safe for a folder name>-<its crc>, unique per id. */
@@ -279,6 +317,8 @@ static bool game_from_json(const struct json *o, struct game *g)
    if (!g->id[0])
       return false;
    copy_str(g->name, sizeof(g->name), o, "name");
+   copy_str(g->custom_name, sizeof(g->custom_name), o, "custom_name");
+   SDL_strlcpy(g->own_name, json_str(o, "original_name", g->name), sizeof(g->own_name));
    copy_str(g->source, sizeof(g->source), o, "source");
    copy_str(g->exe, sizeof(g->exe), o, "exe");
    copy_str(g->game_exe, sizeof(g->game_exe), o, "game_exe");
@@ -417,6 +457,10 @@ static void write_game(SDL_IOStream *io, const struct game *g)
    json_write_string(io, g->id);
    SDL_IOprintf(io, ",\n      \"name\": ");
    json_write_string(io, g->name);
+   SDL_IOprintf(io, ",\n      \"original_name\": ");
+   json_write_string(io, g->own_name);
+   SDL_IOprintf(io, ",\n      \"custom_name\": ");
+   json_write_string(io, g->custom_name);
    SDL_IOprintf(io, ",\n      \"source\": ");
    json_write_string(io, g->source);
    SDL_IOprintf(io, ",\n      \"exe\": ");

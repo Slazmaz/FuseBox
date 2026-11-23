@@ -86,6 +86,7 @@ static void read_settings(struct game *g, const struct vdf *s)
    g->sc_overlay = !vdf_find(s, "AllowOverlay") || vdf_int(s, "AllowOverlay");
    g->sc_input = !vdf_find(s, "AllowDesktopConfig") || vdf_int(s, "AllowDesktopConfig");
    SDL_strlcpy(g->sc_options, vdf_str(s, "LaunchOptions"), sizeof(g->sc_options));
+   SDL_strlcpy(g->sc_name, vdf_str(s, "AppName"), sizeof(g->sc_name));
 }
 
 /* The id the shortcut FuseBox makes for a game has. */

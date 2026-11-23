@@ -653,7 +653,8 @@ enum field
    FIELD_FILTER,
    FIELD_KEY,
    FIELD_MATCH,
-   FIELD_OPTIONS
+   FIELD_OPTIONS,
+   FIELD_NAME
 };
 
 enum modal
@@ -745,6 +746,10 @@ static struct
    char filter[128];
    char key[128];
    char match[256];
+   /* A game's name while it's edited on its page: whose, and where. */
+   char name[256];
+   int name_game;
+   SDL_FRect name_rect;
    /* The game settings' launch options while they're edited. */
    char options[512];
    enum modal modal;
@@ -902,6 +907,7 @@ static char *field_text(enum field f, size_t *size)
       case FIELD_FILTER: *size = sizeof(app.filter); return app.filter;
       case FIELD_KEY: *size = sizeof(app.key); return app.key;
       case FIELD_MATCH: *size = sizeof(app.match); return app.match;
+      case FIELD_NAME: *size = sizeof(app.name); return app.name;
       case FIELD_OPTIONS: *size = sizeof(app.options); return app.options;
       default: *size = 0; return NULL;
    }
@@ -1016,6 +1022,8 @@ static bool settings_differ(const struct game *g)
       return true;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;
+   if (SDL_strcmp(g->name, g->sc_name) != 0)
+      return true;
    library_launch_options(g, options, sizeof(options));
    return SDL_strcmp(options, g->sc_options) != 0;
 }
@@ -1260,7 +1268,7 @@ static void fill_open(int index, const struct game *g)
       fill_once(index, (Uint8)(FILL_TYPE << app.tab), JOB_SELECTED, true);
 }
 
-/* It was matched to another game: what wasn't found may be. */
+/* It was renamed or matched to another game: what wasn't found may be. */
 static void fill_again(int index)
 {
    if (index >= 0 && index < app.covers_alloc)
@@ -1824,10 +1832,32 @@ static void build_view(void)
 
 static void open_game_settings(void);
 
+static void end_name(void)
+{
+   app.field = FIELD_NONE;
+   SDL_StopTextInput(app.window);
+}
+
+/* Takes the name as it was typed. */
+static void save_name(void)
+{
+   library_rename(app.name_game, app.name);
+   end_name();
+   app.view_built_for = -1;
+   /* One not found on SteamGridDB may be by its new name. */
+   library_lock();
+   if (library_game(app.name_game) && !library_game(app.name_game)->sgdb_id)
+   {
+      app.want_list = true;
+      fill_again(app.name_game);
+   }
+   library_unlock();
+}
+
 static void draw_game(float x, float y, float w, float h)
 {
    struct game *g;
-   char name[256], source[32], sgdb_name[256], line[300];
+   char name[256], own_name[256], source[32], sgdb_name[256], line[300];
    float top = y, cx, sr = 0, sg = 0, sb = 0;
    struct choice *coming;
    float tw, th, tx, content_h, ty, grid_top, grid_h;
@@ -1847,6 +1877,7 @@ static void draw_game(float x, float y, float w, float h)
       return;
    }
    SDL_strlcpy(name, g->name, sizeof(name));
+   SDL_strlcpy(own_name, g->own_name, sizeof(own_name));
    SDL_strlcpy(source, g->source, sizeof(source));
    SDL_strlcpy(sgdb_name, g->sgdb_name, sizeof(sgdb_name));
    chosen = g->art[app.tab].sgdb_id;
@@ -1917,6 +1948,23 @@ static void draw_game(float x, float y, float w, float h)
          SDL_StartTextInput(app.window);
       }
       cx = x + sh;
+      if (app.field == FIELD_NAME && app.name_game == app.selected)
+      {
+         /* Being renamed: the field in the name's place, its own name
+          * shown where it's blank. */
+         float fw = bx - cx - S(16);
+         app.name_rect = (SDL_FRect){ cx - S(10), y + S(15), fw + S(10), S(40) };
+         ui_rect(cx - S(10), y + S(15), fw + S(10), S(40), S(10), 0, 0, 0, 0.3f);
+         ui_ring(cx - S(10), y + S(15), fw + S(10), S(40), S(10), S(1.5f), C_ACCENT, 0.8f);
+         SDL_snprintf(line, sizeof(line), "%s|", app.name);
+         if (!app.name[0])
+            ui_text(UI_BOLD, S(24), cx + S(10), y + S(36), UI_LEFT, fw - S(20), C_DIM, 0.7f,
+                  own_name);
+         ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, fw - S(10), C_TEXT, 1, line);
+         /* A click in it isn't one outside. */
+         clicked_in(cx - S(10), y + S(15), fw + S(10), S(40), false);
+      }
+      else
       {
          /* Its tags: where it's from, what Steam has of it.
           * A long name is cut short for them, to half at most. */
@@ -1936,7 +1984,21 @@ static void draw_game(float x, float y, float w, float h)
          max_w = SDL_max(room - tags_w - S(6), room / 2);
          nw = SDL_min(ui_text_width(UI_BOLD, S(24), name), max_w);
 
+         /* The name: clicked to rename the game. */
+         if (!gone && hover(cx - S(10), y + S(15), nw + S(20), S(40)))
+         {
+            ui_rect(cx - S(10), y + S(15), nw + S(20), S(40), S(10), 1, 1, 1, 0.08f);
+            tooltip(cx + nw / 2, y + S(60), "Rename");
+         }
          ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, max_w, C_TEXT, 1, name);
+         if (!gone && clicked_in(cx - S(10), y + S(15), nw + S(20), S(40), false))
+         {
+            SDL_strlcpy(app.name, name, sizeof(app.name));
+            app.name_game = app.selected;
+            app.name_rect = (SDL_FRect){ cx - S(10), y + S(15), nw + S(20), S(40) };
+            app.field = FIELD_NAME;
+            SDL_StartTextInput(app.window);
+         }
          chip_x = cx + nw + S(14);
          for (i = 0; i < (int)SDL_arraysize(tags); i++)
             if (tags[i].text[0] && chip_x + chip_w(tags[i].text) < bx)
@@ -1945,7 +2007,7 @@ static void draw_game(float x, float y, float w, float h)
       }
       SDL_snprintf(line, sizeof(line), "SteamGridDB: %s",
             sgdb_name[0] ? sgdb_name : "not matched yet");
-      ui_text(UI_MEDIUM, S(14), cx, y + S(66), UI_LEFT, bx - cx - S(16), C_TEXT, 0.7f, line);
+      ui_text(UI_MEDIUM, S(14), cx, y + S(70), UI_LEFT, bx - cx - S(16), C_TEXT, 0.7f, line);
       y += sh + S(34);
    }
 
@@ -2390,10 +2452,7 @@ static void on_key(const SDL_KeyboardEvent *k)
       if (app.modal != MODAL_NONE)
          close_modal();
       else if (app.field != FIELD_NONE)
-      {
-         app.field = FIELD_NONE;
-         SDL_StopTextInput(app.window);
-      }
+         end_name();
       else if (app.page == PAGE_SETTINGS)
          app.page = PAGE_GAME;
       return;
@@ -2432,6 +2491,8 @@ static void on_key(const SDL_KeyboardEvent *k)
    {
       if (app.field == FIELD_KEY)
          save_key();
+      else if (app.field == FIELD_NAME)
+         save_name();
       else if (app.field == FIELD_MATCH)
          search_matches();
    }
@@ -2501,6 +2562,11 @@ static void draw(void)
    /* Modals first in input, last on screen: widgets under them must not
     * take their clicks, and they're drawn on top. A click outside every
     * widget just drops a field's focus. */
+   /* A click anywhere else takes the name being edited. */
+   if (app.click && app.field == FIELD_NAME
+         && !inside(app.cx, app.cy, app.name_rect.x, app.name_rect.y, app.name_rect.w,
+            app.name_rect.h))
+      save_name();
    draw_sidebar(side);
    draw_top(x0);
    if (app.page == PAGE_GAME)
@@ -2751,6 +2817,8 @@ int main(int argc, char **argv)
       }
    }
 
+   if (app.field == FIELD_NAME)
+      save_name();
    for (i = 0; i < CHOICES; i++)
       SDL_SetAtomicInt(&choices[i].stop, 1);
    jobs_quit();
