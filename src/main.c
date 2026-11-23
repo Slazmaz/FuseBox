@@ -2588,7 +2588,7 @@ static SDL_HitTestResult SDLCALL hit_test(SDL_Window *window, const SDL_Point *p
 
 static void draw(void)
 {
-   float side, x0, top, cw;
+   float side, x0, top, cw, wheel = app.wheel;
 
    SDL_GetWindowSizeInPixels(app.window, &app.width, &app.height);
    app.s = SDL_GetWindowDisplayScale(app.window);
@@ -2613,6 +2613,8 @@ static void draw(void)
          && !inside(app.cx, app.cy, app.name_rect.x, app.name_rect.y, app.name_rect.w,
             app.name_rect.h))
       save_name();
+   if (app.modal != MODAL_NONE)
+      app.wheel = 0;
    draw_sidebar(side);
    draw_top(x0);
    if (app.page == PAGE_GAME)
@@ -2620,6 +2622,7 @@ static void draw(void)
    else
       draw_settings(x0, top, cw, app.height - top);
    draw_tooltip();
+   app.wheel = wheel;
    draw_modal();
    if (app.click && app.modal == MODAL_NONE && app.field != FIELD_NONE)
    {
