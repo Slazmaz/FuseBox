@@ -59,9 +59,10 @@ add_library(fusebox_core STATIC
    src/disk.c
    src/roms.c
    src/jobs.c
+   src/rahash.c
 )
 target_include_directories(fusebox_core PUBLIC src)
-target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl)
+target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos)
 if(WIN32)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
 endif()
