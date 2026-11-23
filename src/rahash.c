@@ -1,4 +1,5 @@
 #include "rahash.h"
+#include "disc.h"
 
 #include <SDL3/SDL.h>
 #include <rc_consoles.h>
@@ -82,37 +83,81 @@ unsigned ra_console(const char *system, const char *rom)
    return consoles[i].console;
 }
 
-/* --- Files --- */
+/* --- Files: as they are, GameCube and Wii images as the original disc --- */
+
+struct hash_file
+{
+   /* One of them. */
+   SDL_IOStream *io;
+   struct disc *disc;
+   Uint64 pos;
+};
 
 /* Its reader is passed no data of ours; one ROM is hashed at a time. */
 static SDL_AtomicInt *hash_abort;
+static bool hash_discs;
 
 static void *hash_open(const char *path)
 {
-   return SDL_IOFromFile(path, "rb");
+   struct hash_file *f = SDL_calloc(1, sizeof(*f));
+
+   if (f && !(hash_discs && (f->disc = disc_open(path))) && !(f->io = SDL_IOFromFile(path, "rb")))
+   {
+      SDL_free(f);
+      return NULL;
+   }
+   return f;
 }
 
 static void hash_seek(void *handle, int64_t offset, int origin)
 {
-   SDL_SeekIO(handle, offset, origin == SEEK_CUR ? SDL_IO_SEEK_CUR
-         : origin == SEEK_END ? SDL_IO_SEEK_END : SDL_IO_SEEK_SET);
+   struct hash_file *f = handle;
+   Sint64 base;
+
+   if (!f->disc)
+   {
+      SDL_SeekIO(f->io, offset, origin == SEEK_CUR ? SDL_IO_SEEK_CUR
+            : origin == SEEK_END ? SDL_IO_SEEK_END : SDL_IO_SEEK_SET);
+      return;
+   }
+   base = origin == SEEK_CUR ? (Sint64)f->pos : origin == SEEK_END ? (Sint64)disc_size(f->disc) : 0;
+   f->pos = (Uint64)SDL_max(0, base + offset);
 }
 
 static int64_t hash_tell(void *handle)
 {
-   return SDL_TellIO(handle);
+   struct hash_file *f = handle;
+
+   return f->disc ? (int64_t)f->pos : SDL_TellIO(f->io);
 }
 
 static size_t hash_read(void *handle, void *buffer, size_t bytes)
 {
+   struct hash_file *f = handle;
+   Uint64 size;
+
    if (hash_abort && SDL_GetAtomicInt(hash_abort))
       return 0;
-   return SDL_ReadIO(handle, buffer, bytes);
+   if (!f->disc)
+      return SDL_ReadIO(f->io, buffer, bytes);
+   size = disc_size(f->disc);
+   if (f->pos >= size)
+      return 0;
+   bytes = (size_t)SDL_min((Uint64)bytes, size - f->pos);
+   if (!disc_read(f->disc, f->pos, buffer, bytes))
+      return 0;
+   f->pos += bytes;
+   return bytes;
 }
 
 static void hash_close(void *handle)
 {
-   SDL_CloseIO(handle);
+   struct hash_file *f = handle;
+
+   disc_close(f->disc);
+   if (f->io)
+      SDL_CloseIO(f->io);
+   SDL_free(f);
 }
 
 static void hash_message(const char *message, const rc_hash_iterator_t *iterator)
@@ -229,8 +274,8 @@ done:
 bool ra_hashable(const char *rom)
 {
    /* Compressed: rcheevos would hash the wrong bytes, or none. */
-   static const char *const cannot[] = { "chd", "rvz", "wia", "gcz", "wbfs", "ciso", "cso", "zso",
-      "pbp", "7z", "ecm", "gz", "mds", "ccd", NULL };
+   static const char *const cannot[] = { "chd", "wbfs", "ciso", "cso", "zso", "pbp", "7z", "ecm",
+      "gz", "mds", "ccd", NULL };
 
    return !any_of(extension(rom), cannot);
 }
@@ -253,6 +298,7 @@ bool ra_hash(unsigned console, const char *rom, char hash[RA_HASH_SIZE], SDL_Ato
          && !(unpacked = unzip_rom(rom, &size, name, sizeof(name))))
       return false;
    hash_abort = abort;
+   hash_discs = console == RC_CONSOLE_GAMECUBE || console == RC_CONSOLE_WII;
    rc_hash_initialize_iterator(&it, name, unpacked, size);
    it.callbacks.filereader.open = hash_open;
    it.callbacks.filereader.seek = hash_seek;

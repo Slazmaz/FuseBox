@@ -9,10 +9,11 @@
 /* RetroAchievements' console number for a game's system (its source) and
  * ROM; 0 for one it doesn't have. */
 unsigned ra_console(const char *system, const char *rom);
-/* False for what can't be read: .7z and compressed disc images (CHD, RVZ...). */
+/* False for what can't be read: .7z and compressed disc images (CHD, CSO...),
+ * GameCube's and Wii's RVZ, WIA and GCZ aside. */
 bool ra_hashable(const char *rom);
 /* The ROM's hash as RetroAchievements makes it (rcheevos); one in a .zip is
- * hashed unpacked. False when it can't. Blocking; one at a time. */
+ * hashed unpacked, a compressed disc as the original. False when it can't. Blocking; one at a time. */
 bool ra_hash(unsigned console, const char *rom, char hash[RA_HASH_SIZE], SDL_AtomicInt *abort);
 
 #endif
