@@ -46,6 +46,13 @@ set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
 add_executable(fusebox-cli src/cli.c)
 target_link_libraries(fusebox-cli PRIVATE fusebox_core)
 
+# The app icon, in both exes.
+if(WIN32)
+   enable_language(RC)
+   target_sources(fusebox PRIVATE src/fusebox.rc)
+   target_sources(fusebox-cli PRIVATE src/fusebox.rc)
+endif()
+
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
    foreach(t fusebox fusebox-cli fusebox_core)
       target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)

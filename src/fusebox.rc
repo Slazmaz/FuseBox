@@ -1,0 +1,2 @@
+// The .exe's icon (Explorer, shortcuts), drawn by tools/make_icon.py.
+1 ICON "fusebox.ico"
