@@ -841,9 +841,14 @@ static float button_w(const char *label)
 }
 
 /* A small rounded label, as on the reference's tags. Returns its width. */
+static float chip_w(const char *text)
+{
+   return ui_text_width(UI_BOLD, S(12), text) + S(20);
+}
+
 static float chip(float x, float y, const char *text, float r, float g, float b)
 {
-   float w = ui_text_width(UI_BOLD, S(12), text) + S(20);
+   float w = chip_w(text);
 
    ui_rect(x, y, w, S(24), S(12), 0.05f, 0.05f, 0.07f, 0.72f);
    ui_text(UI_BOLD, S(12), x + w / 2, y + S(12), UI_CENTER, 0, r, g, b, 1, text);
@@ -1913,15 +1918,30 @@ static void draw_game(float x, float y, float w, float h)
       }
       cx = x + sh;
       {
-         float nw = ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, bx - cx - S(16), C_TEXT, 1,
-               name);
-         float chip_x = cx + nw + S(14);
-         if (chip_x + S(200) < bx)
+         /* Its tags: where it's from, what Steam has of it.
+          * A long name is cut short for them, to half at most. */
+         const struct
          {
-            chip_x += chip(chip_x, y + S(24), source, C_TEXT) + S(8);
-            if (state)
-               chip(chip_x, y + S(24), state, sr, sg, sb);
-         }
+            const char *text;
+            float r, g, b;
+         } tags[] = {
+            { source, C_TEXT },
+            { state ? state : "", sr, sg, sb },
+         };
+         float room = bx - cx - S(16), tags_w = 0, max_w, nw, chip_x;
+
+         for (i = 0; i < (int)SDL_arraysize(tags); i++)
+            if (tags[i].text[0])
+               tags_w += chip_w(tags[i].text) + S(8);
+         max_w = SDL_max(room - tags_w - S(6), room / 2);
+         nw = SDL_min(ui_text_width(UI_BOLD, S(24), name), max_w);
+
+         ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, max_w, C_TEXT, 1, name);
+         chip_x = cx + nw + S(14);
+         for (i = 0; i < (int)SDL_arraysize(tags); i++)
+            if (tags[i].text[0] && chip_x + chip_w(tags[i].text) < bx)
+               chip_x += chip(chip_x, y + S(24), tags[i].text, tags[i].r, tags[i].g, tags[i].b)
+                  + S(8);
       }
       SDL_snprintf(line, sizeof(line), "SteamGridDB: %s",
             sgdb_name[0] ? sgdb_name : "not matched yet");
