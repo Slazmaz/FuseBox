@@ -1757,15 +1757,6 @@ static void draw_game(float x, float y, float w, float h)
     * for the chosen one's ring). */
    grid_top = y;
    grid_h = top + h - grid_top;
-   if (app.wheel != 0 && inside(app.wx, app.wy, x, top, w, h))
-   {
-      app.game_scroll -= app.wheel * S(120);
-      app.wheel = 0;
-   }
-   glEnable(GL_SCISSOR_TEST);
-   glScissor(0, app.height - (int)(grid_top + grid_h), app.width, (int)grid_h);
-   y = grid_top + S(6) - app.game_scroll;
-
    tile_size(app.tab, &tw, &th);
    cols = SDL_max(1, (int)((w + S(14)) / (tw + S(14))));
    /* Stretched to fill the row exactly, the art's shape kept: the same
@@ -1775,6 +1766,16 @@ static void draw_game(float x, float y, float w, float h)
       th *= fill / tw;
       tw = fill;
    }
+   content_h = S(6) + ((app.item_count + cols - 1) / cols) * (th + S(14)) + S(26);
+   if (app.wheel != 0 && inside(app.wx, app.wy, x, top, w, h))
+   {
+      app.game_scroll -= app.wheel * S(120);
+      app.wheel = 0;
+   }
+   app.game_scroll = SDL_clamp(app.game_scroll, 0, SDL_max(0, content_h - grid_h));
+   glEnable(GL_SCISSOR_TEST);
+   glScissor(0, app.height - (int)(grid_top + grid_h), app.width, (int)grid_h);
+   y = grid_top + S(6) - app.game_scroll;
    if (app.pick_loading || !app.item_count)
       ui_text(UI_MEDIUM, S(16), x, y + S(20), UI_LEFT, w, C_DIM, 1,
             app.pick_loading ? "Loading..." : app.pick_msg);
@@ -1813,9 +1814,7 @@ static void draw_game(float x, float y, float w, float h)
          }
       }
    }
-   content_h = S(6) + ((app.item_count + cols - 1) / cols) * (th + S(14)) + S(26);
    glDisable(GL_SCISSOR_TEST);
-   app.game_scroll = SDL_clamp(app.game_scroll, 0, SDL_max(0, content_h - grid_h));
 }
 
 /* ---- Settings page ----------------------------------------------------- */
