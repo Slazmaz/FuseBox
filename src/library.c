@@ -170,6 +170,9 @@ int library_add(const struct game *game)
          SDL_strlcpy(g->game_exe, game->game_exe, sizeof(g->game_exe));
       SDL_strlcpy(g->start_dir, game->start_dir, sizeof(g->start_dir));
       SDL_strlcpy(g->args, game->args, sizeof(g->args));
+      /* Another file: not the one that was hashed. */
+      if (SDL_strcmp(g->rom, game->rom) != 0)
+         g->ra_size = g->ra_time = 0;
       SDL_strlcpy(g->rom, game->rom, sizeof(g->rom));
       g->no_emulator = game->no_emulator;
       if (game->steam_appid)
@@ -312,7 +315,7 @@ static void copy_str(char *dst, size_t size, const struct json *obj, const char 
 
 static bool game_from_json(const struct json *o, struct game *g)
 {
-   struct json *art = json_get(o, "art");
+   struct json *art = json_get(o, "art"), *ra = json_get(o, "achievements");
    int t;
 
    SDL_zerop(g);
@@ -339,6 +342,15 @@ static bool game_from_json(const struct json *o, struct game *g)
    g->steam_input = json_bool(o, "steam_input", true);
    g->art_edited = json_bool(o, "art_edited", false);
    copy_str(g->launch_options, sizeof(g->launch_options), o, "launch_options");
+   if (ra)
+   {
+      copy_str(g->ra_hash, sizeof(g->ra_hash), ra, "hash");
+      g->ra_size = (Sint64)json_num(ra, "file_size", 0);
+      g->ra_time = (Sint64)json_num(ra, "file_time", 0);
+      g->ra_id = (unsigned)json_num(ra, "id", 0);
+      g->ra_total = (unsigned)json_num(ra, "total", 0);
+      g->ra_unlocked = (unsigned)json_num(ra, "unlocked", 0);
+   }
    for (t = 0; t < ART_TYPES; t++)
    {
       struct json *a = json_get(art, art_names[t]);
@@ -490,6 +502,15 @@ static void write_game(SDL_IOStream *io, const struct game *g)
    SDL_IOprintf(io, ",\n      \"steam_appid\": %u,\n      \"shortcut_id\": %u,\n      \"sgdb_id\": %u,\n      \"sgdb_name\": ",
          (unsigned)g->steam_appid, (unsigned)g->shortcut_id, g->sgdb_id);
    json_write_string(io, g->sgdb_name);
+   /* Once it was looked at, with or without any. */
+   if (g->ra_time)
+   {
+      SDL_IOprintf(io, ",\n      \"achievements\": { \"id\": %u, \"unlocked\": %u, \"total\": %u, "
+            "\"hash\": ", g->ra_id, g->ra_unlocked, g->ra_total);
+      json_write_string(io, g->ra_hash);
+      SDL_IOprintf(io, ", \"file_size\": %lld, \"file_time\": %lld }", (long long)g->ra_size,
+            (long long)g->ra_time);
+   }
    SDL_IOprintf(io, ",\n      \"art\": {");
    for (t = 0; t < ART_TYPES; t++)
    {

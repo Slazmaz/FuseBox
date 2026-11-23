@@ -76,6 +76,12 @@ struct game
    bool steam_overlay;
    bool steam_input;
    char launch_options[512];
+   /* A ROM's RetroAchievements (ra.h): its hash (empty when it can't be
+    * hashed) and the file it's of, the game it's known as there (0: none),
+    * how many achievements that has and how many the user unlocked. */
+   char ra_hash[33];
+   Sint64 ra_size, ra_time;
+   unsigned ra_id, ra_total, ra_unlocked;
 
    /* Not saved: what its shortcut in Steam has now (read by each scan),
     * to tell when the settings above differ. */

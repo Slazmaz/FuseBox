@@ -38,7 +38,8 @@ enum msg_kind
    MSG_ADD_EXE,
    MSG_ROM_FOLDER,
    MSG_EMULATOR,
-   MSG_LOGIN
+   MSG_LOGIN,
+   MSG_ACHIEVEMENTS
 };
 
 struct msg
@@ -660,6 +661,41 @@ static bool wanted_in_steam(const struct game *g)
       && SDL_strcmp(g->source, "Steam") != 0;
 }
 
+struct achievements_job
+{
+   /* Asked by the user: ask RetroAchievements whatever it said minutes
+    * ago. */
+   bool force;
+};
+
+/* RetroAchievements of the ROMs. */
+static void job_achievements(void *data)
+{
+   struct achievements_job *j = data;
+   struct msg *m = new_msg(MSG_ACHIEVEMENTS);
+   char user[128];
+   bool ok = ra_refresh(j->force, jobs_abort());
+
+   library_save();
+   if (m)
+   {
+      if (!ok && ra_user(user, sizeof(user)))
+         SDL_strlcpy(m->text, "Couldn't get everything from RetroAchievements", sizeof(m->text));
+      post(m);
+   }
+   SDL_free(j);
+}
+
+static void start_achievements(bool force)
+{
+   struct achievements_job *j = SDL_calloc(1, sizeof(*j));
+
+   if (!j)
+      return;
+   j->force = force;
+   jobs_add(job_achievements, j, JOB_NOW, false);
+}
+
 struct login_job
 {
    char user[128], password[256];
@@ -853,10 +889,11 @@ static struct
    enum field field;
    char filter[128];
    char key[128];
-   /* Logging in to RetroAchievements, and what came of it. */
+   /* Logging in to RetroAchievements, and what came of it; and how far
+    * looking up achievements is. */
    char ra_user[128], ra_password[256];
    bool ra_busy;
-   char ra_error[128];
+   char ra_error[128], ra_note[128];
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
@@ -2068,7 +2105,7 @@ static void save_name(void)
 static void draw_game(float x, float y, float w, float h)
 {
    struct game *g;
-   char name[256], own_name[256], source[32], sgdb_name[256], emulator[96], line[300];
+   char name[256], own_name[256], source[32], sgdb_name[256], emulator[96], line[300], achievements[48];
    const struct rom_option *chosen_emulator;
    struct choice *coming;
    float top = y, cx, sr = 0, sg = 0, sb = 0;
@@ -2106,6 +2143,10 @@ static void draw_game(float x, float y, float w, float h)
    no_emulator = g->no_emulator;
    chosen_emulator = no_emulator ? NULL : roms_chosen(g);
    SDL_strlcpy(emulator, chosen_emulator ? chosen_emulator->label : "", sizeof(emulator));
+   achievements[0] = '\0';
+   if (g->ra_total && g->rom[0])
+      SDL_snprintf(achievements, sizeof(achievements), "Achievements %u/%u", g->ra_unlocked,
+            g->ra_total);
    fill_open(app.selected, g);
    icon = detail_for(ART_ICON, g);
    /* The list says so already. */
@@ -2181,7 +2222,8 @@ static void draw_game(float x, float y, float w, float h)
       }
       else
       {
-         /* Its tags: where it's from, its emulator, what Steam has of it.
+         /* Its tags: where it's from, its emulator, its achievements, what
+          * Steam has of it.
           * A long name is cut short for them, to half at most. */
          const struct
          {
@@ -2191,6 +2233,7 @@ static void draw_game(float x, float y, float w, float h)
             { source, C_TEXT },
             { emulator, C_TEXT },
             { no_emulator ? "No emulator" : "", C_RED },
+            { achievements, C_GREEN },
             { state ? state : "", sr, sg, sb },
          };
          float room = bx - cx - S(16), tags_w = 0, max_w, nw, chip_x;
@@ -2434,7 +2477,7 @@ static float draw_achievements_card(float x, float y, float w)
 {
    char user[128], line[200];
    bool in = ra_user(user, sizeof(user));
-   float h = S(in ? 124 : 150);
+   float h = S(in ? 176 : 150);
    float cy, bw, fw, rx = x + w - S(24);
 
    cy = settings_card(x, y, w, h, "RetroAchievements");
@@ -2463,7 +2506,19 @@ static float draw_achievements_card(float x, float y, float w)
    SDL_snprintf(line, sizeof(line), "Logged in as %s", user);
    ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_TEXT, 1, line);
    if (button(rx - bw, cy, bw, S(40), "Log out", false, true, false))
+   {
       ra_logout();
+      app.ra_note[0] = '\0';
+   }
+   cy += S(56);
+   bw = button_w("Refresh");
+   ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_DIM, 1,
+         app.ra_note);
+   if (button(rx - bw, cy, bw, S(40), "Refresh", false, true, false))
+   {
+      SDL_strlcpy(app.ra_note, "Refreshing...", sizeof(app.ra_note));
+      start_achievements(true);
+   }
    return h;
 }
 
@@ -2882,6 +2937,7 @@ static void handle_msg(struct msg *m)
          SDL_strlcpy(app.status, m->text, sizeof(app.status));
          app.view_built_for = -1;
          start_fill();
+         start_achievements(false);
          if (app.scan_again && !app.busy)
          {
             app.scan_again = false;
@@ -3004,7 +3060,13 @@ static void handle_msg(struct msg *m)
          app.ra_busy = false;
          SDL_strlcpy(app.ra_error, m->text, sizeof(app.ra_error));
          if (m->count)
+         {
             app.ra_user[0] = '\0';
+            start_achievements(true);
+         }
+         break;
+      case MSG_ACHIEVEMENTS:
+         SDL_strlcpy(app.ra_note, m->text, sizeof(app.ra_note));
          break;
       case MSG_STEAM_DONE:
          app.busy = false;
