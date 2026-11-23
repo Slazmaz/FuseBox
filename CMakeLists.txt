@@ -7,8 +7,9 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 find_package(SDL3 REQUIRED CONFIG)
 find_package(OpenGL REQUIRED)
 find_package(CURL REQUIRED)
-# ROMs in a .zip.
+# ROMs in a .zip, and compressed discs (RVZ).
 find_package(ZLIB REQUIRED)
+find_package(zstd REQUIRED CONFIG)
 # WebP: animated art.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebpdemux libwebp)
@@ -62,9 +63,11 @@ add_library(fusebox_core STATIC
    src/roms.c
    src/jobs.c
    src/rahash.c
+   src/disc.c
+   src/crypto.c
 )
 target_include_directories(fusebox_core PUBLIC src)
-target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB)
+target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
 if(WIN32)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
 endif()
