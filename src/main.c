@@ -210,45 +210,82 @@ static void job_scan(void *data)
    }
 }
 
-static SDL_AtomicInt filling;
+/* What's looked up of a game's art, as bits: its icon (the list's picture),
+ * all that's missing, or one type (1 << t of FILL_TYPE). */
+#define FILL_ICON 1
+#define FILL_ALL 2
+#define FILL_TYPE 4
 
-/* The most popular art for every type an installed game has none of, so
- * nothing is left blank; picking in the window replaces it. */
+struct fill_job
+{
+   int index;
+   Uint8 what;
+};
+
+/* The most popular art where the game has none, so nothing is left blank;
+ * picking in the window replaces it. */
 static void job_fill(void *data)
 {
-   int *list, n = 0, i;
+   struct fill_job *j = data;
+   int t;
 
-   library_lock();
-   list = SDL_malloc(sizeof(int) * (size_t)SDL_max(1, library_count()));
-   for (i = 0; list && i < library_count(); i++)
-   {
-      const struct game *g = library_game(i);
-      int t;
-      bool missing = false;
+   if (j->what == FILL_ICON)
+      sgdb_fill(j->index, true, ART_ICON, jobs_abort());
+   else if (j->what == FILL_ALL)
+      sgdb_fill(j->index, false, ART_COVER, jobs_abort());
+   else
       for (t = 0; t < ART_TYPES; t++)
-         missing |= !g->art[t].path[0];
-      /* An icon FuseBox filled in, where the game's own exe has one. */
-      missing |= g->game_exe[0] && !g->art[ART_ICON].picked && g->art[ART_ICON].sgdb_id != 0;
-      if (g->installed && missing)
-         list[n++] = i;
-   }
+         if (j->what == FILL_TYPE << t)
+            sgdb_fill(j->index, true, (enum art_type)t, jobs_abort());
+   library_lock();
+   library_game(j->index)->filling &= (Uint8)~j->what;
    library_unlock();
    /* Quietly: the status line keeps what the scan found. An empty status
     * only wakes the window to show the new art. */
-   for (i = 0; i < n && !SDL_GetAtomicInt(jobs_abort()); i++)
-   {
-      if (sgdb_fill(list[i], false, ART_COVER, jobs_abort()) > 0)
-         post_status("%s", "");
-      library_save();
-   }
-   SDL_free(list);
-   SDL_SetAtomicInt(&filling, 0);
+   post_status("%s", "");
+   SDL_free(j);
 }
 
+/* Looks art up, unless that's already waiting. Under the library's lock. */
+static void queue_fill(int index, Uint8 what, enum job_level level, bool first)
+{
+   struct game *g = library_game(index);
+   struct fill_job *j;
+
+   if (!g || (g->filling & what) || !(j = SDL_calloc(1, sizeof(*j))))
+      return;
+   g->filling |= what;
+   j->index = index;
+   j->what = what;
+   jobs_add(job_fill, j, level, first);
+}
+
+/* Every installed game's missing art: the icons first, the rest after all
+ * else. */
 static void start_fill(void)
 {
-   if (sgdb_has_key() && SDL_CompareAndSwapAtomicInt(&filling, 0, 1))
-      jobs_add(job_fill, NULL, JOB_REST, false);
+   int i, t;
+
+   if (!sgdb_has_key())
+      return;
+   library_lock();
+   for (i = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+      bool missing = false;
+
+      if (!g->installed)
+         continue;
+      for (t = 0; t < ART_TYPES; t++)
+         missing |= !g->art[t].path[0];
+      /* An icon FuseBox filled in, where the game's own exe has one. */
+      if (!g->art[ART_ICON].path[0]
+            || (g->game_exe[0] && !g->art[ART_ICON].picked && g->art[ART_ICON].sgdb_id != 0))
+         queue_fill(i, FILL_ICON, JOB_ICON, false);
+      if (missing)
+         queue_fill(i, FILL_ALL, JOB_REST, false);
+   }
+   library_unlock();
 }
 
 struct cover_job
@@ -605,6 +642,9 @@ static struct
    float list_scroll;
    int selected;
    struct art_tex *covers;
+   /* FILL_ bits asked for since the start, per game: what isn't found is
+    * only asked for once. */
+   Uint8 *filled;
    int covers_alloc;
 
    /* The game page: its art, and the picker. */
@@ -1079,6 +1119,34 @@ static void tile_size(enum art_type t, float *w, float *h)
    };
    *w = S(sizes[t][0]);
    *h = S(sizes[t][1]);
+}
+
+/* A game's missing art is looked up the first time it's opened, what's
+ * shown first: its icon, then its art of the kind shown. Under the
+ * library's lock. */
+static void fill_once(int index, Uint8 what, enum job_level level, bool first)
+{
+   if (index < 0 || index >= app.covers_alloc || (app.filled[index] & what))
+      return;
+   app.filled[index] |= what;
+   queue_fill(index, what, level, first);
+}
+
+static void fill_open(int index, const struct game *g)
+{
+   if (!g->installed || !sgdb_has_key())
+      return;
+   if (!g->art[ART_ICON].path[0])
+      fill_once(index, FILL_ICON, JOB_ICON, true);
+   if (!g->art[app.tab].path[0] && app.tab != ART_ICON)
+      fill_once(index, (Uint8)(FILL_TYPE << app.tab), JOB_SELECTED, true);
+}
+
+/* It was matched to another game: what wasn't found may be. */
+static void fill_again(int index)
+{
+   if (index >= 0 && index < app.covers_alloc)
+      app.filled[index] = 0;
 }
 
 static void open_game(int index)
@@ -1620,7 +1688,13 @@ static void build_view(void)
          SDL_memset(grown + 2 * app.covers_alloc, 0,
                sizeof(*grown) * 2 * (size_t)(alloc - app.covers_alloc));
          app.covers = grown;
-         app.covers_alloc = alloc;
+         Uint8 *filled = SDL_realloc(app.filled, (size_t)alloc);
+         if (filled)
+         {
+            SDL_memset(filled + app.covers_alloc, 0, (size_t)(alloc - app.covers_alloc));
+            app.filled = filled;
+            app.covers_alloc = alloc;
+         }
       }
    }
    library_unlock();
@@ -1659,6 +1733,7 @@ static void draw_game(float x, float y, float w, float h)
    chosen_own = g->art[app.tab].path[0] && chosen == 0;
    removing = g->gone && g->selected;
    gone = g->gone;
+   fill_open(app.selected, g);
    icon = detail_for(ART_ICON, g);
    state = steam_state(g, &sr, &sg, &sb);
    library_unlock();
@@ -2037,6 +2112,7 @@ static void draw_modal(void)
                library_game(app.selected)->sgdb_id = app.matches[i].id;
                SDL_strlcpy(library_game(app.selected)->sgdb_name, app.matches[i].name,
                      sizeof(app.matches[i].name));
+               fill_again(app.selected);
             }
             library_unlock();
             library_changed();

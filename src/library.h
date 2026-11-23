@@ -78,6 +78,8 @@ struct game
    bool gone;
    bool selected;
    unsigned art_version;
+   /* Art being looked up now, or waiting to be (the window's fill bits). */
+   Uint8 filling;
 };
 
 bool library_init(const char *data_dir);
