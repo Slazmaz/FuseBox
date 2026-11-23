@@ -445,8 +445,27 @@ static void job_thumb(void *data)
    SDL_free(j);
 }
 
+/* Art picked whose download isn't in yet: shown as the one in use already.
+ * The window's own, but for what its job reads and writes. */
+#define CHOICES 16
+
+struct choice
+{
+   bool used;
+   int index;
+   enum art_type type;
+   unsigned id;
+   /* Set when another is picked instead. */
+   SDL_AtomicInt stop;
+   /* How much of it is in, -1 unknown. */
+   SDL_AtomicInt percent;
+};
+
+static struct choice choices[CHOICES];
+
 struct choose_job
 {
+   struct choice *choice;
    int index;
    enum art_type type;
    struct sgdb_art art;
@@ -460,23 +479,78 @@ static void job_choose(void *data)
    bool ok;
 
    library_tmp_path(j->index, j->type, tmp, sizeof(tmp));
-   ok = (SDL_strncmp(j->art.url, "file:", 5) == 0 ? SDL_CopyFile(j->art.url + 5, tmp)
-         : sgdb_download(j->art.url, tmp, jobs_abort()))
-      && library_set_art(j->index, j->type, tmp, j->art.ext, j->art.id);
-   /* The user's pick: FuseBox leaves it as it is from now on. */
+   ok = SDL_strncmp(j->art.url, "file:", 5) == 0 ? SDL_CopyFile(j->art.url + 5, tmp)
+      : http_download(j->art.url, tmp, &j->choice->stop, &j->choice->percent) == 200;
    if (ok)
    {
-      library_set_picked(j->index, j->type);
-      library_save();
+      library_lock();
+      if (SDL_GetAtomicInt(&j->choice->stop))
+         SDL_RemovePath(tmp);
+      else
+      {
+         /* The user's pick: FuseBox leaves it as it is from now on. */
+         if (library_set_art(j->index, j->type, tmp, j->art.ext, j->art.id))
+            library_set_picked(j->index, j->type);
+      }
+      library_unlock();
    }
    if (m)
    {
-      m->index = j->index;
-      SDL_snprintf(m->text, sizeof(m->text), ok ? "%s saved" : "Can't download the %s",
-            art_labels[j->type]);
+      m->index = (int)(j->choice - choices);
       post(m);
    }
    SDL_free(j);
+}
+
+/* The pick still coming in for the game's art of that type, NULL if none. */
+static struct choice *choice_for(int index, enum art_type type)
+{
+   int i;
+
+   for (i = 0; i < CHOICES; i++)
+      if (choices[i].used && choices[i].index == index && choices[i].type == type
+            && !SDL_GetAtomicInt(&choices[i].stop))
+         return &choices[i];
+   return NULL;
+}
+
+static bool choosing(void)
+{
+   int i;
+
+   for (i = 0; i < CHOICES; i++)
+      if (choices[i].used && !SDL_GetAtomicInt(&choices[i].stop))
+         return true;
+   return false;
+}
+
+static void choose(int index, enum art_type type, const struct sgdb_art *art)
+{
+   struct choice *c = choice_for(index, type);
+   struct choose_job *j;
+   int i;
+
+   if (c && c->id == art->id)
+      return;
+   /* Another instead: the one before it needn't come in. */
+   if (c)
+      SDL_SetAtomicInt(&c->stop, 1);
+   for (i = 0; i < CHOICES && choices[i].used; i++)
+      ;
+   if (i == CHOICES || !(j = SDL_calloc(1, sizeof(*j))))
+      return;
+   c = &choices[i];
+   c->used = true;
+   c->index = index;
+   c->type = type;
+   c->id = art->id;
+   SDL_SetAtomicInt(&c->stop, 0);
+   SDL_SetAtomicInt(&c->percent, -1);
+   j->choice = c;
+   j->index = index;
+   j->type = type;
+   j->art = *art;
+   jobs_add(job_choose, j, JOB_NOW, true);
 }
 
 struct match_job
@@ -661,6 +735,8 @@ static struct
    char pick_msg[128];
    struct pick_item *items;
    int item_count;
+   /* When the progress of one coming in is next drawn, ms; 0 for none. */
+   Uint64 anim_at;
    bool want_list;
 
    enum field field;
@@ -1585,6 +1661,8 @@ static void draw_sidebar(float w)
       SDL_strlcpy(line, "Not found", sizeof(line));
    else if (app.busy)
       SDL_strlcpy(line, app.steam_note[0] ? app.steam_note : "Updating...", sizeof(line));
+   else if (choosing())
+      SDL_strlcpy(line, "Downloading artwork...", sizeof(line));
    else if (n)
       SDL_snprintf(line, sizeof(line), "%d change%s waiting", n, n == 1 ? "" : "s");
    else
@@ -1592,7 +1670,8 @@ static void draw_sidebar(float w)
    ui_text(UI_MEDIUM, S(13), x + S(18), card_y + S(48), UI_LEFT, lw - S(36), C_DIM, 1, line);
    /* Always there: it also sends art picked since the last update. */
    if (button(x + S(14), card_y + ch - S(54), lw - S(28), S(40),
-            app.busy ? "Working..." : "Update Steam Shortcuts", n > 0, steam_install() && !app.busy, false))
+            app.busy ? "Working..." : "Update Steam Shortcuts", n > 0,
+            steam_install() && !app.busy && !choosing(), false))
    {
       if (platform_steam_running(steam_install()))
          app.modal = MODAL_STEAM;
@@ -1739,6 +1818,7 @@ static void draw_game(float x, float y, float w, float h)
    struct game *g;
    char name[256], source[32], sgdb_name[256], line[300];
    float top = y, cx, sr, sg, sb;
+   struct choice *coming;
    float tw, th, tx, content_h, ty, grid_top, grid_h;
    const char *state;
    unsigned chosen;
@@ -1761,6 +1841,12 @@ static void draw_game(float x, float y, float w, float h)
    chosen = g->art[app.tab].sgdb_id;
    /* Id 0 is the game's own icon, chosen only when it's what's saved. */
    chosen_own = g->art[app.tab].path[0] && chosen == 0;
+   /* Just picked: in use as far as anyone can see. */
+   if ((coming = choice_for(app.selected, app.tab)))
+   {
+      chosen = coming->id;
+      chosen_own = chosen == 0;
+   }
    removing = g->gone && g->selected;
    gone = g->gone;
    fill_open(app.selected, g);
@@ -1903,21 +1989,24 @@ static void draw_game(float x, float y, float w, float h)
       if (it->art.id == 0)
          chip(ix + S(8), ty + th - S(32), "Original", C_TEXT);
       if (it->art.id == chosen && (chosen != 0 || chosen_own))
+      {
          ui_ring(ix - S(4), ty - S(4), tw + S(8), th + S(8), S(15), S(3), C_ACCENT, 1);
+         if (coming)
+         {
+            /* How far its download is, kept up as it goes. */
+            Uint64 due = SDL_GetTicks() + 100;
+            int percent = SDL_GetAtomicInt(&coming->percent);
+            SDL_snprintf(line, sizeof(line), percent >= 0 ? "%d%%" : "...", percent);
+            chip(ix + S(8), ty + S(8), line, C_TEXT);
+            if (!app.anim_at || due < app.anim_at)
+               app.anim_at = due;
+         }
+      }
       else if (over)
          ui_ring(ix, ty, tw, th, S(12), S(1.5f), 1, 1, 1, 0.45f);
       if (inside(app.cx, app.cy, x - S(8), grid_top, w + S(16), grid_h)
             && clicked_in(ix, ty, tw, th, false))
-      {
-         struct choose_job *j = SDL_calloc(1, sizeof(*j));
-         if (j)
-         {
-            j->index = app.selected;
-            j->type = app.tab;
-            j->art = it->art;
-            jobs_add(job_choose, j, JOB_NOW, true);
-         }
-      }
+         choose(app.selected, app.tab, &it->art);
    }
    glDisable(GL_SCISSOR_TEST);
 }
@@ -2213,6 +2302,7 @@ static void handle_msg(struct msg *m)
       /* The status line only ever says what the scan found: these only
        * wake the window (new art), or speak in the Steam card. */
       case MSG_ART_SAVED:
+         choices[m->index].used = false;
          break;
       case MSG_STATUS:
          if (m->text[0])
@@ -2375,6 +2465,7 @@ static void draw(void)
    if (!ui_begin(app.width, app.height))
       return;
    app.nodrag_count = 0;
+   app.anim_at = 0;
    side = S(330);
    x0 = side + S(32);
    top = S(76);
@@ -2536,8 +2627,16 @@ int main(int argc, char **argv)
       SDL_Event e;
       /* Idle: wake only for input, a job's message, or a look at
        * library.json (fusebox-cli may add to it) every two seconds. */
-      bool got = app.redraw ? SDL_PollEvent(&e)
-         : SDL_WaitEventTimeout(&e, app.match_pending ? 50 : 2000);
+      bool got;
+      Uint64 now = SDL_GetTicks();
+      int wait = app.match_pending ? 50 : 2000;
+
+      /* Or how far picked art has come in. */
+      if (app.anim_at && !(SDL_GetWindowFlags(app.window) & SDL_WINDOW_MINIMIZED))
+         wait = app.anim_at > now ? (int)SDL_min((Uint64)wait, app.anim_at - now) : 0;
+      got = app.redraw ? SDL_PollEvent(&e) : SDL_WaitEventTimeout(&e, wait);
+      app.redraw |= app.anim_at && SDL_GetTicks() >= app.anim_at
+         && !(SDL_GetWindowFlags(app.window) & SDL_WINDOW_MINIMIZED);
 
       while (got)
       {
@@ -2624,6 +2723,8 @@ int main(int argc, char **argv)
       }
    }
 
+   for (i = 0; i < CHOICES; i++)
+      SDL_SetAtomicInt(&choices[i].stop, 1);
    jobs_quit();
    while ((m = take_msg()))
       handle_msg(m);
