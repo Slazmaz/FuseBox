@@ -11,6 +11,7 @@
 static char config[1024];
 static char key[128];
 static SDL_Mutex *key_lock;
+static SDL_AtomicInt animated_art;
 
 void sgdb_init(const char *config_dir)
 {
@@ -18,6 +19,38 @@ void sgdb_init(const char *config_dir)
    if (!key_lock)
       key_lock = SDL_CreateMutex();
    credentials_get(config, "steamgriddb_api_key", key, sizeof(key));
+   {
+      char path[1100], *text;
+      struct json *root;
+      SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "settings.json", config);
+      text = SDL_LoadFile(path, NULL);
+      root = text ? json_parse(text) : NULL;
+      SDL_SetAtomicInt(&animated_art, root && json_bool(root, "animated_art", false));
+      json_free(root);
+      SDL_free(text);
+   }
+}
+
+bool sgdb_animated(void)
+{
+   return SDL_GetAtomicInt(&animated_art) != 0;
+}
+
+void sgdb_set_animated(bool on)
+{
+   char path[1100];
+   SDL_IOStream *io;
+
+   SDL_SetAtomicInt(&animated_art, on);
+   SDL_CreateDirectory(config);
+   SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "settings.json", config);
+   if (!(io = SDL_IOFromFile(path, "wb")))
+   {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
+      return;
+   }
+   SDL_IOprintf(io, "{\n  \"animated_art\": %s\n}\n", on ? "true" : "false");
+   SDL_CloseIO(io);
 }
 
 bool sgdb_has_key(void)
@@ -133,15 +166,15 @@ int sgdb_search(const char *name, struct sgdb_game *games, int max, SDL_AtomicIn
    return n;
 }
 
-int sgdb_list(unsigned game_id, enum art_type type, struct sgdb_art **out,
+int sgdb_list(unsigned game_id, enum art_type type, bool animated, struct sgdb_art **out,
       SDL_AtomicInt *abort)
 {
    static const char *const queries[ART_TYPES] = {
-      "/grids/game/%u?dimensions=600x900,342x482,660x930&types=static&mimes=image/png,image/jpeg",
-      "/grids/game/%u?dimensions=920x430,460x215&types=static&mimes=image/png,image/jpeg",
-      "/heroes/game/%u?types=static&mimes=image/png,image/jpeg",
-      "/logos/game/%u?types=static&mimes=image/png",
-      "/icons/game/%u?types=static&mimes=image/png",
+      "/grids/game/%u?dimensions=600x900,342x482,660x930&types=%s&mimes=image/png,image/jpeg%s",
+      "/grids/game/%u?dimensions=920x430,460x215&types=%s&mimes=image/png,image/jpeg%s",
+      "/heroes/game/%u?types=%s&mimes=image/png,image/jpeg%s",
+      "/logos/game/%u?types=%s&mimes=image/png%s",
+      "/icons/game/%u?types=%s&mimes=image/png%s",
    };
    char path[256];
    struct json *root, *data, *item;
@@ -149,7 +182,10 @@ int sgdb_list(unsigned game_id, enum art_type type, struct sgdb_art **out,
    int n = 0, count = 0;
 
    *out = NULL;
-   SDL_snprintf(path, sizeof(path), queries[type], game_id);
+   /* Icons: Windows and Steam show a still one anyway. */
+   animated &= type != ART_ICON;
+   SDL_snprintf(path, sizeof(path), queries[type], game_id, animated ? "animated" : "static",
+         animated ? ",image/webp" : "");
    if (!(root = get(path, abort, NULL)))
       return -1;
    data = json_get(root, "data");
@@ -170,7 +206,10 @@ int sgdb_list(unsigned game_id, enum art_type type, struct sgdb_art **out,
       SDL_strlcpy(a->thumb, json_str(item, "thumb", a->url), sizeof(a->thumb));
       a->width = (int)json_num(item, "width", 0);
       a->height = (int)json_num(item, "height", 0);
-      SDL_strlcpy(a->ext, SDL_strcmp(mime, "image/jpeg") == 0 ? "jpg" : "png", sizeof(a->ext));
+      SDL_strlcpy(a->ext, SDL_strcmp(mime, "image/jpeg") == 0 ? "jpg"
+            : SDL_strcmp(mime, "image/webp") == 0 ? "webp" : "png", sizeof(a->ext));
+      /* Its thumb is a small video then. */
+      a->animated = animated;
       if (a->url[0])
          n++;
    }
@@ -258,7 +297,7 @@ int sgdb_fill(int index, bool only_type_set, enum art_type only_type, SDL_Atomic
       library_unlock();
       if (has || (abort && SDL_GetAtomicInt(abort)))
          continue;
-      if ((n = sgdb_list(game_id, (enum art_type)t, &arts, abort)) > 0)
+      if ((n = sgdb_list(game_id, (enum art_type)t, false, &arts, abort)) > 0)
       {
          library_tmp_path(index, (enum art_type)t, tmp, sizeof(tmp));
          if (sgdb_download(arts[0].url, tmp, abort))

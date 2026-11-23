@@ -422,11 +422,14 @@ static void job_list(void *data)
          return;
       }
    }
-   m->count = sgdb_list(id, j->type, (struct sgdb_art **)&m->ptr, jobs_abort());
+   m->count = sgdb_list(id, j->type, sgdb_animated(), (struct sgdb_art **)&m->ptr,
+         jobs_abort());
    if (m->count < 0)
       SDL_strlcpy(m->text, "Can't reach SteamGridDB", sizeof(m->text));
    else if (m->count == 0)
-      SDL_strlcpy(m->text, "None of this kind on SteamGridDB", sizeof(m->text));
+      SDL_strlcpy(m->text, sgdb_animated() && j->type != ART_ICON
+            ? "No animated art of this kind on SteamGridDB" : "None of this kind on SteamGridDB",
+            sizeof(m->text));
    /* Icons: the game's own exe's first (id 0, a local file). */
    if (j->type == ART_ICON)
    {
@@ -462,7 +465,15 @@ struct thumb_job
    int gen, item;
    /* "file:" and a path for one on disk. */
    char url[1100];
+   bool animated;
 };
+
+/* What animations to pick from may take: each, and all a list's (the ones
+ * past it are shown small). */
+#define ANIM_BYTES (24u << 20)
+#define ANIM_SMALL (1u << 20)
+#define ANIM_TOTAL (512 << 20)
+static SDL_AtomicInt anim_total;
 
 static void job_thumb(void *data)
 {
@@ -487,7 +498,19 @@ static void job_thumb(void *data)
       body = NULL;
    }
    if (body && SDL_GetAtomicInt(&picker_gen) == j->gen)
-      m->pixels = decode(body, size, 400, 400, &m->w, &m->h);
+   {
+      struct anim *a = NULL;
+      if (j->animated)
+         a = anim_load(body, size, 400, 400,
+               SDL_GetAtomicInt(&anim_total) < ANIM_TOTAL ? ANIM_BYTES : ANIM_SMALL);
+      if (a)
+      {
+         SDL_AddAtomicInt(&anim_total, a->w * a->h * 4 * a->count);
+         m->ptr = a;
+      }
+      else
+         m->pixels = decode(body, size, 400, 400, &m->w, &m->h);
+   }
    SDL_free(body);
    post(m);
    SDL_free(j);
@@ -732,9 +755,15 @@ struct pick_item
    GLuint tex;
    int w, h;
    bool failed;
+   /* Its thumb is asked for: an animated one's once it's in view, as its
+    * frames take room. */
+   bool asked;
    /* The game's own art of that type when it was listed. */
    bool in_use;
    char url[1100];
+   /* Playing: the frame its texture has. */
+   struct anim *anim;
+   int frame;
 };
 
 /* Where the window can't be dragged by (widgets in the top bar). */
@@ -791,7 +820,7 @@ static struct
    char pick_msg[128];
    struct pick_item *items;
    int item_count;
-   /* When the progress of one coming in is next drawn, ms; 0 for none. */
+   /* When the next frame of one in view is due, ms; 0 for none. */
    Uint64 anim_at;
    bool want_list;
 
@@ -1212,8 +1241,14 @@ static void picker_clear(void)
    int i;
 
    for (i = 0; i < app.item_count; i++)
+   {
       if (app.items[i].tex)
          glDeleteTextures(1, &app.items[i].tex);
+      if (app.items[i].anim)
+         SDL_AddAtomicInt(&anim_total, -(app.items[i].anim->w * app.items[i].anim->h * 4
+                  * app.items[i].anim->count));
+      SDL_free(app.items[i].anim);
+   }
    SDL_free(app.items);
    app.items = NULL;
    app.item_count = 0;
@@ -1250,13 +1285,38 @@ static void ask_thumb(int item)
    struct pick_item *it = &app.items[item];
    struct thumb_job *j;
 
-   if (!(j = SDL_calloc(1, sizeof(*j))))
+   if (it->asked || !(j = SDL_calloc(1, sizeof(*j))))
       return;
+   it->asked = true;
    j->gen = SDL_GetAtomicInt(&picker_gen);
    j->item = item;
+   j->animated = it->art.animated;
    SDL_strlcpy(j->url, it->url, sizeof(j->url));
    jobs_add(job_thumb, j, SDL_strncmp(j->url, "file:", 5) == 0 ? JOB_NOW
          : it->in_use ? JOB_SELECTED : JOB_OPTIONS, false);
+}
+
+/* The item's texture, moved on to the frame due now if it's playing. */
+static GLuint item_texture(struct pick_item *it)
+{
+   Uint64 now = SDL_GetTicks();
+   int frame, next;
+
+   if (!it->anim)
+      return it->tex;
+   frame = anim_frame(it->anim, now, &next);
+   if (frame != it->frame)
+   {
+      it->frame = frame;
+      glBindTexture(GL_TEXTURE_2D, it->tex);
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, it->w, it->h, GL_RGBA, GL_UNSIGNED_BYTE,
+            it->anim->pixels + (size_t)it->w * it->h * 4 * frame);
+      glBindTexture(GL_TEXTURE_2D, 0);
+   }
+   now += (Uint64)SDL_max(next, 10);
+   if (!app.anim_at || now < app.anim_at)
+      app.anim_at = now;
+   return it->tex;
 }
 
 static void on_art_list(struct msg *m)
@@ -1290,12 +1350,14 @@ static void on_art_list(struct msg *m)
       struct pick_item *it = &app.items[i];
       it->art = ((struct sgdb_art *)m->ptr)[i];
       it->in_use = chosen && it->art.id == chosen;
-      /* The one in use is on disk: shown at once. */
-      if (it->in_use && saved[0])
+      /* The one in use is on disk: shown at once. (Not an animated one: its
+       * small preview is in sooner than its file is decoded.) */
+      if (it->in_use && saved[0] && !it->art.animated)
          SDL_snprintf(it->url, sizeof(it->url), "file:%s", saved);
       else
          SDL_strlcpy(it->url, it->art.thumb, sizeof(it->url));
-      ask_thumb(i);
+      if (!it->art.animated || it->in_use)
+         ask_thumb(i);
    }
    SDL_free(m->ptr);
 }
@@ -2152,6 +2214,18 @@ static void draw_game(float x, float y, float w, float h)
       }
       tx += pw + S(8);
    }
+   /* Right: animated art instead of still (icons have none). */
+   if (app.tab != ART_ICON)
+   {
+      float lw = ui_text_width(UI_MEDIUM, S(14), "Animated"), kx = x + w - lw - S(28);
+      draw_tick(kx, y + S(15), sgdb_animated(), false);
+      ui_text(UI_MEDIUM, S(14), kx + S(28), y + S(15), UI_LEFT, 0, C_TEXT, 0.85f, "Animated");
+      if (clicked_in(kx - S(6), y, lw + S(34), S(30), false))
+      {
+         sgdb_set_animated(!sgdb_animated());
+         app.want_list = true;
+      }
+   }
    y += S(44);
 
    /* The art scrolls in what's left, cut off at its top edge (with room
@@ -2192,8 +2266,9 @@ static void draw_game(float x, float y, float w, float h)
       over = hover(ix, ty, tw, th) && inside(app.mx, app.my, x - S(8), grid_top, w + S(16), grid_h);
       ui_rect(ix, ty, tw, th, S(12), 1, 1, 1, over ? 0.09f : 0.04f);
       /* Icons as they are, square corners; other art in rounded tiles. */
+      ask_thumb(i);
       if (it->tex)
-         draw_fit(it->tex, it->w, it->h, ix, ty, tw, th, app.tab == ART_ICON ? 0 : S(12));
+         draw_fit(item_texture(it), it->w, it->h, ix, ty, tw, th, app.tab == ART_ICON ? 0 : S(12));
       else
          ui_text(UI_MEDIUM, S(13), ix + tw / 2, ty + th / 2, UI_CENTER, tw, C_DIM, 1,
                it->failed ? "No preview" : "...");
@@ -2735,14 +2810,33 @@ static void handle_msg(struct msg *m)
       case MSG_THUMB:
          if (m->gen == SDL_GetAtomicInt(&picker_gen) && m->index < app.item_count)
          {
-            if (m->pixels)
+            struct pick_item *it = &app.items[m->index];
+            if (m->ptr)
             {
-               app.items[m->index].tex = make_texture(m->pixels, m->w, m->h);
-               app.items[m->index].w = m->w;
-               app.items[m->index].h = m->h;
+               it->anim = m->ptr;
+               m->ptr = NULL;
+               it->w = it->anim->w;
+               it->h = it->anim->h;
+               it->tex = make_texture(it->anim->pixels, it->w, it->h);
+               /* Only the full size is kept up as it plays. */
+               glBindTexture(GL_TEXTURE_2D, it->tex);
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+               glBindTexture(GL_TEXTURE_2D, 0);
+            }
+            else if (m->pixels)
+            {
+               it->tex = make_texture(m->pixels, m->w, m->h);
+               it->w = m->w;
+               it->h = m->h;
             }
             else
-               app.items[m->index].failed = true;
+               it->failed = true;
+         }
+         /* For a list that's gone: freed below. */
+         if (m->ptr)
+         {
+            const struct anim *a = m->ptr;
+            SDL_AddAtomicInt(&anim_total, -(a->w * a->h * 4 * a->count));
          }
          break;
       case MSG_COVER:
@@ -3126,7 +3220,7 @@ int main(int argc, char **argv)
       Uint64 now = SDL_GetTicks();
       int wait = app.match_pending ? 50 : 2000;
 
-      /* Or how far picked art has come in. */
+      /* Or the next frame of animated art in view. */
       if (app.anim_at && !(SDL_GetWindowFlags(app.window) & SDL_WINDOW_MINIMIZED))
          wait = app.anim_at > now ? (int)SDL_min((Uint64)wait, app.anim_at - now) : 0;
       got = app.redraw ? SDL_PollEvent(&e) : SDL_WaitEventTimeout(&e, wait);

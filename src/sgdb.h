@@ -22,13 +22,18 @@ struct sgdb_art
    char url[512];
    char thumb[512];
    int width, height;
-   /* "png" or "jpg". */
+   /* "png", "jpg" or "webp". */
    char ext[8];
+   bool animated;
 };
 
 void sgdb_init(const char *config_dir);
 bool sgdb_has_key(void);
 void sgdb_set_key(const char *key);
+/* Whether the art to pick from is the animated (else the still) kind; kept
+ * in config/settings.json. */
+bool sgdb_animated(void);
+void sgdb_set_animated(bool on);
 
 /* Up to max games matching the name, best first; -1 on a failure (no
  * key, network, refused key). *status gets the HTTP status if not NULL. */
@@ -36,7 +41,7 @@ int sgdb_search(const char *name, struct sgdb_game *games, int max, SDL_AtomicIn
       int *status);
 /* The game's art of that type, most popular first; *out SDL_free'd by the
  * caller. -1 on a failure. */
-int sgdb_list(unsigned game_id, enum art_type type, struct sgdb_art **out,
+int sgdb_list(unsigned game_id, enum art_type type, bool animated, struct sgdb_art **out,
       SDL_AtomicInt *abort);
 /* GET url into path; true on 200. */
 bool sgdb_download(const char *url, const char *path, SDL_AtomicInt *abort);
