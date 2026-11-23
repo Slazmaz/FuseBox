@@ -22,8 +22,8 @@ struct system
    /* Folders named for it (library_normalize'd). */
    const char *folders;
    /* File types only it has, and those it shares with others (which only
-    * count in a folder of its own). Where a game has several files, the
-    * earliest type is the one to start. */
+    * count in a folder of its own, or by what's in the file). Where a game
+    * has several files, the earliest type is the one to start. */
    const char *exts, *shared;
    /* RetroArch's cores for it, best first. */
    const char *cores;
@@ -761,10 +761,114 @@ static void make_options(struct scan *sc)
 
 /* ---- ROMs --------------------------------------------------------------- */
 
+static bool read_at(SDL_IOStream *io, Sint64 at, void *dst, size_t size)
+{
+   return SDL_SeekIO(io, at, SDL_IO_SEEK_SET) == at && SDL_ReadIO(io, dst, size) == size;
+}
+
+/* A disc image's system by what's on it: raw ones (a .cue's) have 2352
+ * bytes a sector, the data 16 or (PlayStation's) 24 in. */
+static int sniff_disc(SDL_IOStream *io, bool raw)
+{
+   static const Sint64 x360[] = { 0xFDA0000, 0x2090000 };
+   static const Sint64 xbox[] = { 0x10000, 0x18310000 };
+   Uint8 b[48];
+   int i;
+
+   if (!raw)
+   {
+      if (read_at(io, 0, b, 32))
+      {
+         if (SDL_memcmp(b + 0x18, "\x5D\x1C\x9E\xA3", 4) == 0)
+            return system_by_name("Wii");
+         if (SDL_memcmp(b + 0x1C, "\xC2\x33\x9F\x3D", 4) == 0)
+            return system_by_name("GameCube");
+      }
+      if (read_at(io, 0x800, b, 12) && SDL_memcmp(b, "PlayStation3", 12) == 0)
+         return system_by_name("PlayStation 3");
+      for (i = 0; i < (int)SDL_arraysize(x360); i++)
+         if (read_at(io, x360[i], b, 20) && SDL_memcmp(b, "MICROSOFT*XBOX*MEDIA", 20) == 0)
+            return system_by_name("Xbox 360");
+      for (i = 0; i < (int)SDL_arraysize(xbox); i++)
+         if (read_at(io, xbox[i], b, 20) && SDL_memcmp(b, "MICROSOFT*XBOX*MEDIA", 20) == 0)
+            return system_by_name("Xbox");
+   }
+   if (read_at(io, raw ? 16 : 0, b, 16))
+   {
+      if (SDL_memcmp(b, "SEGA SEGASATURN", 15) == 0)
+         return system_by_name("Saturn");
+      if (SDL_memcmp(b, "SEGADISCSYSTEM", 14) == 0)
+         return system_by_name("Sega CD");
+      if (SDL_memcmp(b, "SEGA SEGAKATANA", 15) == 0)
+         return system_by_name("Dreamcast");
+   }
+   /* ISO 9660's volume, in sector 16, says whose disc it is. */
+   for (i = raw ? 16 : 0; i <= (raw ? 24 : 0); i += 8)
+   {
+      if (!read_at(io, (raw ? 2352 : 2048) * 16 + i, b, sizeof(b))
+            || SDL_memcmp(b + 1, "CD001", 5) != 0)
+         continue;
+      if (SDL_memcmp(b + 8, "PSP GAME", 8) == 0)
+         return system_by_name("PSP");
+      /* PlayStation 2 games' images are .iso, PlayStation's .bin. */
+      if (SDL_memcmp(b + 8, "PLAYSTATION", 11) == 0)
+         return system_by_name(raw ? "PlayStation" : "PlayStation 2");
+   }
+   return -1;
+}
+
+/* A .cue's first track. */
+static int sniff_cue(const char *path)
+{
+   char dir[1024], bin[1300], name[256];
+   char *text = SDL_LoadFile(path, NULL), *p, *end;
+   SDL_IOStream *io;
+   int system = -1;
+
+   if (!text)
+      return -1;
+   if ((p = SDL_strstr(text, "FILE \"")) && (end = SDL_strchr(p + 6, '"')))
+   {
+      *end = '\0';
+      SDL_strlcpy(name, p + 6, sizeof(name));
+      parent_dir(path, dir, sizeof(dir));
+      join(bin, sizeof(bin), dir, name);
+      if ((io = SDL_IOFromFile(bin, "rb")))
+      {
+         system = sniff_disc(io, true);
+         SDL_CloseIO(io);
+      }
+   }
+   SDL_free(text);
+   return system;
+}
+
+/* A file's system by what's in it, -1 if that doesn't tell. */
+static int sniff(const char *path, const char *ext)
+{
+   SDL_IOStream *io;
+   Uint8 b[4];
+   int system = -1;
+
+   if (SDL_strcasecmp(ext, "cue") == 0)
+      return sniff_cue(path);
+   if (in_list("gcz|ciso", ext) >= 0)
+      return system_by_name("GameCube");
+   if (in_list("iso|rvz|wia", ext) < 0 || !(io = SDL_IOFromFile(path, "rb")))
+      return -1;
+   if (SDL_strcasecmp(ext, "iso") == 0)
+      system = sniff_disc(io, false);
+   /* Dolphin's: the second header starts with the disc's type. */
+   else if (read_at(io, 0x48, b, sizeof(b)))
+      system = system_by_name(b[3] == 2 ? "Wii" : "GameCube");
+   SDL_CloseIO(io);
+   return system;
+}
+
 /* The file's system: its folder's where that has files of its type, else
- * by the type alone. *ext_rank gets how soon among the system's types it
- * comes. */
-static int rom_system(const char *ext, int folder_system, int *ext_rank)
+ * by the type alone, else by what's in it. *ext_rank gets how soon among
+ * the system's types it comes. */
+static int rom_system(const char *path, const char *ext, int folder_system, int *ext_rank)
 {
    int i, n;
 
@@ -780,7 +884,9 @@ static int rom_system(const char *ext, int folder_system, int *ext_rank)
    for (i = 0; i < SYSTEMS; i++)
       if ((*ext_rank = in_list(systems[i].exts, ext)) >= 0)
          return i;
-   return -1;
+   if ((i = sniff(path, ext)) >= 0)
+      *ext_rank = SDL_max(0, in_list(systems[i].shared, ext));
+   return i;
 }
 
 /* Takes "(Disc 2)" and the like out of a name; the disc's number, 0 if
@@ -881,7 +987,7 @@ static void rom_file(struct scan *sc, const char *dir, const char *name, int fol
          || SDL_strcasestr(stem, "(Track "))
       return;
    join(path, sizeof(path), dir, name);
-   if ((system = rom_system(ext, folder_system, &ext_rank)) < 0)
+   if ((system = rom_system(path, ext, folder_system, &ext_rank)) < 0)
    {
       /* Only what could be a game is worth a word about. */
       if (in_list("iso|cue|chd|cso|pbp|m3u|zip|7z", ext) >= 0)
