@@ -25,6 +25,7 @@ add_library(fusebox_core STATIC
    src/library.c
    src/sgdb.c
    src/platform.c
+   src/scan.c
    src/disk.c
    src/jobs.c
 )
