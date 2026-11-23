@@ -21,6 +21,14 @@
 /* From here on, ids aren't achievements: RetroAchievements puts a warning
  * in the list of emulators it doesn't know. */
 #define FIRST_WARNING_ID 101000000u
+/* The friends' list asked for less than this ago isn't asked for again. */
+#define FRIENDS_MS (2 * 60 * 1000)
+/* Who played a game is looked up again after this (seconds), by this many
+ * of its most common achievements. */
+#define PLAYED_AGE_S (24 * 3600)
+#define COMMON 3
+/* Seen playing a game this long ago (seconds), a friend still is. */
+#define NOW_S (5 * 60)
 
 static struct
 {
@@ -36,6 +44,12 @@ static struct
    SDL_Mutex *run;
    Uint64 asked[CONSOLES];
    bool listed[CONSOLES];
+
+   /* Under friends_lock: RetroAchievements' answer, whose, and when (ms). */
+   SDL_Mutex *friends_lock;
+   struct json *friends;
+   char friends_of[128];
+   Uint64 friends_at;
 } ra;
 
 static void settings_path(char *dst, size_t size)
@@ -53,6 +67,7 @@ void ra_init(const char *config_dir)
    {
       ra.lock = SDL_CreateMutex();
       ra.run = SDL_CreateMutex();
+      ra.friends_lock = SDL_CreateMutex();
    }
    SDL_LockMutex(ra.lock);
    if (!credentials_get(ra.config, KEY_USER, ra.user, sizeof(ra.user))
@@ -569,4 +584,185 @@ char *ra_list(unsigned id, unsigned total, unsigned unlocked, SDL_AtomicInt *abo
       SDL_CloseIO(io);
    }
    return list;
+}
+
+/* --- Friends ------------------------------------------------------------ */
+
+/* Under friends_lock. */
+static struct json *friend_list(const char *user, SDL_AtomicInt *abort)
+{
+   struct json *root;
+
+   if (ra.friends && SDL_strcmp(ra.friends_of, user) == 0
+         && SDL_GetTicks() - ra.friends_at < FRIENDS_MS)
+      return json_get(ra.friends, "Friends");
+   if (!(root = ask("getfriendlist", abort)))
+      return NULL;
+   json_free(ra.friends);
+   ra.friends = root;
+   SDL_strlcpy(ra.friends_of, user, sizeof(ra.friends_of));
+   ra.friends_at = SDL_GetTicks();
+   return json_get(root, "Friends");
+}
+
+/* The ids of the list's most common achievements. */
+static int most_common(const char *list, unsigned ids[COMMON])
+{
+   struct json *root = json_parse(list), *o;
+   double percent[COMMON];
+   int n = 0, i;
+
+   for (o = root ? root->child : NULL; o; o = o->next)
+   {
+      const struct json *v = o->child;
+      unsigned id = v ? (unsigned)v->num : 0;
+      double p;
+
+      for (i = 0; v && i < 4; i++)
+         v = v->next;
+      if (!v)
+         continue;
+      p = v->num;
+      for (i = n; i > 0 && percent[i - 1] < p; i--)
+         if (i < COMMON)
+         {
+            percent[i] = percent[i - 1];
+            ids[i] = ids[i - 1];
+         }
+      if (i < COMMON)
+      {
+         percent[i] = p;
+         ids[i] = id;
+         n = SDL_min(n + 1, COMMON);
+      }
+   }
+   json_free(root);
+   return n;
+}
+
+static bool has_name(const struct json *names, const char *name)
+{
+   const struct json *o;
+
+   for (o = names ? names->child : NULL; o; o = o->next)
+      if (o->type == JSON_STRING && SDL_strcasecmp(o->str, name) == 0)
+         return true;
+   return false;
+}
+
+/* The names of those who played the game, {"names": [...]}: from its file
+ * while that's new. */
+static struct json *who_played(unsigned id, const char *list, const char *user,
+      SDL_AtomicInt *abort)
+{
+   char path[1100], request[96];
+   unsigned ids[COMMON];
+   SDL_Time now = 0;
+   SDL_IOStream *io;
+   struct json *root = NULL;
+   char *text;
+   int n, i;
+   bool first = true, ok = true;
+
+   SDL_GetCurrentTime(&now);
+   SDL_snprintf(path, sizeof(path), "%sachievements" PATH_SEP "%u-friends.json", library_dir(), id);
+   if ((text = SDL_LoadFile(path, NULL)))
+   {
+      root = json_parse(text);
+      SDL_free(text);
+      if (root && SDL_strcmp(json_str(root, "user", ""), user) == 0
+            && (double)(now / SDL_NS_PER_SECOND) - json_num(root, "time", 0) < PLAYED_AGE_S)
+         return root;
+      json_free(root);
+      root = NULL;
+   }
+   if (!(io = SDL_IOFromDynamicMem()))
+      return NULL;
+   SDL_IOprintf(io, "{\"user\": ");
+   json_write_string(io, user);
+   SDL_IOprintf(io, ", \"time\": %lld, \"names\": [", (long long)(now / SDL_NS_PER_SECOND));
+   n = most_common(list, ids);
+   for (i = 0; i < n && ok; i++)
+   {
+      struct json *won, *o;
+
+      SDL_snprintf(request, sizeof(request), "achievementwondata&a=%u&f=1&o=0&c=100", ids[i]);
+      if (!(won = ask(request, abort)))
+      {
+         ok = false;
+         break;
+      }
+      o = json_get(json_get(won, "Response"), "RecentWinner");
+      for (o = o ? o->child : NULL; o; o = o->next)
+      {
+         if (!first)
+            SDL_WriteU8(io, ',');
+         json_write_string(io, json_str(o, "User", ""));
+         first = false;
+      }
+      json_free(won);
+   }
+   SDL_IOprintf(io, "]}");
+   SDL_WriteU8(io, '\0');
+   if (ok)
+   {
+      text = SDL_GetPointerProperty(SDL_GetIOProperties(io),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, NULL);
+      SDL_SaveFile(path, text, SDL_strlen(text));
+      root = json_parse(text);
+   }
+   SDL_CloseIO(io);
+   return root;
+}
+
+char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
+{
+   struct json *friends, *played, *o;
+   char user[128], *out = NULL;
+   SDL_Time now = 0;
+   SDL_IOStream *io;
+   bool first = true;
+
+   if (!ra_user(user, sizeof(user)))
+      return NULL;
+   SDL_LockMutex(ra.friends_lock);
+   friends = friend_list(user, abort);
+   if (friends && !friends->child)
+      out = SDL_strdup("[]");
+   else if (friends && (io = SDL_IOFromDynamicMem()))
+   {
+      /* Without it, those seen playing are still known. */
+      played = who_played(id, list, user, abort);
+      SDL_GetCurrentTime(&now);
+      SDL_WriteU8(io, '[');
+      for (o = friends->child; o; o = o->next)
+      {
+         const char *name = json_str(o, "Friend", "");
+         bool last = (unsigned)number(o, "LastGameId", 0) == id;
+         bool on = (double)(now / SDL_NS_PER_SECOND) - number(o, "LastSeenTime", 0) < NOW_S;
+
+         if (!name[0] || (!last && !has_name(json_get(played, "names"), name)))
+            continue;
+         SDL_IOprintf(io, "%s[", first ? "" : ",");
+         json_write_string(io, name);
+         SDL_WriteU8(io, ',');
+         json_write_string(io, json_str(o, "AvatarUrl", ""));
+         SDL_IOprintf(io, ",%d,", on && last);
+         json_write_string(io, on && last ? json_str(o, "LastSeen", "") : "");
+         SDL_WriteU8(io, ',');
+         json_write_string(io, json_str(o, "LastGameTitle", ""));
+         SDL_IOprintf(io, ",%.0f,%d,", number(o, "LastSeenTime", 0), on);
+         json_write_string(io, json_str(o, "LastGameIconUrl", ""));
+         SDL_WriteU8(io, ']');
+         first = false;
+      }
+      SDL_WriteU8(io, ']');
+      SDL_WriteU8(io, '\0');
+      out = SDL_strdup(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, "[]"));
+      SDL_CloseIO(io);
+      json_free(played);
+   }
+   SDL_UnlockMutex(ra.friends_lock);
+   return out;
 }

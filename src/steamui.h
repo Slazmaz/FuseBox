@@ -25,8 +25,9 @@ enum steamui
 
 /* Starts Steam: with a port when achievements are to be shown in it. */
 void steamui_start(const struct steam_install *steam);
-/* Gives Steam every game's achievements (and takes back those of games
- * that left). Blocking. *games: how many have them. */
+/* Gives Steam every game's achievements and the friends who play it (and
+ * takes back those of games that left). Blocking. *games: how many have
+ * them. */
 enum steamui steamui_push(int *games, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);

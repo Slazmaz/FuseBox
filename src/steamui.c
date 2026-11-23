@@ -148,7 +148,7 @@ enum steamui steamui_push(int *games, SDL_AtomicInt *abort)
    for (i = 0; i < count && !(abort && SDL_GetAtomicInt(abort)); i++)
    {
       char *achievements = ra_list(list[i].id, list[i].total, list[i].unlocked, abort);
-      char *script = NULL;
+      char *script = NULL, *friends;
 
       /* One whose list can't be had now keeps what Steam has. */
       SDL_IOprintf(keep, "%s%u", i ? "," : "", (unsigned)list[i].appid);
@@ -157,6 +157,15 @@ enum steamui steamui_push(int *games, SDL_AtomicInt *abort)
             && evaluate(url, script, result, sizeof(result), abort))
          done++;
       SDL_free(script);
+      script = NULL;
+      if (achievements && (friends = ra_friends(list[i].id, achievements, abort)))
+      {
+         if (SDL_asprintf(&script, "__fusebox.friends(%u,%u,%s)", (unsigned)list[i].appid,
+                  list[i].id, friends) > 0)
+            evaluate(url, script, result, sizeof(result), abort);
+         SDL_free(script);
+         SDL_free(friends);
+      }
       SDL_free(achievements);
    }
    SDL_IOprintf(keep, "])");

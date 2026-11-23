@@ -39,4 +39,12 @@ bool ra_refresh(bool force, SDL_AtomicInt *abort);
  * are the same. Blocking; NULL on a failure. */
 char *ra_list(unsigned id, unsigned total, unsigned unlocked, SDL_AtomicInt *abort);
 
+/* The user's friends who played a game, as a JSON list of [name, avatar's
+ * address, playing it now, what they're doing in it, the game they played
+ * last, when that was (seconds since 1970), playing that now, its icon's address]; SDL_free it. It's
+ * told by who has the game's most common achievements, looked up once a
+ * day, and by what each friend played last. list: ra_list's. Blocking; NULL
+ * on a failure. */
+char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort);
+
 #endif
