@@ -27,6 +27,23 @@ add_library(stb_truetype STATIC third_party/stb/stb_truetype.c)
 target_include_directories(stb_truetype PUBLIC third_party/stb)
 target_link_libraries(stb_truetype PRIVATE SDL3::SDL3)
 
+# rcheevos (MIT): only how RetroAchievements hashes ROMs.
+add_library(rcheevos STATIC
+   third_party/rcheevos/src/rc_compat.c
+   third_party/rcheevos/src/rc_util.c
+   third_party/rcheevos/src/rhash/aes.c
+   third_party/rcheevos/src/rhash/cdreader.c
+   third_party/rcheevos/src/rhash/hash.c
+   third_party/rcheevos/src/rhash/hash_disc.c
+   third_party/rcheevos/src/rhash/hash_encrypted.c
+   third_party/rcheevos/src/rhash/hash_rom.c
+   third_party/rcheevos/src/rhash/hash_zip.c
+   third_party/rcheevos/src/rhash/md5.c
+)
+target_include_directories(rcheevos
+   PUBLIC third_party/rcheevos/include
+   PRIVATE third_party/rcheevos/src)
+
 # The library, SteamGridDB, the scanners and Steam: shared by the window
 # and fusebox-cli.
 add_library(fusebox_core STATIC
