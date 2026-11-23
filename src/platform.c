@@ -11,6 +11,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
+#include <shellapi.h>
+#include <userenv.h>
 #include <wchar.h>
 #else
 #include <fcntl.h>
@@ -19,6 +21,7 @@
 #include <stdlib.h>
 #include <sys/file.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -427,12 +430,17 @@ bool platform_only_background(void)
    return CreateMutexW(NULL, FALSE, ONE_NAME) && GetLastError() != ERROR_ALREADY_EXISTS;
 }
 
-void platform_start_background(void)
+void platform_start_background(bool by_game)
 {
-   HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, ONE_NAME);
-   STARTUPINFOW si;
+   HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, ONE_NAME), shell = NULL, token = NULL;
+   LPPROC_THREAD_ATTRIBUTE_LIST list = NULL;
+   STARTUPINFOEXW si;
    PROCESS_INFORMATION pi;
    WCHAR command[1100];
+   void *env = NULL;
+   SIZE_T size = 0;
+   DWORD pid = 0;
+   bool as_shells = false;
 
    if (running)
    {
@@ -440,13 +448,101 @@ void platform_start_background(void)
       return;
    }
    SDL_zero(si);
-   si.cb = sizeof(si);
+   si.StartupInfo.cb = sizeof(si);
    background_command(command, SDL_arraysize(command));
-   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   /* The desktop's child rather than the game's, and without what Steam
+    * put in the game's environment. */
+   if (by_game)
+   {
+      GetWindowThreadProcessId(GetShellWindow(), &pid);
+      shell = pid ? OpenProcess(PROCESS_CREATE_PROCESS, FALSE, pid) : NULL;
+      InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+      if (shell && (list = SDL_malloc(size)))
+         as_shells = InitializeProcThreadAttributeList(list, 1, 0, &size)
+            && UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &shell,
+                  sizeof(shell), NULL, NULL);
+      si.lpAttributeList = list;
+   }
+   if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token))
+   {
+      if (!CreateEnvironmentBlock(&env, token, FALSE))
+         env = NULL;
+      CloseHandle(token);
+   }
+   if ((!by_game || as_shells) && CreateProcessW(NULL, command, NULL, NULL, FALSE,
+            CREATE_UNICODE_ENVIRONMENT | (as_shells ? EXTENDED_STARTUPINFO_PRESENT : 0), env,
+            NULL, &si.StartupInfo, &pi))
    {
       CloseHandle(pi.hThread);
       CloseHandle(pi.hProcess);
    }
+   if (env)
+      DestroyEnvironmentBlock(env);
+   if (as_shells)
+      DeleteProcThreadAttributeList(list);
+   SDL_free(list);
+   if (shell)
+      CloseHandle(shell);
+}
+
+int platform_run_game(char **argv)
+{
+   /* Quotes and all, as Steam had it. */
+   const WCHAR *tail = wcsstr(GetCommandLineW(), L" --run ");
+   WCHAR *command, *exe, *args;
+   STARTUPINFOW si;
+   PROCESS_INFORMATION pi;
+   HANDLE process = NULL;
+   DWORD code = 1;
+
+   (void)argv;
+   if (!tail)
+      return 1;
+   for (tail += 7; *tail == ' '; tail++)
+      ;
+   SDL_zero(si);
+   si.cb = sizeof(si);
+   SDL_zero(pi);
+   command = SDL_malloc((wcslen(tail) + 1) * sizeof(WCHAR));
+   if (!command)
+      return 1;
+   wcscpy(command, tail);
+   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   {
+      CloseHandle(pi.hThread);
+      process = pi.hProcess;
+      AllowSetForegroundWindow(pi.dwProcessId);
+   }
+   else
+   {
+      /* One that asks to run as administrator, or isn't a program itself. */
+      SHELLEXECUTEINFOW ex;
+
+      wcscpy(command, tail);
+      exe = command;
+      if (*exe == '"')
+         args = wcschr(++exe, '"');
+      else
+         args = wcschr(exe, ' ');
+      if (args)
+         *args++ = 0;
+      SDL_zero(ex);
+      ex.cbSize = sizeof(ex);
+      ex.fMask = SEE_MASK_NOCLOSEPROCESS;
+      ex.lpFile = exe;
+      ex.lpParameters = args;
+      ex.nShow = SW_SHOWNORMAL;
+      if (ShellExecuteExW(&ex))
+         process = ex.hProcess;
+   }
+   SDL_free(command);
+   if (process)
+   {
+      WaitForSingleObject(process, INFINITE);
+      GetExitCodeProcess(process, &code);
+      CloseHandle(process);
+   }
+   return (int)code;
 }
 
 #else
@@ -505,9 +601,11 @@ bool platform_only_background(void)
    return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
 }
 
-void platform_start_background(void)
+void platform_start_background(bool by_game)
 {
-   const char *args[3];
+   /* Steam follows a game's children wherever they go: systemd starts it
+    * outside of them. */
+   const char *args[8];
    char exe[1024];
    SDL_Process *p;
    int n = 0, fd = one_file();
@@ -517,10 +615,32 @@ void platform_start_background(void)
       close(fd);
    if (runs || !own_exe(exe, sizeof(exe)))
       return;
+   if (by_game)
+   {
+      args[n++] = "systemd-run";
+      args[n++] = "--user";
+      args[n++] = "--quiet";
+      args[n++] = "--collect";
+   }
    args[n++] = exe;
    args[n++] = "--background";
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+int platform_run_game(char **argv)
+{
+   int status = 0;
+   pid_t pid = fork();
+
+   if (pid == 0)
+   {
+      execvp(argv[0], argv);
+      _exit(127);
+   }
+   if (pid < 0 || waitpid(pid, &status, 0) < 0)
+      return 1;
+   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 #endif

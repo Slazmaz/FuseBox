@@ -72,7 +72,7 @@ add_library(fusebox_core STATIC
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
 if(WIN32)
-   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi)
+   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv)
 endif()
 
 add_executable(fusebox src/main.c src/ui.c src/gl.c src/anim.c)

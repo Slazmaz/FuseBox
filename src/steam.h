@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "library.h"
 #include "platform.h"
 
 /* Steam as one user of the library: its non-Steam shortcuts
@@ -11,6 +12,10 @@
 /* Finds Steam; false if it isn't installed. */
 bool steam_init(void);
 const struct steam_install *steam_install(void);
+
+/* FuseBox's exe, when the game's shortcut is to start it through FuseBox
+ * (while Steam shows achievements: background.h), else empty. */
+const char *steam_through(const struct game *g);
 
 /* Adds Steam's own non-Steam shortcuts (those FuseBox didn't make) to the
  * library, so their art can be picked too. */

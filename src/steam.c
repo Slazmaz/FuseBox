@@ -1,5 +1,6 @@
 #include "steam.h"
 #include "library.h"
+#include "ra.h"
 #include "vdf.h"
 
 #include <SDL3/SDL.h>
@@ -68,14 +69,57 @@ static bool is_path(const char *p)
       || p[0] == '/' || (p[0] == '\\' && p[1] == '\\');
 }
 
+#ifdef _WIN32
+#define OWN_EXE "fusebox.exe"
+#else
+#define OWN_EXE "fusebox"
+#endif
+#define RUN "--run "
+
+const char *steam_through(const struct game *g)
+{
+   static char own[1024];
+
+   /* Only a program: a URL is Windows' to open. Options with %command% put
+    * things before the program, which must stay what they're for. */
+   if (!ra_active() || SDL_strcmp(g->source, "Steam") == 0 || !is_path(g->exe)
+         || SDL_strstr(g->launch_options, "%command%"))
+      return "";
+   if (!own[0])
+      SDL_snprintf(own, sizeof(own), "%s%s", SDL_GetBasePath(), OWN_EXE);
+   return own;
+}
+
+/* What the shortcut starts, with which options: the game's own, where it's
+ * started through FuseBox (through: its exe, else empty). */
+static const char *target(const struct vdf *s, char *exe, size_t size, char *through,
+      size_t through_size)
+{
+   const char *options = vdf_str(s, "LaunchOptions"), *p, *end;
+   size_t len, own = SDL_strlen(OWN_EXE), run = SDL_strlen(RUN);
+
+   unquote(vdf_str(s, "Exe"), exe, size);
+   through[0] = '\0';
+   len = SDL_strlen(exe);
+   if (len <= own || SDL_strcasecmp(exe + len - own, OWN_EXE) != 0
+         || SDL_strncmp(options, RUN "\"", run + 1) != 0
+         || !(end = SDL_strchr(p = options + run + 1, '"')))
+      return options;
+   SDL_strlcpy(through, exe, through_size);
+   SDL_strlcpy(exe, p, SDL_min(size, (size_t)(end - p) + 1));
+   for (end++; *end == ' '; end++)
+      ;
+   return end;
+}
+
 /* Whether the shortcut's game is still there: its target and its start
  * folder both. One that's a URL or a bare command can't be checked. */
 static bool shortcut_present(const struct vdf *s)
 {
-   char dir[1024], exe[1024];
+   char dir[1024], exe[1024], through[1024];
 
    unquote(vdf_str(s, "StartDir"), dir, sizeof(dir));
-   unquote(vdf_str(s, "Exe"), exe, sizeof(exe));
+   target(s, exe, sizeof(exe), through, sizeof(through));
    return (!is_path(exe) || platform_exists(exe)) && (!is_path(dir) || platform_exists(dir));
 }
 
@@ -83,9 +127,12 @@ static bool shortcut_present(const struct vdf *s)
  * differ from the game's). A missing one is Steam's default, on. */
 static void read_settings(struct game *g, const struct vdf *s)
 {
+   char exe[1024];
+
    g->sc_overlay = !vdf_find(s, "AllowOverlay") || vdf_int(s, "AllowOverlay");
    g->sc_input = !vdf_find(s, "AllowDesktopConfig") || vdf_int(s, "AllowDesktopConfig");
-   SDL_strlcpy(g->sc_options, vdf_str(s, "LaunchOptions"), sizeof(g->sc_options));
+   SDL_strlcpy(g->sc_options, target(s, exe, sizeof(exe), g->sc_through, sizeof(g->sc_through)),
+         sizeof(g->sc_options));
    SDL_strlcpy(g->sc_name, vdf_str(s, "AppName"), sizeof(g->sc_name));
 }
 
@@ -124,6 +171,8 @@ static bool starts_rom(const char *options, const struct game *g)
  * FuseBox's own starts. */
 static int shortcut_game(Uint32 appid, const struct vdf *s)
 {
+   char exe[1024], through[1024];
+   const char *options = target(s, exe, sizeof(exe), through, sizeof(through));
    int i, known, old = -1;
 
    for (known = 1; known >= 0; known--)
@@ -140,7 +189,7 @@ static int shortcut_game(Uint32 appid, const struct vdf *s)
       }
    for (i = 0; tagged(s) && i < library_count(); i++)
    {
-      if (!starts_rom(vdf_str(s, "LaunchOptions"), library_game(i)))
+      if (!starts_rom(options, library_game(i)))
          continue;
       if (library_game(i)->installed)
          return i;
@@ -190,7 +239,8 @@ int steam_read_shortcuts(void)
          read_settings(lg, s);
          if (lg->rom[0])
          {
-            unquote(vdf_str(s, "Exe"), lg->sc_exe, sizeof(lg->sc_exe));
+            char through[1024];
+            target(s, lg->sc_exe, sizeof(lg->sc_exe), through, sizeof(through));
             moved = SDL_strcmp(lg->sc_exe, lg->exe) != 0;
          }
          /* Ticked from the start: only what Steam already has. */
@@ -214,11 +264,11 @@ int steam_read_shortcuts(void)
       SDL_snprintf(g.id, sizeof(g.id), "steam:%u", (unsigned)appid);
       SDL_strlcpy(g.name, vdf_str(s, "AppName"), sizeof(g.name));
       SDL_strlcpy(g.source, "Steam", sizeof(g.source));
-      unquote(vdf_str(s, "Exe"), g.exe, sizeof(g.exe));
+      SDL_strlcpy(g.args, target(s, g.exe, sizeof(g.exe), g.sc_through, sizeof(g.sc_through)),
+            sizeof(g.args));
       if (SDL_strlen(g.exe) > 4 && SDL_strcasecmp(g.exe + SDL_strlen(g.exe) - 4, ".exe") == 0)
          SDL_strlcpy(g.game_exe, g.exe, sizeof(g.game_exe));
       unquote(vdf_str(s, "StartDir"), g.start_dir, sizeof(g.start_dir));
-      SDL_strlcpy(g.args, vdf_str(s, "LaunchOptions"), sizeof(g.args));
       g.steam_appid = appid;
       read_settings(&g, s);
       /* First seen: its settings are what Steam has. */
@@ -310,9 +360,10 @@ static struct vdf *new_shortcut(struct vdf *list)
 static void fill_shortcut(struct vdf *s, const struct game *g, Uint32 appid, const char *icon)
 {
    char exe[1100], dir[1100];
+   const char *through = steam_through(g);
    struct vdf *tags;
 
-   quote(g->exe, exe, sizeof(exe));
+   quote(through[0] ? through : g->exe, exe, sizeof(exe));
    quote(g->start_dir, dir, sizeof(dir));
    vdf_set_int(s, "appid", appid);
    vdf_set_str(s, "AppName", g->name);
@@ -322,8 +373,12 @@ static void fill_shortcut(struct vdf *s, const struct game *g, Uint32 appid, con
    if (!vdf_find(s, "ShortcutPath"))
       vdf_set_str(s, "ShortcutPath", "");
    {
-      char options[1100];
-      library_launch_options(g, options, sizeof(options));
+      char own[1600], options[2800];
+      library_launch_options(g, own, sizeof(own));
+      if (through[0])
+         SDL_snprintf(options, sizeof(options), RUN "\"%s\"%s%s", g->exe, own[0] ? " " : "", own);
+      else
+         SDL_strlcpy(options, own, sizeof(options));
       vdf_set_str(s, "LaunchOptions", options);
    }
    /* The game's own settings (FuseBox's game settings). */

@@ -45,10 +45,14 @@ void platform_window_shadow(void *sdl_window);
 
 /* fusebox --background (background.h) at login, or no more. */
 void platform_autostart(bool on);
-/* Starts it now, unless it runs. */
-void platform_start_background(void);
+/* Starts it now, unless it runs. by_game: from a game Steam started, so
+ * not as part of it: Steam would say the game still runs. */
+void platform_start_background(bool by_game);
 /* Whether the caller is the only background one; stays so till it ends. */
 bool platform_only_background(void);
+/* Runs a game and waits for it; its exit code. argv: its exe and arguments
+ * (Windows: taken as they were typed, from after --run). */
+int platform_run_game(char **argv);
 
 #ifdef _WIN32
 /* hive: "HKLM" or "HKCU". value NULL reads the key's default value. */

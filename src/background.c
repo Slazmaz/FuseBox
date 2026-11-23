@@ -12,7 +12,7 @@
 #define LOOK_MS 5000
 #define PORT_MS 60000
 #define YOUNG_MS 120000
-/* Progress is looked up again this often (ms). */
+/* Progress is looked up again this often, games' ends aside (ms). */
 #define REFRESH_MS (30 * 60 * 1000)
 /* And which friends play, this often (ms). */
 #define FRIENDS_MS (3 * 60 * 1000)
@@ -23,6 +23,12 @@
 static void port_file(const struct steam_install *st, char *dst, size_t size)
 {
    SDL_snprintf(dst, size, "%s" PATH_SEP ".cef-enable-remote-debugging", st->root);
+}
+
+/* Touched when a game ends. */
+static void played_file(const char *config_dir, char *dst, size_t size)
+{
+   SDL_snprintf(dst, size, "%s" PATH_SEP "played", config_dir);
 }
 
 void background_apply(void)
@@ -50,36 +56,51 @@ void background_apply(void)
    }
    platform_autostart(active && ra_autostart());
    if (active && ra_autostart())
-      platform_start_background();
+      platform_start_background(false);
 }
 
 int background_run(const char *data_dir, const char *config_dir)
 {
+   char played[1100];
    const struct steam_install *st;
+   SDL_PathInfo info;
+   SDL_Time seen = 0;
    Uint64 steam_since = 0, pushed = 0, friends = 0, next = 0;
 
    if (!platform_only_background())
       return 0;
+   played_file(config_dir, played, sizeof(played));
+   if (SDL_GetPathInfo(played, &info))
+      seen = info.modify_time;
    for (;; SDL_Delay(LOOK_MS))
    {
       Uint64 now = SDL_GetTicks();
       enum steamui state;
-      bool only_friends;
+      bool ended = false, only_friends;
       int games = 0;
 
       /* As the window left them. */
       ra_init(config_dir);
-      if (!ra_active() || !ra_autostart())
+      if (!ra_active())
          return 0;
       if (!(st = steam_install()) && !(steam_init() && (st = steam_install())))
          continue;
       if (!platform_steam_running(st))
       {
+         /* Started by a game: gone with Steam. */
+         if (!ra_autostart())
+            return 0;
          steam_since = pushed = next = 0;
          continue;
       }
       if (!steam_since)
          steam_since = now;
+      if (SDL_GetPathInfo(played, &info) && info.modify_time != seen)
+      {
+         seen = info.modify_time;
+         ended = true;
+         next = 0;
+      }
       if (now < next)
          continue;
       state = steamui_check(NULL);
@@ -88,14 +109,14 @@ int background_run(const char *data_dir, const char *config_dir)
          next = now - steam_since > YOUNG_MS ? now + PORT_MS : 0;
          continue;
       }
-      only_friends = state == STEAMUI_OK && pushed && now - pushed < REFRESH_MS;
+      only_friends = state == STEAMUI_OK && pushed && !ended && now - pushed < REFRESH_MS;
       if (only_friends && now - friends < FRIENDS_MS)
          continue;
       /* Read again each time, and never written: the window's is newer. */
       if (!library_init(data_dir))
          continue;
       if (!only_friends)
-         ra_refresh(false, NULL);
+         ra_refresh(ended, NULL);
       state = steamui_push(only_friends, &games, NULL);
       library_discard();
       library_quit();
@@ -108,4 +129,18 @@ int background_run(const char *data_dir, const char *config_dir)
       else if (state == STEAMUI_UNSUPPORTED)
          next = SDL_GetTicks() + UNSUPPORTED_MS;
    }
+}
+
+int background_game(const char *config_dir, char **argv)
+{
+   char played[1100];
+   int code;
+
+   ra_init(config_dir);
+   if (ra_active())
+      platform_start_background(true);
+   code = platform_run_game(argv + 2);
+   played_file(config_dir, played, sizeof(played));
+   SDL_SaveFile(played, "1", 1);
+   return code;
 }

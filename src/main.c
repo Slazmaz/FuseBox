@@ -1220,7 +1220,7 @@ static bool settings_differ(const struct game *g)
       return !g->no_emulator;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;
-   if (SDL_strcmp(g->name, g->sc_name) != 0)
+   if (SDL_strcmp(g->name, g->sc_name) != 0 || SDL_strcmp(steam_through(g), g->sc_through) != 0)
       return !g->no_emulator;
    library_launch_options(g, options, sizeof(options));
    return SDL_strcmp(options, g->sc_options) != 0 && !g->no_emulator;
@@ -2561,7 +2561,7 @@ static float draw_achievements_card(float x, float y, float w)
    ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1,
          "Show achievements in Steam");
    ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(43), UI_LEFT, w - S(140), C_DIM, 1,
-         "On ROMs' pages in its library.");
+         "On ROMs' pages in its library. Games start through FuseBox.");
    ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(61), UI_LEFT, w - S(140), C_DIM, 1,
          "Steam then keeps a debugging port open: other programs on this");
    ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(79), UI_LEFT, w - S(140), C_DIM, 1,
@@ -3455,6 +3455,11 @@ int main(int argc, char **argv)
    base = SDL_GetBasePath();
    SDL_snprintf(config, sizeof(config), "%sconfig", base ? base : "");
    /* With no window, and no log: the window's is open. */
+   if (argc >= 3 && SDL_strcmp(argv[1], "--run") == 0)
+   {
+      SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
+      return background_game(config, argv);
+   }
    if (argc == 2 && SDL_strcmp(argv[1], "--background") == 0)
    {
       int code;

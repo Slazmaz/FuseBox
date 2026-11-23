@@ -87,6 +87,8 @@ struct game
     * to tell when the settings above differ. */
    bool sc_overlay, sc_input;
    char sc_options[1024];
+   /* FuseBox, when it starts the game through it (fusebox --run). */
+   char sc_through[1024];
    char sc_name[256];
    /* A ROM's: the program its shortcut starts. */
    char sc_exe[1024];
