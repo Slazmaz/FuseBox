@@ -1030,12 +1030,13 @@ bool platform_run_game(const char *exe, const char *args, const char *dir, char 
 
 #else
 
+/* Where it's since this started: an update moves a running one away. */
 static bool own_exe(char *dst, size_t size)
 {
-   ssize_t n = readlink("/proc/self/exe", dst, size - 1);
+   const char *base = SDL_GetBasePath();
 
-   dst[n > 0 ? n : 0] = '\0';
-   return n > 0;
+   SDL_snprintf(dst, size, "%s" FUSEBOX_EXE, base ? base : "");
+   return base != NULL;
 }
 
 void platform_autostart(bool on)
@@ -1077,11 +1078,13 @@ static int one_file(const char *name)
    return open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
 }
 
+/* The background one's, held until it ends or is passed on. */
+static int only = -1;
+
 bool platform_only_background(void)
 {
-   int fd = one_file("background");
-
-   return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
+   only = one_file("background");
+   return only >= 0 && flock(only, LOCK_EX | LOCK_NB) == 0;
 }
 
 bool platform_only_session(void)
@@ -1121,6 +1124,22 @@ void platform_start_background(bool by_game)
 
 bool platform_again_background(void)
 {
+   char exe[1100];
+   const char *args[] = { exe, "--background", NULL };
+   SDL_Process *p;
+
+   if (only >= 0)
+      close(only);
+   only = -1;
+   /* Not this process' exe any more: that's been moved away. */
+   SDL_snprintf(exe, sizeof(exe), "%s" FUSEBOX_EXE, SDL_GetBasePath());
+   if ((p = SDL_CreateProcess(args, false)))
+   {
+      SDL_DestroyProcess(p);
+      return true;
+   }
+   /* This one goes on, then. */
+   platform_only_background();
    return false;
 }
 

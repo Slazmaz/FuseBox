@@ -66,7 +66,7 @@ bool platform_only_background(void);
 /* The same of the session (session.h). */
 bool platform_only_session(void);
 /* Starts another background one in the caller's place, which is to end. False
- * if it can't (other than Windows: FuseBox doesn't update itself there). */
+ * if it can't. */
 bool platform_again_background(void);
 /* The background one's icon by the taskbar's clock: opens FuseBox, or quits
  * the background one (Windows; nothing elsewhere). */

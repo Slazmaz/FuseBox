@@ -156,6 +156,27 @@ static int host_length(const char *url)
    return (int)(p - url);
 }
 
+/* Whom to trust: OpenSSL has no list next to FuseBox. */
+static void trust(CURL *curl)
+{
+#ifdef _WIN32
+   curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+#else
+   /* Debian's and Arch's, Fedora's, openSUSE's, Alpine's. */
+   static const char *const lists[] = { "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",
+      "/etc/ssl/ca-bundle.pem", "/etc/ssl/cert.pem" };
+   size_t i;
+
+   for (i = 0; i < SDL_arraysize(lists); i++)
+      if (SDL_GetPathInfo(lists[i], NULL))
+      {
+         curl_easy_setopt(curl, CURLOPT_CAINFO, lists[i]);
+         return;
+      }
+#endif
+}
+
 int http_request(const char *url, const char *post, const char *header,
       const char *user_agent, SDL_AtomicInt *abort, char **body, size_t *size,
       long timeout_s)
@@ -187,10 +208,7 @@ int http_request(const char *url, const char *post, const char *header,
    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, on_progress);
    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &b);
    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-#ifdef _WIN32
-   /* OpenSSL has no CA bundle next to fusebox.exe: use Windows' store. */
-   curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
-#endif
+   trust(curl);
    if (header)
    {
       headers = curl_slist_append(NULL, header);
@@ -276,9 +294,7 @@ int http_download(const char *url, const char *path, SDL_AtomicInt *abort,
    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, on_file_progress);
    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &s);
    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-#ifdef _WIN32
-   curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
-#endif
+   trust(curl);
 
    res = curl_easy_perform(curl);
    if (res == CURLE_OK)

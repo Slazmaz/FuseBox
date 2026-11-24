@@ -1,3 +1,8 @@
+#ifndef _WIN32
+#define _DEFAULT_SOURCE
+#include <sys/stat.h>
+#endif
+
 #include "update.h"
 #include "crypto.h"
 #include "http.h"
@@ -26,10 +31,10 @@
  * platforms build their own. */
 #ifdef _WIN32
 #define ASSET_END "-windows-x64.zip"
-#define EXE_NAME "fusebox.exe"
+#elif defined(__linux__) && defined(__x86_64__)
+#define ASSET_END "-linux-x64.zip"
 #else
 #define ASSET_END ""
-#define EXE_NAME "fusebox"
 #endif
 
 #define MAX_FILES 1024
@@ -197,6 +202,8 @@ struct entry
 {
    char name[300];
    Uint32 method, crc, packed, size, at;
+   /* To be run. */
+   bool program;
 };
 
 /* The zip's files; *count of them. NULL if it isn't one. */
@@ -236,6 +243,8 @@ static struct entry *read_zip(const Uint8 *zip, size_t total, int *count)
       e->packed = le32(p + 20);
       e->size = le32(p + 24);
       e->at = le32(p + 42);
+      /* Made on a Unix: its modes. */
+      e->program = p[5] == 3 && (le16(p + 40) & 0111);
       SDL_memcpy(e->name, p + 46, len);
       e->name[len] = '\0';
       i += 46 + len + le16(p + 30) + le16(p + 32);
@@ -282,6 +291,10 @@ static bool unpack(const Uint8 *zip, size_t total, const struct entry *e, const 
    }
    ok = ok && crc32(0, out, e->size) == e->crc && make_parents(path)
       && SDL_SaveFile(path, out, e->size);
+#ifndef _WIN32
+   if (ok && e->program)
+      ok = chmod(path, 0755) == 0;
+#endif
    SDL_free(out);
    return ok;
 }
@@ -508,7 +521,7 @@ static bool install(const Uint8 *zip, size_t size, SDL_AtomicInt *abort, char *e
    {
       const char *slash = SDL_strrchr(list[i].name, '/');
       const char *file = slash ? slash + 1 : list[i].name;
-      if (SDL_strcasecmp(file, EXE_NAME) == 0)
+      if (SDL_strcasecmp(file, FUSEBOX_EXE) == 0)
       {
          exe = i;
          prefix = (size_t)(file - list[i].name);
