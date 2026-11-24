@@ -2179,10 +2179,10 @@ static void draw_game(float x, float y, float w, float h)
    icon = detail_for(ART_ICON, g);
    library_unlock();
 
-   /* The icon, the name, where it's from and its match, the buttons:
-    * fixed, like the tabs under it; only the art scrolls. */
+   /* The icon, the name, its tags and its match, the buttons: fixed, like
+    * the tabs under it; only the art scrolls. */
    {
-      float sh = S(96), bx, mw = button_w("Wrong game?");
+      float sh = S(96), match_w, bx, mw = button_w("Wrong game?");
 
       /* Red while it's set to leave Steam (uninstalled, ticked). */
       if (removing)
@@ -2230,6 +2230,7 @@ static void draw_game(float x, float y, float w, float h)
          SDL_StartTextInput(app.window);
       }
       cx = x + sh;
+      match_w = bx - cx - S(16);
       if (app.field == FIELD_NAME && app.name_game == app.selected)
       {
          /* Being renamed: the field in the name's place, its own name
@@ -2249,8 +2250,9 @@ static void draw_game(float x, float y, float w, float h)
       else
       {
          /* Its tags: where it's from, its emulator, its achievements. What
-          * Steam has of it, the list says.
-          * A long name is cut short for them, to half at most. */
+          * Steam has of it, the list says. Those that don't fit go on in a
+          * row under the others; a long name is cut short where two rows
+          * aren't enough. */
          const struct
          {
             const char *text;
@@ -2261,13 +2263,30 @@ static void draw_game(float x, float y, float w, float h)
             { no_emulator ? "No emulator" : "", C_RED },
             { achievements, C_GREEN },
          };
-         float room = bx - cx - S(16), tags_w = 0, max_w, nw, chip_x;
+         float room = bx - cx - S(16), right = cx + room, nw = 0, left = 0, chip_x;
+         /* The last is for when nothing fits them all. */
+         const float widths[] = { room, room / 2, room / 3, room / 2 };
+         int k, row, rows = 3;
 
-         for (i = 0; i < (int)SDL_arraysize(tags); i++)
-            if (tags[i].text[0])
-               tags_w += chip_w(tags[i].text) + S(8);
-         max_w = SDL_max(room - tags_w - S(6), room / 2);
-         nw = SDL_min(ui_text_width(UI_BOLD, S(24), name), max_w);
+         for (k = 0; k < (int)SDL_arraysize(widths) && rows > 2; k++)
+         {
+            nw = SDL_min(ui_text_width(UI_BOLD, S(24), name), widths[k]);
+            chip_x = left = cx + nw + S(14);
+            rows = 1;
+            for (i = 0; i < (int)SDL_arraysize(tags); i++)
+            {
+               float cw = chip_w(tags[i].text);
+               if (!tags[i].text[0])
+                  continue;
+               if (chip_x + cw > right)
+               {
+                  /* One too wide for any row: no good. */
+                  rows += chip_x > left && left + cw <= right ? 1 : 3;
+                  chip_x = left;
+               }
+               chip_x += cw + S(8);
+            }
+         }
 
          /* The name: clicked to rename the game. */
          if (!gone && hover(cx - S(10), y + S(15), nw + S(20), S(40)))
@@ -2275,7 +2294,8 @@ static void draw_game(float x, float y, float w, float h)
             ui_rect(cx - S(10), y + S(15), nw + S(20), S(40), S(10), 1, 1, 1, 0.08f);
             tooltip(cx + nw / 2, y + S(60), "Rename");
          }
-         ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, max_w, C_TEXT, 1, name);
+         /* A hair more than it measures, so one that fits isn't cut. */
+         ui_text(UI_BOLD, S(24), cx, y + S(36), UI_LEFT, nw + 1, C_TEXT, 1, name);
          if (!gone && clicked_in(cx - S(10), y + S(15), nw + S(20), S(40), false))
          {
             SDL_strlcpy(app.name, name, sizeof(app.name));
@@ -2284,15 +2304,30 @@ static void draw_game(float x, float y, float w, float h)
             app.field = FIELD_NAME;
             SDL_StartTextInput(app.window);
          }
-         chip_x = cx + nw + S(14);
+         chip_x = left;
+         row = 0;
          for (i = 0; i < (int)SDL_arraysize(tags); i++)
-            if (tags[i].text[0] && chip_x + chip_w(tags[i].text) < bx)
-               chip_x += chip(chip_x, y + S(24), tags[i].text, tags[i].r, tags[i].g, tags[i].b)
-                  + S(8);
+         {
+            float cw = chip_w(tags[i].text);
+            if (!tags[i].text[0] || left + cw > right)
+               continue;
+            if (chip_x + cw > right)
+            {
+               row++;
+               chip_x = left;
+            }
+            if (row > 1)
+               break;
+            chip_x += chip(chip_x, y + S(row ? 58 : 24), tags[i].text, tags[i].r, tags[i].g,
+                  tags[i].b) + S(8);
+         }
+         /* The match is beside the second row. */
+         if (row)
+            match_w = nw;
       }
       SDL_snprintf(line, sizeof(line), "SteamGridDB: %s",
             sgdb_name[0] ? sgdb_name : "not matched yet");
-      ui_text(UI_MEDIUM, S(14), cx, y + S(70), UI_LEFT, bx - cx - S(16), C_TEXT, 0.7f, line);
+      ui_text(UI_MEDIUM, S(14), cx, y + S(70), UI_LEFT, match_w, C_TEXT, 0.7f, line);
       y += sh + S(34);
    }
 
