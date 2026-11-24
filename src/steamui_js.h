@@ -58,7 +58,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 32) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 33) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -562,15 +562,21 @@
    "      };\n" \
    "   }\n" \
    "   /* Playing with friends. */\n" \
-   "   const FUSEBOX = '+fusebox', SPACEWAR = 480, lanGames = new Map(), passed = new Set();\n" \
-   "   const ui = window.g_FriendsUIApp, undoLan = [];\n" \
-   "   let lanReady = false;\n" \
-   "   const lanGame = () => {\n" \
+   "   const FUSEBOX = '+fusebox', SPACEWAR = 480, lanGames = new Map(), onces = new Map(), passed = new Set();\n" \
+   "   const undoLan = [];\n" \
+   "   let ui = window.g_FriendsUIApp, lanReady = false, lanMenu = false;\n" \
+   "   /* What runs, as Steam's library and as the friends' list have it: a\n" \
+   "      shortcut's app id is the upper half of its game id. */\n" \
+   "   const running = () => {\n" \
+   "      const ids = [];\n" \
+   "      try { (SteamUIStore.RunningApps || []).forEach(x => ids.push(x.appid)); } catch (e) { }\n" \
    "      try {\n" \
-   "         const o = (SteamUIStore.RunningApps || []).find(x => lanGames.has(x.appid));\n" \
-   "         return o ? o.appid : 0;\n" \
-   "      } catch (e) { return 0; }\n" \
+   "         const id = BigInt(ui.FriendStore.self.persona.m_gameid || 0), app = Number(id >> 32n);\n" \
+   "         if (app && !ids.includes(app)) ids.push(app);\n" \
+   "      } catch (e) { }\n" \
+   "      return ids;\n" \
    "   };\n" \
+   "   const lanGame = () => running().find(app => lanGames.has(app)) || 0;\n" \
    "   const take = url => {\n" \
    "      const m = /^steam:\\/\\/joinlobby\\/480\\/(\\d+)\\/(\\d+)/.exec(String(url));\n" \
    "      if (!m || !heard || passed.has(m[1])) return false;\n" \
@@ -691,6 +697,8 @@
    "      });\n" \
    "   };\n" \
    "   const lanStart = () => {\n" \
+   "      /* It may come after the rest. */\n" \
+   "      ui = ui || window.g_FriendsUIApp;\n" \
    "      if (lanReady || !ui || !ui.FriendStore || !ui.ChatStore || !ui.FriendStore.self) return;\n" \
    "      lanReady = true;\n" \
    "      const fs = ui.FriendStore;\n" \
@@ -698,7 +706,7 @@
    "         let proto = fs.self.persona;\n" \
    "         while (proto && !Object.hasOwn(proto, 'connect_string')) proto = Object.getPrototypeOf(proto);\n" \
    "         const was = proto && Object.getOwnPropertyDescriptor(proto, 'connect_string');\n" \
-   "         if (!was || !was.get || !was.configurable) return;\n" \
+   "         if (!was || !was.get || !was.configurable) throw new Error('connect_string');\n" \
    "         around(fs, 'InviteToGame', function(steams, friend, app, connect) {\n" \
    "            if (connect !== FUSEBOX) return steams(friend, app, connect);\n" \
    "            const game = lanGame();\n" \
@@ -715,6 +723,7 @@
    "            return !own && heard && this === fs.self.persona && lanGame() ? FUSEBOX : own;\n" \
    "         } });\n" \
    "         undoLan.push(() => Object.defineProperty(proto, 'connect_string', was));\n" \
+   "         lanMenu = true;\n" \
    "      } catch (e) { }\n" \
    "      /* Wherever an invite is accepted, it comes to one of these. */\n" \
    "      [[ui, 'OpenURLInBrowser'], [SteamClient.URL, 'ExecuteSteamURL'], [SteamClient.WebChat, 'OpenURLInClient']]\n" \
@@ -770,7 +779,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 32,\n" \
+   "      version: 33,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -780,6 +789,8 @@
    "      lan(apps, others) {\n" \
    "         lanGames.clear();\n" \
    "         apps.forEach(([app, ...names]) => lanGames.set(app, names));\n" \
+   "         /* Whatever the library says of them: they run. */\n" \
+   "         onces.forEach((names, app) => { if (!lanGames.has(app)) lanGames.set(app, names); });\n" \
    "         inLibrary.clear();\n" \
    "         others.forEach(([id, ...names]) => inLibrary.set(id, names));\n" \
    "         lanStart();\n" \
@@ -817,6 +828,7 @@
    "         if (icon) apps.SetShortcutIcon(app, icon);\n" \
    "         if (!overlay) apps.ToggleEnableSteamOverlayForApp(app);\n" \
    "         if (!input) apps.ToggleAllowDesktopConfiguration(app);\n" \
+   "         onces.set(app, [name]);\n" \
    "         lanGames.set(app, [name]);\n" \
    "         lanStart();\n" \
    "         if (await window.__fusebox.run(app)) return String(app);\n" \
@@ -824,6 +836,7 @@
    "         return '';\n" \
    "      },\n" \
    "      unonce(app) {\n" \
+   "         onces.delete(app);\n" \
    "         lanGames.delete(app);\n" \
    "         if (games.has(app)) drop(app);\n" \
    "         forget(app);\n" \

@@ -136,8 +136,8 @@ static struct
    {
       Uint32 appid, pid;
       char path[1024];
-   } list[ONCE_MAX];
-   int count;
+   } list[ONCE_MAX], playing[ONCE_MAX];
+   int count, playing_count;
 } once;
 
 static void once_path(const char *config_dir, Uint32 appid, char *dst, size_t size)
@@ -181,6 +181,29 @@ static SDL_EnumerationResult SDLCALL on_once(void *user, const char *dir, const 
    return SDL_ENUM_CONTINUE;
 }
 
+/* Games that run, by any shortcut. */
+static SDL_EnumerationResult SDLCALL on_running(void *user, const char *dir, const char *name)
+{
+   char file[1200], *text, *path;
+   Uint32 pid = (Uint32)SDL_strtoul(name, NULL, 10), appid;
+
+   SDL_snprintf(file, sizeof(file), "%s%s", dir, name);
+   if (once.playing_count < ONCE_MAX && lan_running(pid) && (text = SDL_LoadFile(file, NULL)))
+   {
+      appid = (Uint32)SDL_strtoul(text, NULL, 10);
+      path = SDL_strchr(text, '\n');
+      if (appid && path && path[1])
+      {
+         once.playing[once.playing_count].appid = appid;
+         once.playing[once.playing_count].pid = pid;
+         SDL_strlcpy(once.playing[once.playing_count++].path, path + 1,
+               sizeof(once.playing[0].path));
+      }
+      SDL_free(text);
+   }
+   return SDL_ENUM_CONTINUE;
+}
+
 void lan_read_once(const char *config_dir)
 {
    char dir[1100];
@@ -189,9 +212,12 @@ void lan_read_once(const char *config_dir)
       once.lock = SDL_CreateMutex();
    once_path(config_dir, 0, dir, sizeof(dir));
    SDL_LockMutex(once.lock);
-   once.count = 0;
+   once.count = once.playing_count = 0;
    if (platform_exists(dir))
       SDL_EnumerateDirectory(dir, on_once, NULL);
+   SDL_snprintf(dir, sizeof(dir), "%s" PATH_SEP "playing", config_dir);
+   if (platform_exists(dir))
+      SDL_EnumerateDirectory(dir, on_running, NULL);
    SDL_UnlockMutex(once.lock);
 }
 
@@ -203,6 +229,9 @@ Uint32 lan_app(const struct game *g)
    /* First: there's one where Steam doesn't have the game's own, whatever the
     * library says, and that's what runs. */
    SDL_LockMutex(once.lock);
+   for (i = 0; i < once.playing_count && !appid; i++)
+      if (library_same_path(once.playing[i].path, library_path(g)))
+         appid = once.playing[i].appid;
    for (i = 0; i < once.count && !appid; i++)
       if (library_same_path(once.list[i].path, library_path(g)))
          appid = once.list[i].appid;
