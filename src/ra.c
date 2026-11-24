@@ -1137,3 +1137,387 @@ char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
    SDL_UnlockMutex(ra.friends_lock);
    return out;
 }
+
+/* --- Leaderboards -------------------------------------------------------- */
+
+/* Friends looked up on each; lookups a call. */
+#define BOARD_FRIENDS 8
+#define BOARD_ASKS 25
+
+struct board
+{
+   unsigned id, total;
+   char title[128], desc[256], format[16];
+   Sint64 asked;
+};
+
+struct place
+{
+   unsigned board, rank;
+   double score;
+   /* Empty: the user. */
+   char who[64];
+};
+
+static void *grown(void *items, int count, size_t size)
+{
+   return (count & (count - 1)) ? items : SDL_realloc(items, size * (size_t)(count ? count * 2 : 1));
+}
+
+/* A score as its board shows it. */
+static void format_score(const char *format, double score, char *dst, size_t size)
+{
+   Sint64 v = (Sint64)score, t;
+
+   /* Frames, at 60 a second, and hundredths: as hundredths. */
+   if (SDL_strcmp(format, "TIME") == 0 || SDL_strcmp(format, "FRAMES") == 0
+         || SDL_strcmp(format, "MILLISECS") == 0)
+   {
+      t = SDL_strcmp(format, "MILLISECS") == 0 ? v : v * 100 / 60;
+      if (t >= 360000)
+         SDL_snprintf(dst, size, "%d:%02d:%02d.%02d", (int)(t / 360000), (int)(t / 6000 % 60),
+               (int)(t / 100 % 60), (int)(t % 100));
+      else
+         SDL_snprintf(dst, size, "%d:%02d.%02d", (int)(t / 6000), (int)(t / 100 % 60), (int)(t % 100));
+   }
+   else if (SDL_strcmp(format, "SECS") == 0 || SDL_strcmp(format, "TIMESECS") == 0)
+   {
+      if (v >= 3600)
+         SDL_snprintf(dst, size, "%d:%02d:%02d", (int)(v / 3600), (int)(v / 60 % 60), (int)(v % 60));
+      else
+         SDL_snprintf(dst, size, "%d:%02d", (int)(v / 60), (int)(v % 60));
+   }
+   else if (SDL_strcmp(format, "MINUTES") == 0 || SDL_strcmp(format, "SECS_AS_MINS") == 0)
+   {
+      t = SDL_strcmp(format, "MINUTES") == 0 ? v : v / 60;
+      SDL_snprintf(dst, size, "%dh%02d", (int)(t / 60), (int)(t % 60));
+   }
+   else if (SDL_strncmp(format, "FIXED", 5) == 0 && format[5] >= '1' && format[5] <= '6')
+   {
+      double by = SDL_pow(10, format[5] - '0');
+      SDL_snprintf(dst, size, "%.*f", format[5] - '0', score / by);
+   }
+   else
+   {
+      if (SDL_strcmp(format, "TENS") == 0)
+         v *= 10;
+      else if (SDL_strcmp(format, "HUNDREDS") == 0)
+         v *= 100;
+      else if (SDL_strcmp(format, "THOUSANDS") == 0)
+         v *= 1000;
+      SDL_snprintf(dst, size, "%lld", (long long)v);
+   }
+}
+
+static int load_boards(const char *path, const char *user, struct board **boards,
+      struct place **places, int *place_count, Sint64 *listed)
+{
+   char *text = platform_exists(path) ? SDL_LoadFile(path, NULL) : NULL;
+   struct json *root = text ? json_parse(text) : NULL, *o;
+   int n = 0;
+
+   SDL_free(text);
+   if (root && SDL_strcmp(json_str(root, "user", ""), user) == 0)
+   {
+      *listed = (Sint64)json_num(root, "time", 0);
+      o = json_get(root, "boards");
+      for (o = o ? o->child : NULL; o; o = o->next)
+      {
+         struct board *b = grown(*boards, n, sizeof(**boards));
+
+         if (!b)
+            break;
+         *boards = b;
+         b += n++;
+         SDL_zerop(b);
+         b->id = (unsigned)json_num(o, "id", 0);
+         b->total = (unsigned)json_num(o, "total", 0);
+         b->asked = (Sint64)json_num(o, "asked", 0);
+         SDL_strlcpy(b->title, json_str(o, "title", ""), sizeof(b->title));
+         SDL_strlcpy(b->desc, json_str(o, "desc", ""), sizeof(b->desc));
+         SDL_strlcpy(b->format, json_str(o, "format", ""), sizeof(b->format));
+      }
+      o = json_get(root, "places");
+      for (o = o ? o->child : NULL; o; o = o->next)
+      {
+         struct place *p = grown(*places, *place_count, sizeof(**places));
+
+         if (!p)
+            break;
+         *places = p;
+         p += (*place_count)++;
+         SDL_zerop(p);
+         p->board = (unsigned)json_num(o, "board", 0);
+         p->rank = (unsigned)json_num(o, "rank", 0);
+         p->score = json_num(o, "score", 0);
+         SDL_strlcpy(p->who, json_str(o, "who", ""), sizeof(p->who));
+      }
+   }
+   json_free(root);
+   return n;
+}
+
+static void save_boards(const char *path, const char *user, Sint64 listed, const struct board *boards,
+      int count, const struct place *places, int place_count)
+{
+   char tmp[1120];
+   SDL_IOStream *io;
+   int i;
+
+   SDL_snprintf(tmp, sizeof(tmp), "%sachievements", library_dir());
+   SDL_CreateDirectory(tmp);
+   SDL_snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+   if (!(io = SDL_IOFromFile(tmp, "wb")))
+      return;
+   SDL_IOprintf(io, "{\"user\": ");
+   json_write_string(io, user);
+   SDL_IOprintf(io, ", \"time\": %lld, \"boards\": [", (long long)listed);
+   for (i = 0; i < count; i++)
+   {
+      SDL_IOprintf(io, "%s\n{\"id\": %u, \"total\": %u, \"asked\": %lld, \"title\": ", i ? "," : "",
+            boards[i].id, boards[i].total, (long long)boards[i].asked);
+      json_write_string(io, boards[i].title);
+      SDL_IOprintf(io, ", \"desc\": ");
+      json_write_string(io, boards[i].desc);
+      SDL_IOprintf(io, ", \"format\": ");
+      json_write_string(io, boards[i].format);
+      SDL_IOprintf(io, "}");
+   }
+   SDL_IOprintf(io, "],\n\"places\": [");
+   for (i = 0; i < place_count; i++)
+   {
+      SDL_IOprintf(io, "%s\n{\"board\": %u, \"rank\": %u, \"score\": %.0f, \"who\": ", i ? "," : "",
+            places[i].board, places[i].rank, places[i].score);
+      json_write_string(io, places[i].who);
+      SDL_IOprintf(io, "}");
+   }
+   SDL_IOprintf(io, "]}\n");
+   if (SDL_CloseIO(io))
+      SDL_RenamePath(tmp, path);
+}
+
+/* The game's boards as RetroAchievements has them now, with what's known of
+ * them; how many. -1 when it can't be asked. */
+static int list_boards(unsigned id, struct board **boards, int count, SDL_AtomicInt *abort)
+{
+   char request[64];
+   struct board *now = NULL;
+   struct json *root, *o;
+   int i, n = 0;
+
+   SDL_snprintf(request, sizeof(request), "patch&g=%u", id);
+   if (!(root = ask(request, abort)))
+      return -1;
+   o = json_get(json_get(root, "PatchData"), "Leaderboards");
+   for (o = o ? o->child : NULL; o; o = o->next)
+   {
+      struct board *b;
+
+      if (json_bool(o, "Hidden", false) || !(b = grown(now, n, sizeof(*now))))
+         continue;
+      now = b;
+      b += n++;
+      SDL_zerop(b);
+      b->id = (unsigned)number(o, "ID", 0);
+      for (i = 0; i < count; i++)
+         if ((*boards)[i].id == b->id)
+            *b = (*boards)[i];
+      SDL_strlcpy(b->title, json_str(o, "Title", ""), sizeof(b->title));
+      SDL_strlcpy(b->desc, json_str(o, "Description", ""), sizeof(b->desc));
+      SDL_strlcpy(b->format, json_str(o, "Format", ""), sizeof(b->format));
+   }
+   json_free(root);
+   SDL_free(*boards);
+   *boards = now;
+   return n;
+}
+
+/* The names of the friends who play the game. */
+static int playing_friends(unsigned id, const char *list, const char *user,
+      char names[BOARD_FRIENDS][64], SDL_AtomicInt *abort)
+{
+   struct json *friends, *played = NULL, *won = NULL, *o;
+   int n = 0;
+
+   SDL_LockMutex(ra.friends_lock);
+   if ((friends = friend_list(user, abort)) && friends->child)
+   {
+      played = who_played(id, list, user, abort);
+      won = saved_activity(id, user);
+   }
+   for (o = friends ? friends->child : NULL; o && n < BOARD_FRIENDS; o = o->next)
+   {
+      const char *name = json_str(o, "Friend", "");
+
+      if (name[0] && ((unsigned)number(o, "LastGameId", 0) == id
+               || has_name(json_get(played, "names"), name) || in_activity(won, name)))
+         SDL_strlcpy(names[n++], name, 64);
+   }
+   SDL_UnlockMutex(ra.friends_lock);
+   json_free(played);
+   json_free(won);
+   return n;
+}
+
+/* Where someone is on a board (who: a friend; empty for the user), into
+ * places. False when RetroAchievements couldn't be asked. */
+static bool find_place(struct board *b, const char *who, const char *user, struct place **places,
+      int *count, SDL_AtomicInt *abort)
+{
+   char request[256], *escaped;
+   const char *name = who[0] ? who : user;
+   struct json *root = NULL, *o;
+
+   SDL_Delay(WON_PAUSE_MS);
+   /* Around whoever's asked for: a friend needs no login. */
+   if (!who[0])
+   {
+      SDL_snprintf(request, sizeof(request), "lbinfo&i=%u&o=0&c=5", b->id);
+      root = ask(request, abort);
+   }
+   else if ((escaped = http_escape(who)))
+   {
+      SDL_snprintf(request, sizeof(request), "r=lbinfo&i=%u&o=0&c=5&u=%s", b->id, escaped);
+      SDL_free(escaped);
+      root = post(request, abort, NULL);
+   }
+   if (!root || !(o = json_get(root, "LeaderboardData")))
+   {
+      json_free(root);
+      return false;
+   }
+   b->total = (unsigned)number(o, "TotalEntries", 0);
+   o = json_get(o, "Entries");
+   for (o = o ? o->child : NULL; o; o = o->next)
+   {
+      struct place *p;
+
+      if (SDL_strcasecmp(json_str(o, "User", ""), name) != 0)
+         continue;
+      if ((p = grown(*places, *count, sizeof(**places))))
+      {
+         *places = p;
+         p += (*count)++;
+         SDL_zerop(p);
+         p->board = b->id;
+         p->rank = (unsigned)number(o, "Rank", 0);
+         p->score = number(o, "Score", 0);
+         SDL_strlcpy(p->who, who, sizeof(p->who));
+      }
+      break;
+   }
+   json_free(root);
+   return true;
+}
+
+char *ra_boards(unsigned id, const char *list, Sint64 last, SDL_AtomicInt *abort)
+{
+   char path[1100], user[128], names[BOARD_FRIENDS][64], *out = NULL;
+   struct board *boards = NULL;
+   struct place *places = NULL;
+   int i, k, n, count, place_count = 0, friends = 0, asks = 0;
+   SDL_IOStream *io;
+   SDL_Time now = 0;
+   Sint64 listed = 0;
+   bool changed = false, ok = true, due = false, first = true;
+
+   if (!ra_user(user, sizeof(user)))
+      return NULL;
+   SDL_snprintf(path, sizeof(path), "%sachievements" PATH_SEP "%u-boards.json", library_dir(), id);
+   count = load_boards(path, user, &boards, &places, &place_count, &listed);
+   SDL_GetCurrentTime(&now);
+   now /= SDL_NS_PER_SECOND;
+   if (now - listed > LIST_AGE_S)
+   {
+      if ((n = list_boards(id, &boards, count, abort)) < 0)
+      {
+         SDL_free(boards);
+         SDL_free(places);
+         return NULL;
+      }
+      count = n;
+      listed = now;
+      changed = true;
+   }
+#define DUE(b) (!(b).asked || last > (b).asked || now - (b).asked > WON_AGE_S)
+   for (i = 0; i < count; i++)
+      due |= DUE(boards[i]);
+   if (due)
+      friends = playing_friends(id, list, user, names, abort);
+   for (i = 0; i < count && ok && asks < BOARD_ASKS && !(abort && SDL_GetAtomicInt(abort)); i++)
+   {
+      struct place *fresh = NULL;
+      int fresh_count = 0;
+
+      if (!DUE(boards[i]))
+         continue;
+      asks++;
+      ok = find_place(&boards[i], "", user, &fresh, &fresh_count, abort);
+      for (k = 0; k < friends && ok && boards[i].total; k++, asks++)
+         ok = find_place(&boards[i], names[k], user, &fresh, &fresh_count, abort);
+      if (ok)
+      {
+         boards[i].asked = now;
+         for (k = n = 0; k < place_count; k++)
+            if (places[k].board != boards[i].id)
+               places[n++] = places[k];
+         place_count = n;
+         for (k = 0; k < fresh_count; k++)
+         {
+            struct place *p = SDL_realloc(places, sizeof(*p) * (size_t)(place_count + 1));
+            if (!p)
+               break;
+            places = p;
+            places[place_count++] = fresh[k];
+         }
+         changed = true;
+      }
+      SDL_free(fresh);
+   }
+#undef DUE
+   if (changed)
+      save_boards(path, user, listed, boards, count, places, place_count);
+
+   if ((io = SDL_IOFromDynamicMem()))
+   {
+      SDL_WriteU8(io, '[');
+      for (i = 0; i < count; i++)
+      {
+         bool any = false;
+
+         for (k = 0; k < place_count; k++)
+         {
+            char score[64];
+
+            if (places[k].board != boards[i].id)
+               continue;
+            if (!any)
+            {
+               SDL_IOprintf(io, "%s[%u,", first ? "" : ",", boards[i].id);
+               json_write_string(io, boards[i].title);
+               SDL_WriteU8(io, ',');
+               json_write_string(io, boards[i].desc);
+               SDL_IOprintf(io, ",%u,[", boards[i].total);
+            }
+            format_score(boards[i].format, places[k].score, score, sizeof(score));
+            SDL_IOprintf(io, "%s[", any ? "," : "");
+            json_write_string(io, places[k].who);
+            SDL_WriteU8(io, ',');
+            json_write_string(io, score);
+            SDL_IOprintf(io, ",%u]", places[k].rank);
+            any = true;
+            first = false;
+         }
+         if (any)
+            SDL_IOprintf(io, "]]");
+      }
+      SDL_WriteU8(io, ']');
+      SDL_WriteU8(io, '\0');
+      out = SDL_strdup(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, "[]"));
+      SDL_CloseIO(io);
+   }
+   SDL_free(boards);
+   SDL_free(places);
+   return out;
+}

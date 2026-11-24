@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <SDL3/SDL_atomic.h>
+#include <SDL3/SDL_stdinc.h>
 
 /* RetroAchievements: which ROMs have achievements and which of them the
  * user has unlocked. Only ever read: earning them is the emulator's job.
@@ -62,5 +63,13 @@ char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort);
  * RetroAchievements doesn't tell this login more. Only some are looked up a
  * call, the rest in later ones. list: ra_list's. Blocking; NULL on a failure. */
 char *ra_activity(unsigned id, const char *list, SDL_AtomicInt *abort);
+
+/* The game's leaderboards the user or a friend who plays it is on, as a JSON
+ * list of [id, title, description, how many are on it, [[friend's name (empty:
+ * the user), score as it's shown, rank], ...]]; SDL_free it. Looked up again
+ * when the game was played since (last: when that was, seconds since 1970), or
+ * after a day; like ra_activity's, some a call. list: ra_list's. Blocking; NULL
+ * on a failure. */
+char *ra_boards(unsigned id, const char *list, Sint64 last, SDL_AtomicInt *abort);
 
 #endif
