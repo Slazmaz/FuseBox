@@ -18,7 +18,9 @@ int background_run(const char *data_dir, const char *config_dir);
 /* fusebox "<game's path>" [arguments], as Steam's shortcuts have it (older
  * ones: --run "<exe>" <arguments>): starts the background one if it's wanted,
  * then the game as the library says to (a ROM with its emulator); returns when
- * that ends, with its exit code. argv: main's. */
+ * that ends, with its exit code. Not started by Steam, it has Steam run the game
+ * by its shortcut, if it has one (its code is 0 then), for the overlay and the
+ * rest. argv: main's. */
 int background_game(const char *data_dir, const char *config_dir, char **argv);
 
 /* fusebox --open <app id>: opens the emulator or launcher of the game whose

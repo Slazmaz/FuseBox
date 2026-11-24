@@ -322,7 +322,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 28"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 29"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
@@ -337,6 +337,27 @@ bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort)
       && evaluate(url, "window.__fusebox && __fusebox.asked ? __fusebox.asked(10000) : ''", what, size,
             abort)
       && what[0];
+}
+
+/* Runs what starts a game there; the app id it's run as, 0 if Steam can't. */
+static Uint32 run_in_steam(const char *script, SDL_AtomicInt *abort)
+{
+   char url[512], result[64];
+
+   if (!find_target(url, sizeof(url), abort)
+         || !evaluate(url, STEAMUI_JS, result, sizeof(result), abort)
+         || SDL_strcmp(result, "ready") != 0
+         || !evaluate(url, script, result, sizeof(result), abort))
+      return 0;
+   return (Uint32)SDL_strtoul(result, NULL, 10);
+}
+
+Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort)
+{
+   char script[64];
+
+   SDL_snprintf(script, sizeof(script), "__fusebox.run(%u)", (unsigned)appid);
+   return run_in_steam(script, abort);
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

@@ -161,6 +161,8 @@ bool library_refresh(void);
 /* The path that's the game's, whatever starts it (a ROM, its own exe, else
  * its folder), as its Steam shortcut and others give it to fusebox. */
 const char *library_path(const struct game *g);
+/* Whether they're the same, but for how they're written. */
+bool library_same_path(const char *a, const char *b);
 /* The game with that path, -1 if none; where several have it, the one whose
  * shortcut's app id that is (0: not known), else one in Steam. Under the lock. */
 int library_by_path(const char *path, Uint32 appid);

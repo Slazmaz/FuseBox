@@ -43,7 +43,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 28) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 29) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -545,6 +545,7 @@
    "         return jsxs.call(this, type, props, ...more);\n" \
    "      };\n" \
    "   }\n" \
+   "   const overview = app => appStore.GetAppOverviewByAppID(app);\n" \
    "   /* Bars drawn before, drawn again. */\n" \
    "   const bars = () => mine && SteamUIStore.WindowStore.SteamUIWindows.forEach(w => {\n" \
    "      try {\n" \
@@ -560,12 +561,19 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 28,\n" \
+   "      version: 29,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
    "         redraw();\n" \
    "         return 'ok';\n" \
+   "      },\n" \
+   "      /* Runs a shortcut there is; '' if Steam hasn't it. */\n" \
+   "      async run(app) {\n" \
+   "         for (let i = 0; i < 100 && !overview(app); i++) await new Promise(f => setTimeout(f, i < 20 ? 20 : 50));\n" \
+   "         if (!overview(app)) return '';\n" \
+   "         SteamClient.Apps.RunGame(String((BigInt(app) << 32n) | 0x2000000n), '', -1, 100);\n" \
+   "         return String(app);\n" \
    "      },\n" \
    "      /* The next click, '' for none in that time. */\n" \
    "      asked(ms) {\n" \

@@ -77,8 +77,7 @@ static bool is_sep(char c)
    return c == '/' || (PATH_SEP[0] == '\\' && c == '\\');
 }
 
-/* But for separators at the end. */
-static bool same_path(const char *a, const char *b)
+bool library_same_path(const char *a, const char *b)
 {
    for (; *a && *b; a++, b++)
    {
@@ -108,7 +107,7 @@ int library_by_path(const char *path, Uint32 appid)
       const struct game *g = &lib.games[i];
 
       /* Steam's own shortcuts don't start through FuseBox. */
-      if (SDL_strcmp(g->source, "Steam") == 0 || !same_path(library_path(g), path))
+      if (SDL_strcmp(g->source, "Steam") == 0 || !library_same_path(library_path(g), path))
          continue;
       if (appid && g->shortcut_id == appid)
          return i;

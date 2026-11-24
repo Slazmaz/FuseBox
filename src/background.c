@@ -1,5 +1,6 @@
 #include "background.h"
 #include "history.h"
+#include "lan.h"
 #include "library.h"
 #include "platform.h"
 #include "ra.h"
@@ -33,7 +34,7 @@ static void own_exe(char *dst, size_t size)
    SDL_snprintf(dst, size, "%sfusebox%s", SDL_GetBasePath(), PATH_SEP[0] == '\\' ? ".exe" : "");
 }
 
-/* Touched when a game ends. */
+/* Touched when a game ends (its shortcut's app id). */
 static void played_file(const char *config_dir, char *dst, size_t size)
 {
    SDL_snprintf(dst, size, "%s" PATH_SEP "played", config_dir);
@@ -220,10 +221,11 @@ int background_open(const char *data_dir, const char *appid)
    return found && platform_open(exe) ? 0 : 1;
 }
 
-/* How a game is started. */
+/* How a game is started, and what Steam is to know of it. */
 struct start
 {
    char exe[1024], args[1600], dir[1024];
+   Uint32 appid;
 };
 
 static bool is_program(const char *path)
@@ -257,6 +259,7 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
             library_launch_options(g, s->args, sizeof(s->args));
             if (platform_exists(g->start_dir))
                SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+            s->appid = g->steam_appid;
          }
          library_unlock();
          if (found || scanned || (g && !rom) || is_program(path) || !platform_exists(path))
@@ -290,35 +293,86 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
    return false;
 }
 
+/* How long Steam may take to start a game (ms). */
+#define START_MS 60000
+
+/* Has Steam run the game by its shortcut, with the overlay and the rest; waits
+ * until it's over. False if Steam can't now: it's started without. */
+static bool through_steam(const char *config_dir, const char *path, Uint32 appid)
+{
+   char asked[1100], played[1100], *text;
+   SDL_PathInfo info;
+   SDL_Time now = 0;
+   Uint32 pid;
+   Uint64 until;
+   bool over = false;
+
+   if (!appid || !steam_menus() || !steam_init() || !platform_steam_running(steam_install()))
+      return false;
+   /* One that comes back here didn't come from Steam as it looks: not again. */
+   SDL_snprintf(asked, sizeof(asked), "%s" PATH_SEP "asked", config_dir);
+   SDL_GetCurrentTime(&now);
+   if (SDL_GetPathInfo(asked, &info) && now - info.modify_time < (SDL_Time)SDL_SECONDS_TO_NS(5)
+         && (text = SDL_LoadFile(asked, NULL)))
+   {
+      bool same = library_same_path(text, path);
+      SDL_free(text);
+      if (same)
+         return false;
+   }
+   SDL_SaveFile(asked, path, SDL_strlen(path));
+   played_file(config_dir, played, sizeof(played));
+   if (!steamui_run(appid, NULL))
+      return false;
+   for (until = SDL_GetTicks() + START_MS; !(pid = lan_game(config_dir, appid, "")) && !over
+         && SDL_GetTicks() < until; SDL_Delay(250))
+      /* Over before it was seen. */
+      if (SDL_GetPathInfo(played, &info) && info.modify_time > now
+            && (text = SDL_LoadFile(played, NULL)))
+      {
+         over = (Uint32)SDL_strtoul(text, NULL, 10) == appid;
+         SDL_free(text);
+      }
+   while (pid && lan_running(pid))
+      SDL_Delay(500);
+   return true;
+}
+
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
-   char played[1100], error[1200];
+   char played[1100], error[1200], ended[16];
    /* Older shortcuts say how. */
    bool old = SDL_strcmp(argv[1], "--run") == 0;
+   const char *path = argv[1], *in_steam = SDL_getenv("SteamGameId");
+   int code = 1, skip = old ? 3 : 2;
    struct start s;
-   int code = 1;
 
    ra_init(config_dir);
    steam_read_settings(config_dir);
+   SDL_zero(s);
    if (old)
-   {
-      SDL_zero(s);
       SDL_strlcpy(s.exe, argv[2], sizeof(s.exe));
-   }
-   else if (!find_start(data_dir, config_dir, argv[1], &s, error, sizeof(error)))
+   else if (!find_start(data_dir, config_dir, path, &s, error, sizeof(error)))
    {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
       return 1;
    }
    if (steam_menus())
       platform_start_background(true);
+   /* Not by Steam: by it now. Its shortcut has no other arguments. */
+   if (!old && !argv[skip] && !(in_steam && in_steam[0])
+         && through_steam(config_dir, path, s.appid))
+      return 0;
    history_playing(data_dir);
-   if (!platform_run_game(s.exe, s.args, s.dir, argv, old ? 3 : 2, &code))
+   lan_playing(config_dir, history_appid(), old ? "" : path, true);
+   if (!platform_run_game(s.exe, s.args, s.dir, argv, skip, &code))
    {
       SDL_snprintf(error, sizeof(error), "Can't start this game:\n%s", s.exe);
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
    }
+   lan_playing(config_dir, 0, "", false);
    played_file(config_dir, played, sizeof(played));
-   SDL_SaveFile(played, "1", 1);
+   SDL_snprintf(ended, sizeof(ended), "%u", (unsigned)history_appid());
+   SDL_SaveFile(played, ended, SDL_strlen(ended));
    return code;
 }
