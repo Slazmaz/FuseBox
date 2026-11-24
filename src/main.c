@@ -2548,62 +2548,117 @@ static float draw_rom_folders(float x, float y, float w)
    return h;
 }
 
-static bool toggle(float x, float y, bool on, bool modal);
+static bool toggle(float x, float y, bool on, bool enabled, bool modal);
 
-/* RetroAchievements: logging in, and whether Steam shows them. Returns the
- * card's height. */
-static float draw_achievements_card(float x, float y, float w)
+/* Small text in lines of at most w, the first one's middle at cy; only
+ * counted unless drawn. Returns how many. */
+static int wrapped(float x, float cy, float w, const char *text, float alpha, bool draw)
 {
-   char user[128], line[200];
-   bool in = ra_user(user, sizeof(user)), on = ra_in_steam(), running;
-   float h = S(in ? 236 : 186) + (in && on ? S(124) : in && app.ra_note[0] ? S(26) : 0);
-   float cy, bw, fw, rx = x + w - S(24);
+   char line[256];
+   int n;
 
-   cy = settings_card(x, y, w, h, "RetroAchievements");
-   if (!in)
+   for (n = 0; *text; n++)
    {
-      if (app.ra_error[0])
-         ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_RED, 1,
-               app.ra_error);
-      else
-         ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
-               app.ra_busy ? "Logging in..."
-               : "Your retroachievements.org login. The password isn't kept.");
-      bw = S(108);
-      fw = (w - S(48) - bw - S(24)) / 2;
-      text_field(x + S(24), cy + S(30), fw, S(44), FIELD_RA_USER, app.ra_user, "Username", false,
-            false, 0);
-      text_field(x + S(24) + fw + S(12), cy + S(30), fw, S(44), FIELD_RA_PASSWORD,
-            app.ra_password, "Password", true, false, 0);
-      if (button(rx - bw, cy + S(30), bw, S(44), "Log in", true,
-               app.ra_user[0] && app.ra_password[0] && !app.ra_busy, false))
-         log_in();
-      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(98), UI_LEFT, w - S(48), C_DIM, 1,
-            "Also shows achievements in Steam, through a debugging port on this computer.");
-      return h;
-   }
+      size_t fit = 0, end = 0;
 
-   bw = button_w("Log out");
-   SDL_snprintf(line, sizeof(line), "Logged in as %s", user);
-   ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(64) - bw, C_TEXT, 1, line);
-   if (button(rx - bw, cy, bw, S(40), "Log out", false, true, false))
-   {
-      ra_logout();
-      background_apply();
-      app.ra_note[0] = '\0';
-      jobs_add(job_clear_steam, NULL, JOB_NOW, false);
+      for (;;)
+      {
+         while (text[end] && text[end] != ' ')
+            end++;
+         SDL_strlcpy(line, text, SDL_min(sizeof(line), end + 1));
+         if (fit && ui_text_width(UI_MEDIUM, S(13), line) > w)
+            break;
+         fit = end;
+         if (!text[end++])
+            break;
+      }
+      SDL_strlcpy(line, text, SDL_min(sizeof(line), fit + 1));
+      if (draw)
+         ui_text(UI_MEDIUM, S(13), x, cy + S(18) * n, UI_LEFT, w, C_DIM, alpha, line);
+      for (text += fit; *text == ' '; text++)
+         ;
    }
-   cy += S(56);
-   ui_rect(x + S(20), cy, w - S(40), S(100), S(12), 1, 1, 1, 0.04f);
-   ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1,
-         "Show achievements in Steam");
-   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(43), UI_LEFT, w - S(140), C_DIM, 1,
-         "On ROMs' pages in its library. Games start through FuseBox.");
-   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(61), UI_LEFT, w - S(140), C_DIM, 1,
-         "Steam then keeps a debugging port open: other programs on this");
-   ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(79), UI_LEFT, w - S(140), C_DIM, 1,
-         "computer could control Steam through it.");
-   if (toggle(rx - S(12) - S(44), cy + S(38), on, false))
+   return n;
+}
+
+/* A setting's height in a card w wide. */
+static float setting_h(float w, const char *about)
+{
+   return S(46) + S(18) * wrapped(0, 0, w - S(140), about, 1, false);
+}
+
+/* A setting with its switch, grey and off where it isn't enabled, and room for
+ * more under it; true when clicked. */
+static bool setting_row(float x, float y, float w, const char *title, const char *about, float more,
+      bool on, bool enabled)
+{
+   float h = setting_h(w, about), alpha = enabled ? 1 : 0.4f;
+
+   ui_rect(x + S(20), y, w - S(40), h + more, S(12), 1, 1, 1, 0.04f);
+   ui_text(UI_BOLD, S(15), x + S(36), y + S(21), UI_LEFT, w - S(140), C_TEXT, alpha, title);
+   wrapped(x + S(36), y + S(43), w - S(140), about, alpha, true);
+   return toggle(x + w - S(36) - S(44), y + (h - S(24)) / 2, on && enabled, enabled, false);
+}
+
+/* Logging in to RetroAchievements, or out; its height. */
+static float login_h(bool in)
+{
+   return in ? S(50) : S(58) + (app.ra_error[0] || app.ra_busy ? S(24) : 0);
+}
+
+static void draw_login(float x, float y, float w, bool in, const char *user)
+{
+   float rx = x + w, bw = button_w(in ? "Log out" : "Log in"), fw = (w - bw - S(24)) / 2;
+   char line[200];
+
+   if (in)
+   {
+      SDL_snprintf(line, sizeof(line), "Logged in as %s", user);
+      ui_text(UI_MEDIUM, S(14), x, y + S(18), UI_LEFT, w - bw - S(16), C_TEXT, 1, line);
+      if (button(rx - bw, y, bw, S(36), "Log out", false, true, false))
+      {
+         ra_logout();
+         background_apply();
+         app.ra_note[0] = '\0';
+         jobs_add(job_clear_steam, NULL, JOB_NOW, false);
+      }
+      return;
+   }
+   text_field(x, y, fw, S(44), FIELD_RA_USER, app.ra_user, "Username", false, false, 0);
+   text_field(x + fw + S(12), y, fw, S(44), FIELD_RA_PASSWORD, app.ra_password, "Password", true,
+         false, 0);
+   if (button(rx - bw, y, bw, S(44), "Log in", true,
+            app.ra_user[0] && app.ra_password[0] && !app.ra_busy, false))
+      log_in();
+   if (app.ra_error[0])
+      ui_text(UI_MEDIUM, S(13), x, y + S(60), UI_LEFT, w, C_RED, 1, app.ra_error);
+   else if (app.ra_busy)
+      ui_text(UI_MEDIUM, S(13), x, y + S(60), UI_LEFT, w, C_DIM, 1, "Logging in...");
+}
+
+/* Steam: where it is, and the achievements it shows. Returns the card's
+ * height. */
+static float draw_steam_card(float x, float y, float w)
+{
+   static const char autostart[] = "FuseBox needs to be running to show achievements in Steam. If"
+      " toggled off FuseBox will not open until manually opened or starting a game added to Steam"
+      " with FuseBox.";
+   char user[128];
+   bool in = ra_user(user, sizeof(user)), on = ra_active(), running;
+   const char *shown = in ? "On ROMs' pages in your library, with friends who play them and"
+      " leaderboards. This opens a debugging port to access Steam."
+      : "On ROMs' pages in your library, with friends who play them and leaderboards. This opens a"
+      " debugging port to access Steam. Log in to retroachievements.org; the password isn't kept.";
+   float ah = setting_h(w, autostart);
+   float sh = setting_h(w, shown), lh = login_h(in), cy, bw, fw, rx = x + w - S(24);
+   float h = S(58) + S(28) + sh + lh + S(12) + ah + S(22)
+      + (on ? S(52) : app.ra_note[0] ? S(26) : 0);
+
+   cy = settings_card(x, y, w, h, "Steam");
+   ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
+         steam_install() ? steam_install()->config : "Not found");
+   cy += S(28);
+   if (setting_row(x, cy, w, "Show RetroAchievements in Steam", shown, lh, on, in))
    {
       ra_set_in_steam(!on);
       background_apply();
@@ -2617,19 +2672,17 @@ static float draw_achievements_card(float x, float y, float w)
       else
          start_achievements(false, false);
    }
-   cy += S(112);
+   /* Never grey: FuseBox shows achievements too. */
+   draw_login(x + S(36), cy + sh, w - S(72), in, user);
+   cy += sh + lh + S(12);
+   if (setting_row(x, cy, w, "Auto start", autostart, 0, steam_autostart(), on))
+   {
+      steam_set_autostart(!steam_autostart());
+      background_apply();
+   }
+   cy += ah + S(12);
    if (on)
    {
-      ui_rect(x + S(20), cy, w - S(40), S(60), S(12), 1, 1, 1, 0.04f);
-      ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1, "Auto start");
-      ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(42), UI_LEFT, w - S(140), C_DIM, 1,
-            "FuseBox waits in the background from login, with no window.");
-      if (toggle(rx - S(12) - S(44), cy + S(18), steam_autostart(), false))
-      {
-         steam_set_autostart(!steam_autostart());
-         background_apply();
-      }
-      cy += S(72);
       running = steam_install() && platform_steam_running(steam_install());
       bw = button_w(running ? "Restart Steam" : "Start Steam");
       fw = button_w("Refresh");
@@ -2657,7 +2710,6 @@ static float draw_achievements_card(float x, float y, float w)
 
 static void draw_settings(float x, float y, float w, float h)
 {
-   char line[1200];
    float cw = SDL_min(w, S(720)), cy, top = y, start;
    /* Scrolled out under the top bar, nothing is there to click. */
    bool held = app.click && app.cy < top, has_key = sgdb_has_key();
@@ -2689,15 +2741,7 @@ static void draw_settings(float x, float y, float w, float h)
       save_key();
    y += S(156) + S(20);
 
-   cy = settings_card(x, y, cw, S(100), "Steam");
-   if (steam_install())
-      SDL_snprintf(line, sizeof(line), "%s", steam_install()->config);
-   else
-      SDL_strlcpy(line, "Not found", sizeof(line));
-   ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1, line);
-   y += S(100) + S(20);
-
-   y += draw_achievements_card(x, y, cw) + S(20);
+   y += draw_steam_card(x, y, cw) + S(20);
    y += draw_rom_folders(x, y, cw) + S(20);
    glDisable(GL_SCISSOR_TEST);
 
@@ -2761,17 +2805,18 @@ static void search_matches(void)
    jobs_add(job_matches, j, JOB_NOW, true);
 }
 
-/* An on/off switch; true when clicked. */
-static bool toggle(float x, float y, bool on, bool modal)
+/* An on/off switch, grey where it isn't enabled; true when clicked. */
+static bool toggle(float x, float y, bool on, bool enabled, bool modal)
 {
    float w = S(44), h = S(24);
 
    if (on)
       ui_rect(x, y, w, h, h / 2, C_ACCENT, 1);
    else
-      ui_rect(x, y, w, h, h / 2, 1, 1, 1, 0.15f);
-   ui_rect(on ? x + w - h + S(3) : x + S(3), y + S(3), h - S(6), h - S(6), h, C_TEXT, 1);
-   return clicked_in(x - S(4), y - S(4), w + S(8), h + S(8), modal);
+      ui_rect(x, y, w, h, h / 2, 1, 1, 1, enabled ? 0.15f : 0.06f);
+   ui_rect(on ? x + w - h + S(3) : x + S(3), y + S(3), h - S(6), h - S(6), h, C_TEXT,
+         enabled ? 1 : 0.25f);
+   return enabled && clicked_in(x - S(4), y - S(4), w + S(8), h + S(8), modal);
 }
 
 static void open_game_settings(void)
@@ -2824,7 +2869,7 @@ static void draw_game_settings(void)
       ui_text(UI_BOLD, S(15), x + S(36), ry + S(19), UI_LEFT, w - S(140), C_TEXT, 1, labels[i][0]);
       ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(140), C_DIM, 1,
             labels[i][1]);
-      if (toggle(x + w - S(36) - S(44), ry + S(16), values[i], true))
+      if (toggle(x + w - S(36) - S(44), ry + S(16), values[i], true, true))
       {
          library_lock();
          if (library_game(app.selected))
