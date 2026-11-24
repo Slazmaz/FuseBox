@@ -10,14 +10,28 @@ configure_file(src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# For others' computers (tools/make_linux.sh): all but what every Linux has is
+# linked in.
+option(FUSEBOX_PORTABLE "Link libraries in" OFF)
+if(FUSEBOX_PORTABLE)
+   set(CMAKE_FIND_LIBRARY_SUFFIXES .a .so)
+   set(PKG_CONFIG_ARGN --static)
+endif()
+
 find_package(SDL3 REQUIRED CONFIG)
 find_package(OpenGL REQUIRED)
 find_package(CURL REQUIRED)
 # ROMs in a .zip, and compressed discs (RVZ).
 find_package(ZLIB REQUIRED)
-find_package(zstd REQUIRED CONFIG)
-# WebP: animated art.
+find_package(zstd CONFIG QUIET)
 find_package(PkgConfig REQUIRED)
+if(TARGET zstd::libzstd_shared)
+   set(ZSTD_LIB zstd::libzstd_shared)
+else()
+   pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
+   set(ZSTD_LIB PkgConfig::ZSTD)
+endif()
+# WebP: animated art.
 pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebpdemux libwebp)
 # VP8: SteamGridDB's previews of it. Windows: linked in, no DLL of its own.
 pkg_check_modules(VPX REQUIRED IMPORTED_TARGET vpx)
@@ -89,7 +103,7 @@ add_library(fusebox_core STATIC
    src/update.c
 )
 target_include_directories(fusebox_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared ${CMAKE_DL_LIBS})
+target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB ${ZSTD_LIB} ${CMAKE_DL_LIBS})
 if(WIN32)
    # More sockets to wait on than Windows' 64.
    target_compile_definitions(fusebox_core PRIVATE FD_SETSIZE=1024 WIN32_LEAN_AND_MEAN)
