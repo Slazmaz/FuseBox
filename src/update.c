@@ -322,11 +322,16 @@ void update_init(const char *data_dir, const char *config_dir)
    work_path("", path, sizeof(path));
    remove_tree(path);
 #ifdef _WIN32
-   /* Those in use, by an older FuseBox that still runs: at the next start. */
+   /* Those in use go out of the way, and at the next start: OpenSSL takes zlib1.dll
+    * where there is one, so it would be each time. */
    for (i = 0; i < SDL_arraysize(once); i++)
    {
+      char aside[1200];
+
       SDL_snprintf(path, sizeof(path), "%s%s", data_dir, once[i]);
-      SDL_RemovePath(path);
+      work_path(once[i], aside, sizeof(aside));
+      if (!SDL_RemovePath(path) && make_parents(aside))
+         SDL_RenamePath(path, aside);
    }
 #endif
    state_path(path, sizeof(path));
