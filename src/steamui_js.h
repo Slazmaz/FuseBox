@@ -39,6 +39,7 @@
  * rest: by a shortcut that's there only meanwhile.
  *
  * An accepted invite is a steam:// address this page opens: taken the same way.
+ * Only one to Spacewar that FuseBox's message came with: others are Steam's.
  * Steam knows the invite as one to Spacewar. Which game it's to is in the chat
  * message that comes with it (not shown here), and the invite is shown as one to that: by its
  * app id, for which the friends' own store of apps' names and pictures answers
@@ -58,7 +59,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 36) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 37) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -579,7 +580,7 @@
    "   const lanGame = () => running().find(app => lanGames.has(app)) || 0;\n" \
    "   const take = url => {\n" \
    "      const m = /^steam:\\/\\/joinlobby\\/480\\/(\\d+)\\/(\\d+)/.exec(String(url));\n" \
-   "      if (!m || !heard || passed.has(m[1])) return false;\n" \
+   "      if (!m || !heard || passed.has(m[1]) || !toLobby(m[1])) return false;\n" \
    "      send('join ' + m[1] + ' ' + m[2]);\n" \
    "      return true;\n" \
    "   };\n" \
@@ -617,6 +618,15 @@
    "      if (!absent.includes(name)) absent.push(name);\n" \
    "      return ABSENT + absent.indexOf(name);\n" \
    "   };\n" \
+   "   /* Whether FuseBox's message came with an invite to it: others are Steam's. */\n" \
+   "   const toLobby = lobby => {\n" \
+   "      try {\n" \
+   "         for (const invites of ui.ChatStore.GameInviteStore.m_mapGameInvites.values())\n" \
+   "            for (const invite of invites.values())\n" \
+   "               if (String(invite.lobbyID) === lobby && toldOf(invite)) return true;\n" \
+   "      } catch (e) { }\n" \
+   "      return false;\n" \
+   "   };\n" \
    "   const gameOf = invite => {\n" \
    "      const t = toldOf(invite);\n" \
    "      return t ? gameNamed(t.name) || absentNamed(t.name) : 0;\n" \
@@ -643,6 +653,8 @@
    "   const quietChat = chat => {\n" \
    "      if (!chat || quieted.has(chat)) return;\n" \
    "      quieted.add(chat);\n" \
+   "      /* Those that came before this did. */\n" \
+   "      try { chat.m_rgChatMessages.forEach(m => note(m.unAccountID, m.rtTimestamp, m.strMessage)); } catch (e) { }\n" \
    "      const list = chat.m_ChatMessageBlockList, said = m => SAID.test(String(m && m.strMessage).trim());\n" \
    "      try {\n" \
    "         around(chat, 'AddNewChatMsgAndNotify', function(steams, who, time, at, text, ...more) {\n" \
@@ -822,7 +834,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 36,\n" \
+   "      version: 37,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
