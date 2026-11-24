@@ -2816,11 +2816,31 @@ static float draw_steam_card(float x, float y, float w)
    return h;
 }
 
+/* The SteamGridDB key. Returns the card's height. */
+static float draw_key_card(float x, float y, float w)
+{
+   float h = S(156), cy = settings_card(x, y, w, h, "SteamGridDB API key");
+   bool has_key = sgdb_has_key();
+
+   /* A saved key shows as one, until there's something to paste over it. */
+   ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
+         has_key ? "Your key is saved." : "Free at steamgriddb.com/profile/preferences/api");
+   text_field(x + S(24), cy + S(30), w - S(48) - S(120), S(44), FIELD_KEY, app.key,
+         !has_key ? "Paste the key" : app.field == FIELD_KEY ? "Paste a new key to replace it"
+         : "********************************", true, false, 0);
+   if (button(x + w - S(24) - S(108), cy + S(30), S(108), S(44), has_key ? "Replace" : "Save", true,
+            app.key[0] != '\0', false))
+      save_key();
+   return h;
+}
+
 static void draw_settings(float x, float y, float w, float h)
 {
-   float cw = SDL_min(w, S(720)), cy, top = y, start;
+   float gap = S(20), cw, total, top = y, start, end;
+   /* Where there's room for it, Steam beside the rest. */
+   bool two = w >= S(1180);
    /* Scrolled out under the top bar, nothing is there to click. */
-   bool held = app.click && app.cy < top, has_key = sgdb_has_key();
+   bool held = app.click && app.cy < top;
 
    if (held)
       app.click = false;
@@ -2834,23 +2854,25 @@ static void draw_settings(float x, float y, float w, float h)
    glScissor((int)(x - S(16)), 0, app.width, (int)h);
    start = y -= app.settings_scroll;
 
+   /* In the middle, as wide as reads well. */
+   total = SDL_min(w, S(two ? 1800 : 900));
+   x += (w - total) / 2;
+   cw = two ? (total - gap) / 2 : total;
    ui_text(UI_BOLD, S(22), x, y + S(30), UI_LEFT, 0, C_TEXT, 1, "Settings");
    y += S(64);
-
-   /* A saved key shows as one, until there's something to paste over it. */
-   cy = settings_card(x, y, cw, S(156), "SteamGridDB API key");
-   ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1,
-         has_key ? "Your key is saved." : "Free at steamgriddb.com/profile/preferences/api");
-   text_field(x + S(24), cy + S(30), cw - S(48) - S(120), S(44), FIELD_KEY, app.key,
-         !has_key ? "Paste the key" : app.field == FIELD_KEY ? "Paste a new key to replace it"
-         : "********************************", true, false, 0);
-   if (button(x + cw - S(24) - S(108), cy + S(30), S(108), S(44), has_key ? "Replace" : "Save", true,
-            app.key[0] != '\0', false))
-      save_key();
-   y += S(156) + S(20);
-
-   y += draw_steam_card(x, y, cw) + S(20);
-   y += draw_rom_folders(x, y, cw) + S(20);
+   if (two)
+   {
+      end = y + draw_steam_card(x + cw + gap, y, cw) + gap;
+      y += draw_key_card(x, y, cw) + gap;
+      y += draw_rom_folders(x, y, cw) + gap;
+      y = SDL_max(y, end);
+   }
+   else
+   {
+      y += draw_key_card(x, y, cw) + gap;
+      y += draw_steam_card(x, y, cw) + gap;
+      y += draw_rom_folders(x, y, cw) + gap;
+   }
    glDisable(GL_SCISSOR_TEST);
 
    /* What's left to scroll to, now that it's all been placed. */
