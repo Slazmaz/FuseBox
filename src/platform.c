@@ -428,10 +428,13 @@ void platform_autostart(bool on)
    RegCloseKey(key);
 }
 
+/* Closed by Windows when the process ends, unless it's passed on. */
+static HANDLE only;
+
 bool platform_only_background(void)
 {
-   /* Never closed: Windows does when the process ends. */
-   return CreateMutexW(NULL, FALSE, ONE_NAME) && GetLastError() != ERROR_ALREADY_EXISTS;
+   only = CreateMutexW(NULL, FALSE, ONE_NAME);
+   return only && GetLastError() != ERROR_ALREADY_EXISTS;
 }
 
 /* Outside: as the desktop's child rather than the caller's, or not at all. Either
@@ -496,6 +499,21 @@ void platform_start_background(bool by_game)
    }
    background_command(command, SDL_arraysize(command));
    start(command, by_game);
+}
+
+bool platform_again_background(void)
+{
+   WCHAR command[1100];
+
+   if (only)
+      CloseHandle(only);
+   only = NULL;
+   background_command(command, SDL_arraysize(command));
+   if (start(command, false))
+      return true;
+   /* This one goes on, then. */
+   only = CreateMutexW(NULL, FALSE, ONE_NAME);
+   return false;
 }
 
 bool platform_start_game(const char *path)
@@ -959,6 +977,11 @@ void platform_start_background(bool by_game)
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+bool platform_again_background(void)
+{
+   return false;
 }
 
 bool platform_start_game(const char *path)

@@ -17,6 +17,8 @@ void lan_playing(const char *config_dir, Uint32 appid, const char *path, bool on
  * asked for), 0 if none does. */
 Uint32 lan_game(const char *config_dir, Uint32 appid, const char *path);
 bool lan_running(Uint32 pid);
+/* Whether any game runs. */
+bool lan_any(const char *config_dir);
 
 /* Notes the app id of a shortcut that's there only while this process waits for
  * its game (steamui_once), or that it's gone. <config>/once/<app id>. */

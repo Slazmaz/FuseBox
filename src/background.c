@@ -74,13 +74,17 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
    char played[1100];
    const struct steam_install *st;
    SDL_PathInfo info;
-   SDL_Time seen = 0;
+   SDL_Time seen = 0, built = 0;
+   char exe[1100];
    Uint64 steam_since = 0, pushed = 0, friends = 0, next = 0;
    bool quit;
 
    played_file(config_dir, played, sizeof(played));
    if (SDL_GetPathInfo(played, &info))
       seen = info.modify_time;
+   own_exe(exe, sizeof(exe));
+   if (SDL_GetPathInfo(exe, &info))
+      built = info.modify_time;
    for (quit = false; !quit; quit = platform_tray_wait(LOOK_MS))
    {
       Uint64 now = SDL_GetTicks();
@@ -89,6 +93,11 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       int games = 0, left;
       Uint32 appid;
 
+      /* FuseBox was updated: the new one's turn. A game that runs may be played
+       * with friends, which this one sees to. */
+      if (built && SDL_GetPathInfo(exe, &info) && info.modify_time != built
+            && !lan_any(config_dir) && platform_again_background())
+         return;
       /* As the window left them. */
       ra_init(config_dir);
       steam_read_settings(config_dir);

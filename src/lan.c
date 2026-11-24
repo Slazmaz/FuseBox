@@ -74,6 +74,7 @@ struct search
 {
    Uint32 appid, pid;
    const char *path;
+   bool any;
 };
 
 static SDL_EnumerationResult SDLCALL on_playing(void *user, const char *dir, const char *name)
@@ -90,6 +91,7 @@ static SDL_EnumerationResult SDLCALL on_playing(void *user, const char *dir, con
       SDL_RemovePath(path);
       return SDL_ENUM_CONTINUE;
    }
+   s->any = true;
    if (!(text = SDL_LoadFile(path, NULL)))
       return SDL_ENUM_CONTINUE;
    appid = (Uint32)SDL_strtoul(text, NULL, 10);
@@ -104,12 +106,23 @@ static SDL_EnumerationResult SDLCALL on_playing(void *user, const char *dir, con
 Uint32 lan_game(const char *config_dir, Uint32 appid, const char *game)
 {
    char path[1100];
-   struct search s = { appid, 0, game };
+   struct search s = { appid, 0, game, false };
 
    SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "playing", config_dir);
    if ((appid || game[0]) && platform_exists(path))
       SDL_EnumerateDirectory(path, on_playing, &s);
    return s.pid;
+}
+
+bool lan_any(const char *config_dir)
+{
+   char path[1100];
+   struct search s = { 0, 0, "", false };
+
+   SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "playing", config_dir);
+   if (platform_exists(path))
+      SDL_EnumerateDirectory(path, on_playing, &s);
+   return s.any;
 }
 
 /* ---- Shortcuts that are there only meanwhile ------------------------------ */
