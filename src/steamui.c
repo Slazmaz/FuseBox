@@ -322,23 +322,21 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 27"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 28"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
 }
 
-bool steamui_asked(Uint32 *appid, SDL_AtomicInt *abort)
+bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort)
 {
-   char url[512], result[64];
+   char url[512];
 
    /* Less long than an answer may take. */
-   if (!find_target(url, sizeof(url), abort)
-         || !evaluate(url, "window.__fusebox && __fusebox.asked ? __fusebox.asked(10000) : ''", result,
-            sizeof(result), abort))
-      return false;
-   *appid = (Uint32)SDL_strtoul(result, NULL, 10);
-   return *appid != 0;
+   return find_target(url, sizeof(url), abort)
+      && evaluate(url, "window.__fusebox && __fusebox.asked ? __fusebox.asked(10000) : ''", what, size,
+            abort)
+      && what[0];
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

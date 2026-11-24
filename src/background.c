@@ -28,6 +28,11 @@ static void port_file(const struct steam_install *st, char *dst, size_t size)
    SDL_snprintf(dst, size, "%s" PATH_SEP ".cef-enable-remote-debugging", st->root);
 }
 
+static void own_exe(char *dst, size_t size)
+{
+   SDL_snprintf(dst, size, "%sfusebox%s", SDL_GetBasePath(), PATH_SEP[0] == '\\' ? ".exe" : "");
+}
+
 /* Touched when a game ends. */
 static void played_file(const char *config_dir, char *dst, size_t size)
 {
@@ -135,8 +140,8 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
    }
 }
 
-/* Clicks on the buttons in Steam, taken by a thread of their own: the other
- * is busy with the network. */
+/* Clicks in Steam, taken by a thread of their own: the other is busy with the
+ * network. */
 static int SDLCALL take_clicks(void *user)
 {
    SDL_AtomicInt *stop = user;
@@ -144,19 +149,23 @@ static int SDLCALL take_clicks(void *user)
    while (!SDL_GetAtomicInt(stop))
    {
       Uint64 since = SDL_GetTicks();
-      Uint32 appid;
+      unsigned long long a;
+      char what[128];
       int i;
 
-      if (steamui_asked(&appid, stop))
+      if (steamui_asked(what, sizeof(what), stop))
       {
+         /* Only what these are: it's a web page that says it. */
+         if (SDL_sscanf(what, "open %llu", &a) != 1 || a > 0xFFFFFFFFu)
+            continue;
          /* A process of its own: it reads the library, which is the other
           * thread's here. */
          const char *args[] = { NULL, "--open", NULL, NULL };
          char exe[1100], id[16];
          SDL_Process *p;
 
-         SDL_snprintf(exe, sizeof(exe), "%sfusebox%s", SDL_GetBasePath(), PATH_SEP[0] == '\\' ? ".exe" : "");
-         SDL_snprintf(id, sizeof(id), "%u", (unsigned)appid);
+         own_exe(exe, sizeof(exe));
+         SDL_snprintf(id, sizeof(id), "%u", (unsigned)a);
          args[0] = exe;
          args[2] = id;
          if ((p = SDL_CreateProcess(args, false)))

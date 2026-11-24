@@ -43,7 +43,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 27) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 28) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -408,11 +408,17 @@
    "   const opens = new Map(), buttons = new Set(), clicks = [], boards = new Map();\n" \
    "   let heard = false, deaf, wake, jsxs, mine, plain, pictured, clicked = 0;\n" \
    "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
+   "   const said = new Map();\n" \
+   "   const send = text => {\n" \
+   "      if (Date.now() - (said.get(text) || 0) < 1500) return;\n" \
+   "      said.set(text, Date.now());\n" \
+   "      if (wake) wake(text);\n" \
+   "      else clicks.push(text);\n" \
+   "   };\n" \
    "   const open = app => {\n" \
    "      if (Date.now() - clicked < 1500) return;\n" \
    "      clicked = Date.now();\n" \
-   "      if (wake) wake(String(app));\n" \
-   "      else clicks.push(app);\n" \
+   "      send('open ' + app);\n" \
    "   };\n" \
    "   if (react && bar && jsx && bar.MenuButton) {\n" \
    "      const Open = class extends react.Component {\n" \
@@ -554,14 +560,14 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 27,\n" \
+   "      version: 28,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
    "         redraw();\n" \
    "         return 'ok';\n" \
    "      },\n" \
-   "      /* The next click's game, '' for none in that time. */\n" \
+   "      /* The next click, '' for none in that time. */\n" \
    "      asked(ms) {\n" \
    "         const was = heard;\n" \
    "         heard = true;\n" \
@@ -569,7 +575,7 @@
    "         deaf = setTimeout(() => { heard = false; redraw(); }, ms + 15000);\n" \
    "         if (!was) redraw();\n" \
    "         if (wake) wake('');\n" \
-   "         if (clicks.length) return Promise.resolve(String(clicks.shift()));\n" \
+   "         if (clicks.length) return Promise.resolve(clicks.shift());\n" \
    "         return new Promise(done => {\n" \
    "            const late = setTimeout(() => wake(''), ms);\n" \
    "            wake = app => { clearTimeout(late); wake = null; done(app); };\n" \

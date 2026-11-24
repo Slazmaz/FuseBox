@@ -34,10 +34,10 @@ void steamui_start(const struct steam_install *steam);
  * those of games that left); only_friends: the friends again, who may have
  * started playing. Blocking. *games: how many have achievements. */
 enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
-/* Waits some seconds for a click on a game's button that opens its emulator
- * or launcher: true with the game's app id. False at once when Steam has no
- * port or no buttons; they're there only while this is called. */
-bool steamui_asked(Uint32 *appid, SDL_AtomicInt *abort);
+/* Waits some seconds for a click on what's there only while this is called:
+ * "open <app id>" (the button for a game's emulator or launcher). False for
+ * none; at once when Steam has no port or nothing to click. */
+bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);
 
