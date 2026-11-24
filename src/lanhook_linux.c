@@ -16,6 +16,7 @@
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -423,6 +424,26 @@ static void share(int s)
    errno = error;
 }
 
+/* Whether it's only FuseBox that has the port, for other players: then it's free at
+ * this one's address, where somebody on all addresses would be in the way. */
+static bool only_players(int s, const struct sockaddr *at)
+{
+   struct sockaddr_in mine;
+   int error = errno, test = socket(AF_INET, (is_udp(s) ? SOCK_DGRAM : SOCK_STREAM) | SOCK_CLOEXEC, 0);
+   bool is;
+
+   memset(&mine, 0, sizeof(mine));
+   mine.sin_family = AF_INET;
+   mine.sin_addr.s_addr = htonl(my_address());
+   mine.sin_port = at->sa_family == AF_INET6 ? ((const struct sockaddr_in6 *)at)->sin6_port
+      : ((const struct sockaddr_in *)at)->sin_port;
+   is = test >= 0 && real_bind(test, (struct sockaddr *)&mine, sizeof(mine)) == 0;
+   if (test >= 0)
+      close(test);
+   errno = error;
+   return is;
+}
+
 HOOK int bind(int s, const struct sockaddr *at, socklen_t len)
 {
    struct sockaddr_storage any;
@@ -447,9 +468,8 @@ HOOK int bind(int s, const struct sockaddr *at, socklen_t len)
       return r;
    if (r == 0)
       share(s);
-   else if (errno == EADDRINUSE && on())
+   else if (errno == EADDRINUSE && on() && only_players(s, at))
    {
-      /* FuseBox has it for a player already. */
       share(s);
       r = real_bind(s, at, len);
    }

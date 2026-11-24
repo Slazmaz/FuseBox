@@ -142,7 +142,7 @@ static bool load_into(HANDLE process)
    return ok;
 }
 
-bool inject_into(Uint32 pid)
+bool inject_into(Uint32 game, Uint32 pid)
 {
    WCHAR name[64];
    BOOL small = FALSE;

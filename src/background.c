@@ -1,5 +1,6 @@
 #include "background.h"
 #include "history.h"
+#include "inject.h"
 #include "lan.h"
 #include "library.h"
 #include "platform.h"
@@ -491,12 +492,19 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    }
    history_playing(data_dir);
    lan_playing(config_dir, history_appid(), old ? "" : path, true);
+#ifndef _WIN32
+   if (steam_menus() && !inject_prepare())
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "The game can't be put on a LAN");
+#endif
    if (!platform_run_game(s.exe, s.args, s.dir, argv, skip, &code))
    {
       SDL_snprintf(error, sizeof(error), "Can't start this game:\n%s", s.exe);
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
    }
    lan_playing(config_dir, 0, "", false);
+#ifndef _WIN32
+   inject_over();
+#endif
    played_file(config_dir, played, sizeof(played));
    SDL_snprintf(ended, sizeof(ended), "%u", (unsigned)history_appid());
    SDL_SaveFile(played, ended, SDL_strlen(ended));

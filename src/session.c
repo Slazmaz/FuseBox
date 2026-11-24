@@ -403,7 +403,7 @@ static void look_at_game(void)
          ;
       if (k < ses.refused_count)
          continue;
-      if (inject_into(pids[i]))
+      if (inject_into(ses.game, pids[i]))
          ses.in_game++;
       else if (ses.refused_count < (int)SDL_arraysize(ses.refused))
       {

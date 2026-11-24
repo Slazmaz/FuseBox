@@ -80,6 +80,7 @@ add_library(fusebox_core STATIC
    src/stream.c
    src/vlan.c
    src/inject.c
+   src/inject_linux.c
    src/tunnel.c
    src/steamnet.c
    src/session.c
@@ -116,6 +117,12 @@ if(WIN32)
    target_link_options(fuseboxlan PRIVATE -static-libgcc)
    target_link_libraries(fuseboxlan PRIVATE minhook ws2_32 iphlpapi)
    add_dependencies(fusebox fuseboxlan)
+else()
+   # Started with the games (LD_PRELOAD): nothing of it but its hooks is to be seen.
+   add_library(fuseboxlan SHARED src/lanhook_linux.c)
+   set_target_properties(fuseboxlan PROPERTIES C_VISIBILITY_PRESET hidden)
+   target_link_libraries(fuseboxlan PRIVATE ${CMAKE_DL_LIBS})
+   add_dependencies(fusebox fuseboxlan)
 endif()
 
 # The app icon and version, in both exes.
@@ -126,10 +133,7 @@ if(WIN32)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-   set(OWN fusebox fusebox-cli fusebox_core)
-   if(WIN32)
-      list(APPEND OWN fuseboxlan)
-   endif()
+   set(OWN fusebox fusebox-cli fusebox_core fuseboxlan)
    foreach(t ${OWN})
       target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
    endforeach()
