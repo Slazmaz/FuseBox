@@ -20,6 +20,8 @@
 #include "steam.h"
 #include "steamui.h"
 #include "ui.h"
+#include "update.h"
+#include "version.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -43,7 +45,8 @@ enum msg_kind
    MSG_EMULATOR,
    MSG_EMULATORS_FOUND,
    MSG_LOGIN,
-   MSG_ACHIEVEMENTS
+   MSG_ACHIEVEMENTS,
+   MSG_UPDATE_CHECKED
 };
 
 struct msg
@@ -723,6 +726,17 @@ static void job_clear_steam(void *data)
    steamui_clear(jobs_abort());
 }
 
+static void job_update_check(void *data)
+{
+   struct msg *m = new_msg(MSG_UPDATE_CHECKED);
+
+   if (m)
+   {
+      update_check(jobs_abort(), m->text, sizeof(m->text));
+      post(m);
+   }
+}
+
 struct login_job
 {
    char user[128], password[256];
@@ -929,6 +943,9 @@ static struct
    char ra_user[128], ra_password[256];
    bool ra_busy;
    char ra_error[128], menus_note[128];
+   /* Asking GitHub for a newer FuseBox; what came of it. */
+   bool update_checking;
+   char update_note[128];
    /* MODAL_STEAM: only to restart it. */
    bool only_restart;
    /* The game Play was clicked for, and until when that shows. */
@@ -1045,6 +1062,29 @@ static bool play_button(float x, float y, float w, float h, const char *label, b
    ui_rect(x, y, w, h, S(12), 0.18f, 0.60f, 0.34f, (over && enabled ? 1.0f : 0.88f) * a);
    ui_text(UI_BOLD, S(15), x + w / 2, y + h / 2, UI_CENTER, w - S(12), C_TEXT, a, label);
    return enabled && clicked_in(x, y, w, h, false);
+}
+
+/* One that can't be clicked yet, filled as far as the wait is over. */
+static void wait_button(float x, float y, float w, float h, const char *label, float done)
+{
+   GLint box[4];
+   bool was = glIsEnabled(GL_SCISSOR_TEST);
+   int right = (int)(x + w * done);
+
+   ui_rect(x, y, w, h, S(12), 1, 1, 1, 0.05f);
+   /* The button's own shape, cut off there, within what's cut off already. */
+   glGetIntegerv(GL_SCISSOR_BOX, box);
+   if (!was)
+      glEnable(GL_SCISSOR_TEST);
+   if (was)
+      glScissor(box[0], box[1], SDL_clamp(right - box[0], 0, box[2]), box[3]);
+   else
+      glScissor(0, 0, SDL_max(right, 0), app.height);
+   ui_rect(x, y, w, h, S(12), C_ACCENT, 0.4f);
+   glScissor(box[0], box[1], box[2], box[3]);
+   if (!was)
+      glDisable(GL_SCISSOR_TEST);
+   ui_text(UI_BOLD, S(15), x + w / 2, y + h / 2, UI_CENTER, w - S(12), C_TEXT, 0.75f, label);
 }
 
 static float button_w(const char *label)
@@ -1996,6 +2036,17 @@ static void draw_sidebar(float w)
    }
 }
 
+/* ---- Updates ----------------------------------------------------------- */
+
+/* Asks GitHub for a newer FuseBox, unless it was just asked. */
+static void check_update(void)
+{
+   if (app.update_checking || update_wait(NULL))
+      return;
+   app.update_checking = true;
+   jobs_add(job_update_check, NULL, JOB_NOW, false);
+}
+
 /* ---- Top bar ----------------------------------------------------------- */
 
 /* Minimize, maximize (or restore) and close, drawn: the window has no
@@ -2829,6 +2880,42 @@ static float draw_steam_card(float x, float y, float w)
    return h;
 }
 
+/* FuseBox's version, and whether there's a newer one. Returns the card's
+ * height. */
+static float draw_update_card(float x, float y, float w)
+{
+   float h = S(128), cy = settings_card(x, y, w, h, "Updates"), rx = x + w - S(24), room, done;
+   float bw = SDL_max(button_w("Check for updates"), button_w("Check again in 60 min"));
+   char version[32], line[256], label[64];
+   int wait = update_wait(&done);
+
+   if (update_newer(version, sizeof(version)))
+      SDL_snprintf(line, sizeof(line), "%s is available", version);
+   else
+      SDL_strlcpy(line, app.update_note, sizeof(line));
+   room = w - S(72) - bw;
+   /* One button: what there is to do now. */
+   if (app.update_checking)
+      wait_button(rx - bw, cy + S(2), bw, S(40), "Checking...", 0);
+   else if (wait)
+   {
+      /* Kept up as it fills; a long one slowly. */
+      Uint64 due = SDL_GetTicks() + (wait > 60 ? 1000 : 100);
+
+      SDL_snprintf(label, sizeof(label), wait > 60 ? "Check again in %d min"
+            : "Check again in %d s", wait > 60 ? (wait + 59) / 60 : wait);
+      wait_button(rx - bw, cy + S(2), bw, S(40), label, done);
+      if (!app.anim_at || due < app.anim_at)
+         app.anim_at = due;
+   }
+   else if (button(rx - bw, cy + S(2), bw, S(40), "Check for updates", false, true, false))
+      check_update();
+   ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(line[0] ? 12 : 22), UI_LEFT, room, C_TEXT, 1,
+         "FuseBox " FUSEBOX_VERSION);
+   ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(36), UI_LEFT, room, C_DIM, 1, line);
+   return h;
+}
+
 /* The SteamGridDB key. Returns the card's height. */
 static float draw_key_card(float x, float y, float w)
 {
@@ -2873,6 +2960,7 @@ static void draw_settings(float x, float y, float w, float h)
    cw = two ? (total - gap) / 2 : total;
    ui_text(UI_BOLD, S(22), x, y + S(30), UI_LEFT, 0, C_TEXT, 1, "Settings");
    y += S(64);
+   y += draw_update_card(x, y, total) + gap;
    if (two)
    {
       end = y + draw_steam_card(x + cw + gap, y, cw) + gap;
@@ -3369,6 +3457,10 @@ static void handle_msg(struct msg *m)
       case MSG_ACHIEVEMENTS:
          SDL_strlcpy(app.menus_note, m->text, sizeof(app.menus_note));
          break;
+      case MSG_UPDATE_CHECKED:
+         app.update_checking = false;
+         SDL_strlcpy(app.update_note, m->text, sizeof(app.update_note));
+         break;
       case MSG_STEAM_DONE:
          app.busy = false;
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));
@@ -3727,6 +3819,7 @@ int main(int argc, char **argv)
       return code;
    }
    background_apply();
+   update_init(config);
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);
 
@@ -3758,6 +3851,7 @@ int main(int argc, char **argv)
    SDL_strlcpy(app.status, "Looking for games...", sizeof(app.status));
    jobs_init(8);
    jobs_add(job_scan, NULL, JOB_NOW, true);
+   check_update();
    SDL_ShowWindow(app.window);
    SDL_StopTextInput(app.window);
    app.redraw = true;

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(fusebox VERSION 0.1 LANGUAGES C)
 
-# The version, above, is in version.h, for the code and the exes.
+# The version, above, is what updates go by (update.c).
 if(NOT PROJECT_VERSION_PATCH)
    set(PROJECT_VERSION_PATCH 0)
 endif()
@@ -82,6 +82,7 @@ add_library(fusebox_core STATIC
    src/tunnel.c
    src/steamnet.c
    src/session.c
+   src/update.c
 )
 target_include_directories(fusebox_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
