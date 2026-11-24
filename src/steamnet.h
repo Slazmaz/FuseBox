@@ -7,8 +7,9 @@
 #include "tunnel.h"
 
 /* Steam's lobbies and network, through the steamclient64.dll of the Steam that
- * runs. Steam shows the process as playing the app it opens with, so this is
- * for one that's only there for that (session.h). Both need an app id Steam
+ * runs, as a process Steam doesn't count as playing the app it opens with. A
+ * Steam where that can't be done shows that app, so this is for a process
+ * that's only there for that (session.h). Both need an app id Steam
  * knows; those of non-Steam games are refused. One thread. Windows. */
 
 enum steamnet_kind
@@ -31,8 +32,12 @@ struct steamnet_event
    Uint64 lobby, who;
 };
 
+/* Only has Steam count this process as playing it, until it ends. */
+bool steamnet_count(Uint32 app);
 /* As that app. False with why in error. */
 bool steamnet_open(Uint32 app, char *error, size_t size);
+/* Steam counts this one, as it can't do without. */
+bool steamnet_counted(void);
 void steamnet_close(void);
 Uint64 steamnet_me(void);
 /* A friend's name; valid until the next call. */
@@ -54,6 +59,10 @@ void steamnet_set(Uint64 lobby, const char *key, const char *value);
 
 void steamnet_accept(Uint64 who);
 void steamnet_hang_up(Uint64 who);
+/* Has a connection made. Requests for one only reach those Steam counts as
+ * playing the app; what's connected stays so without. */
+void steamnet_hello(Uint64 who);
+bool steamnet_connected(Uint64 who);
 /* A send_message. */
 enum sent steamnet_send(void *user, Uint64 to, int channel, const void *data, int size);
 /* Hands over the messages that came. */

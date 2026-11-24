@@ -34,6 +34,13 @@
 #define ANSWER_MS 30000
 /* An invite follows what's said of it after this (ms). */
 #define SAID_MS 1000
+/* Spacewar is shown until friends were connected this long, or for so long at
+ * most; then again after this (longer each time). Hellos are said this often. */
+#define SETTLED_MS 3000
+#define COUNTED_MS 30000
+#define UNCOUNTED_MS 60000
+#define HELLO_MS 2000
+#define KEEP_MS 10000
 #define ONE_NAME L"FuseBoxSession"
 
 enum state
@@ -83,6 +90,10 @@ static struct
    int in_game;
    Uint32 refused[32];
    int refused_count;
+   /* Spacewar for Steam, while friends are being connected. */
+   SDL_Process *counted;
+   Uint64 counted_since, settled_since, count_at, hello_at;
+   int count_tries;
 } ses;
 
 /* Lines from the background FuseBox. */
@@ -152,6 +163,92 @@ static void set_state(enum state state)
    ses.since = SDL_GetTicks();
 }
 
+/* ---- Connecting ---------------------------------------------------------- */
+
+static void count_spacewar(bool on)
+{
+   if (on == (ses.counted != NULL))
+      return;
+   if (on)
+   {
+      char exe[1100];
+      const char *args[] = { exe, "--spacewar", NULL };
+      SDL_PropertiesID p = SDL_CreateProperties();
+
+      SDL_snprintf(exe, sizeof(exe), "%sfusebox.exe", SDL_GetBasePath());
+      SDL_SetPointerProperty(p, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
+      SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_APP);
+      SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_NULL);
+      SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_NULL);
+      ses.counted = SDL_CreateProcessWithProperties(p);
+      SDL_DestroyProperties(p);
+      ses.counted_since = SDL_GetTicks();
+      ses.settled_since = 0;
+   }
+   else
+   {
+      SDL_KillProcess(ses.counted, true);
+      SDL_WaitProcess(ses.counted, true, NULL);
+      SDL_DestroyProcess(ses.counted);
+      ses.counted = NULL;
+   }
+   SDL_Log("Connecting friends: %s", on ? ses.counted ? "Spacewar is shown meanwhile"
+         : "Spacewar can't be started" : "done, Spacewar isn't shown any more");
+}
+
+/* Requests to connect reach only what Steam counts as played. */
+static void look_at_links(void)
+{
+   Uint64 now = SDL_GetTicks();
+   int i, missing = 0;
+   bool hello = now >= ses.hello_at;
+
+   for (i = 0; i < ses.member_count; i++)
+   {
+      if (!steamnet_connected(ses.members[i]))
+         missing++;
+      if (hello)
+         steamnet_hello(ses.members[i]);
+   }
+   if (hello)
+      ses.hello_at = now + (missing ? HELLO_MS : KEEP_MS);
+   if (steamnet_counted())
+      return;
+   if (missing)
+   {
+      ses.settled_since = 0;
+      if (!ses.counted && now >= ses.count_at)
+         count_spacewar(true);
+      else if (ses.counted && now - ses.counted_since > COUNTED_MS)
+      {
+         count_spacewar(false);
+         ses.count_at = now + ((Uint64)UNCOUNTED_MS << SDL_min(ses.count_tries, 4));
+         ses.count_tries++;
+      }
+      return;
+   }
+   ses.count_tries = 0;
+   ses.count_at = 0;
+   if (!ses.settled_since)
+      ses.settled_since = SDL_max(now, 1);
+   if (ses.counted && now - ses.settled_since >= SETTLED_MS)
+      count_spacewar(false);
+}
+
+int session_count(void)
+{
+   HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
+   char c;
+   DWORD got;
+
+   if (!steamnet_count(APP))
+      return 1;
+   while (ReadFile(h, &c, 1, &got, NULL) && got == 1)
+      ;
+   steamnet_close();
+   return 0;
+}
+
 static void end_session(const char *why)
 {
    int i;
@@ -159,6 +256,9 @@ static void end_session(const char *why)
    if (ses.state == IDLE)
       return;
    SDL_Log("Session over: %s", why);
+   count_spacewar(false);
+   ses.count_at = ses.hello_at = ses.settled_since = 0;
+   ses.count_tries = 0;
    tunnel_destroy(ses.tunnel);
    ses.tunnel = NULL;
    inject_lan(NULL, 0, 0, 0);
@@ -328,6 +428,14 @@ static void look_at_members(void)
          ;
       if (k == count)
          steamnet_hang_up(ses.members[i]);
+   }
+   /* Somebody's new: connected now, not after a wait for another. */
+   for (i = 0; i < count; i++)
+   {
+      for (k = 0; k < ses.member_count && ses.members[k] != ids[i]; k++)
+         ;
+      if (k == ses.member_count)
+         ses.count_at = ses.hello_at = 0;
    }
    SDL_memcpy(ses.members, ids, sizeof(*ids) * (size_t)count);
    ses.member_count = count;
@@ -688,6 +796,7 @@ static bool look(void)
          if (!ses.game)
             ses.game = lan_game(ses.config_dir, ses.appid, "");
          look_at_members();
+         look_at_links();
          number_players();
          /* Not now: that's before what look_at_members just set it to. */
          if (SDL_GetTicks() - ses.alone_since > (ses.had_guests ? LEFT_MS : ALONE_MS))
@@ -717,6 +826,7 @@ static bool look(void)
             return true;
          }
          look_at_members();
+         look_at_links();
          read_players();
          read_host_ports();
          if (!ses.started)
@@ -822,6 +932,11 @@ int session_run(const char *data_dir, const char *config_dir)
 }
 
 #else
+
+int session_count(void)
+{
+   return 0;
+}
 
 int session_run(const char *data_dir, const char *config_dir)
 {

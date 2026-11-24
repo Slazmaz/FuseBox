@@ -3930,6 +3930,8 @@ int main(int argc, char **argv)
       SDL_Quit();
       return code;
    }
+   if (argc == 2 && SDL_strcmp(argv[1], "--spacewar") == 0)
+      return session_count();
    if (argc == 2 && SDL_strcmp(argv[1], "--background") == 0)
    {
       int code;
