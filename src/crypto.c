@@ -323,3 +323,73 @@ void sha1(const void *data, size_t size, Uint8 digest[20])
    for (i = 0; i < 5; i++)
       store_be32(digest + i * 4, h[i]);
 }
+
+/* --- SHA-256 --- */
+
+static Uint32 ror(Uint32 x, int n)
+{
+   return (x >> n) | (x << (32 - n));
+}
+
+static void sha256_block(Uint32 h[8], const Uint8 *p)
+{
+   static const Uint32 k[64] = {
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+   };
+   Uint32 w[64], s[8], a, b;
+   int i;
+
+   for (i = 0; i < 16; i++)
+      w[i] = load_be32(p + i * 4);
+   for (i = 16; i < 64; i++)
+      w[i] = w[i - 16] + w[i - 7]
+         + (ror(w[i - 15], 7) ^ ror(w[i - 15], 18) ^ (w[i - 15] >> 3))
+         + (ror(w[i - 2], 17) ^ ror(w[i - 2], 19) ^ (w[i - 2] >> 10));
+   SDL_memcpy(s, h, sizeof(s));
+   for (i = 0; i < 64; i++)
+   {
+      a = s[7] + (ror(s[4], 6) ^ ror(s[4], 11) ^ ror(s[4], 25)) + ((s[4] & s[5]) ^ (~s[4] & s[6]))
+         + k[i] + w[i];
+      b = (ror(s[0], 2) ^ ror(s[0], 13) ^ ror(s[0], 22))
+         + ((s[0] & s[1]) ^ (s[0] & s[2]) ^ (s[1] & s[2]));
+      SDL_memmove(s + 1, s, sizeof(*s) * 7);
+      s[4] += a;
+      s[0] = a + b;
+   }
+   for (i = 0; i < 8; i++)
+      h[i] += s[i];
+}
+
+void sha256(const void *data, size_t size, Uint8 digest[32])
+{
+   Uint32 h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c,
+      0x1f83d9ab, 0x5be0cd19 };
+   const Uint8 *p = data;
+   Uint8 last[128] = { 0 };
+   size_t rest = size % 64, tail;
+   Uint64 bits = (Uint64)size * 8;
+   int i;
+
+   for (; size >= 64; size -= 64, p += 64)
+      sha256_block(h, p);
+
+   /* Padded as SHA-1 is. */
+   SDL_memcpy(last, p, rest);
+   last[rest] = 0x80;
+   tail = rest < 56 ? 64 : 128;
+   for (i = 0; i < 8; i++)
+      last[tail - 1 - i] = (Uint8)(bits >> (i * 8));
+   sha256_block(h, last);
+   if (tail == 128)
+      sha256_block(h, last + 64);
+
+   for (i = 0; i < 8; i++)
+      store_be32(digest + i * 4, h[i]);
+}

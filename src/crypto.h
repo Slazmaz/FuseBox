@@ -4,7 +4,8 @@
 #include <SDL3/SDL_stdinc.h>
 
 /* Just enough crypto to identify games: AES-128 to rebuild Wii discs
- * from RVZ and to read Switch NCAs, SHA-1 for Wii hash trees. */
+ * from RVZ and to read Switch NCAs, SHA-1 for Wii hash trees; SHA-256 to
+ * check what's downloaded (update.c). */
 
 struct aes128
 {
@@ -26,5 +27,6 @@ void aes128_xts_decrypt(const Uint8 key[32], Uint64 first_sector, size_t sector_
       Uint8 *data, size_t size);
 
 void sha1(const void *data, size_t size, Uint8 digest[20]);
+void sha256(const void *data, size_t size, Uint8 digest[32]);
 
 #endif
