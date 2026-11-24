@@ -1,4 +1,5 @@
 #include "http.h"
+#include "version.h"
 
 #include <SDL3/SDL.h>
 #include <curl/curl.h>
@@ -33,7 +34,8 @@ static bool init(void)
    if (SDL_ShouldInit(&init_state))
    {
       ready = curl_global_init(CURL_GLOBAL_DEFAULT) == CURLE_OK;
-      SDL_snprintf(default_agent, sizeof(default_agent), "FuseBox/0.1 (%s)", SDL_GetPlatform());
+      SDL_snprintf(default_agent, sizeof(default_agent), "FuseBox/" FUSEBOX_VERSION " (%s)",
+            SDL_GetPlatform());
       for (i = 0; i < CURL_LOCK_DATA_LAST; i++)
          share_locks[i] = SDL_CreateMutex();
       if (ready && (share = curl_share_init()))

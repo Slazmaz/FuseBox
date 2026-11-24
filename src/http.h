@@ -10,7 +10,7 @@
 
 /* GET, or POST when post isn't NULL. header: one extra header line
  * ("Authorization: Bearer ..."), or NULL. user_agent NULL means
- * "FuseBox/0.1 (<platform>)". Setting *abort cuts the transfer short.
+ * "FuseBox/<version> (<platform>)". Setting *abort cuts the transfer short.
  * *body is NUL-terminated, SDL_free'd by the caller. Returns the HTTP
  * status, or -1 when the network failed or the transfer was aborted. */
 int http_request(const char *url, const char *post, const char *header,

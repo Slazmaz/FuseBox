@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(fusebox C)
+project(fusebox VERSION 0.1 LANGUAGES C)
+
+# The version, above, is in version.h, for the code and the exes.
+if(NOT PROJECT_VERSION_PATCH)
+   set(PROJECT_VERSION_PATCH 0)
+endif()
+configure_file(src/version.h.in ${CMAKE_BINARY_DIR}/generated/version.h @ONLY)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -77,7 +83,7 @@ add_library(fusebox_core STATIC
    src/steamnet.c
    src/session.c
 )
-target_include_directories(fusebox_core PUBLIC src)
+target_include_directories(fusebox_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
 if(WIN32)
    # More sockets to wait on than Windows' 64.
@@ -110,7 +116,7 @@ if(WIN32)
    add_dependencies(fusebox fuseboxlan)
 endif()
 
-# The app icon, in both exes.
+# The app icon and version, in both exes.
 if(WIN32)
    enable_language(RC)
    target_sources(fusebox PRIVATE src/fusebox.rc)

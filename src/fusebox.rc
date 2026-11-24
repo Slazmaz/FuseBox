@@ -1,2 +1,27 @@
+#include "version.h"
+
 // The .exe's icon (Explorer, shortcuts), drawn by tools/make_icon.py.
 1 ICON "fusebox.ico"
+
+// And its version, as Explorer shows it.
+1 VERSIONINFO
+FILEVERSION FUSEBOX_VERSION_NUMBERS
+PRODUCTVERSION FUSEBOX_VERSION_NUMBERS
+FILEOS 0x40004L
+FILETYPE 1
+BEGIN
+   BLOCK "StringFileInfo"
+   BEGIN
+      BLOCK "040904B0"
+      BEGIN
+         VALUE "FileDescription", "FuseBox"
+         VALUE "ProductName", "FuseBox"
+         VALUE "FileVersion", FUSEBOX_VERSION
+         VALUE "ProductVersion", FUSEBOX_VERSION
+      END
+   END
+   BLOCK "VarFileInfo"
+   BEGIN
+      VALUE "Translation", 0x409, 1200
+   END
+END
