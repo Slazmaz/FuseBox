@@ -15,8 +15,6 @@
 struct rom_folder
 {
    char path[1024];
-   /* The system of what's in it, empty to tell by each ROM. */
-   char system[32];
    /* Found by the scan (not added by the user). */
    bool found;
 };
@@ -45,12 +43,8 @@ const struct rom_folder *roms_folder(int i);
 /* These take effect with the next scan. */
 void roms_add_folder(const char *path);
 void roms_remove_folder(int i);
-void roms_set_folder_system(int i, const char *system);
 /* Files the last scan couldn't tell the system of. */
 int roms_unknown(void);
-
-int roms_system_count(void);
-const char *roms_system_name(int system);
 
 /* The game's options, at most max of them; returns how many it has. */
 int roms_options(const struct game *g, const struct rom_option **out, int max);

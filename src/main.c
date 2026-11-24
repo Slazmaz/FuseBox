@@ -810,8 +810,7 @@ enum modal
    MODAL_MATCH,
    MODAL_STEAM,
    MODAL_GAME,
-   /* Picks a ROM folder's system, or a game's emulator. */
-   MODAL_SYSTEM,
+   /* Picks a game's emulator. */
    MODAL_EMULATOR
 };
 
@@ -915,7 +914,7 @@ static struct
    float settings_scroll, settings_most;
    /* What was wrong with the last emulator picked, if anything. */
    char emulator_note[128];
-   /* The folder or game MODAL_SYSTEM or MODAL_EMULATOR is for. */
+   /* The game MODAL_EMULATOR is for. */
    int modal_item;
    float modal_scroll;
    /* A game's name while it's edited on its page: whose, and where. */
@@ -2437,8 +2436,8 @@ static void open_list_modal(enum modal modal, int what)
    app.modal_scroll = 0;
 }
 
-/* The ROM folders: each with its system (or told by each ROM), and an x
- * to leave it out. Returns the card's height. */
+/* The ROM folders, each with an x to leave it out. Returns the card's
+ * height. */
 static float draw_rom_folders(float x, float y, float w)
 {
    float row = S(48), cy, h;
@@ -2456,13 +2455,10 @@ static float draw_rom_folders(float x, float y, float w)
    for (i = 0; i < n; i++, cy += row)
    {
       const struct rom_folder *f = roms_folder(i);
-      const char *system = f->system[0] ? f->system : "Any system";
-      float bw = button_w(system), xx = x + w - S(24) - S(36);
+      float xx = x + w - S(24) - S(36);
 
-      ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(48) - S(56) - bw, C_TEXT, 1,
+      ui_text(UI_MEDIUM, S(15), x + S(24), cy + S(20), UI_LEFT, w - S(48) - S(48), C_TEXT, 1,
             f->path);
-      if (button(xx - S(8) - bw, cy, bw, S(40), system, false, true, false))
-         open_list_modal(MODAL_SYSTEM, i);
       if (hover(xx, cy, S(36), S(40)))
          ui_rect(xx, cy, S(36), S(40), S(12), 1, 1, 1, 0.09f);
       draw_icon(ICON_CLOSE, xx + S(18), cy + S(20), 15, C_TEXT, 0.8f);
@@ -2473,7 +2469,7 @@ static float draw_rom_folders(float x, float y, float w)
    if (unknown)
    {
       SDL_snprintf(line, sizeof(line), "%d file%s of no known system: name %s folder for the system "
-            "(PSX, SNES...), or pick it above.", unknown, unknown == 1 ? "" : "s",
+            "(PSX, SNES...).", unknown, unknown == 1 ? "" : "s",
             unknown == 1 ? "its" : "their");
       ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(18), UI_LEFT, w - S(48), C_DIM, 1, line);
       cy += S(46);
@@ -2819,8 +2815,7 @@ static void draw_game_settings(void)
 }
 
 /* One of a list, each with a smaller line under it (empty for none):
- * which was clicked, -1 none, -2 closed, -3 the other button (extra, NULL
- * for none). */
+ * which was clicked, -1 none, -2 closed, -3 the other button (extra). */
 static int draw_list_modal(const char *title, const char *const *labels, const char *const *subs,
       int count, int current, const char *extra)
 {
@@ -2860,37 +2855,9 @@ static int draw_list_modal(const char *title, const char *const *labels, const c
    glDisable(GL_SCISSOR_TEST);
    if (button(x + w - S(28) - S(110), y + h - S(62), S(110), S(42), "Cancel", false, true, true))
       return -2;
-   if (extra && button(x + S(28), y + h - S(62), button_w(extra), S(42), extra, false, true, true))
+   if (button(x + S(28), y + h - S(62), button_w(extra), S(42), extra, false, true, true))
       return -3;
    return clicked;
-}
-
-static void draw_system_modal(void)
-{
-   const char *labels[64], *subs[64];
-   int i, n = SDL_min(roms_system_count() + 1, 64), current = 0, picked = -2;
-   const struct rom_folder *f;
-
-   library_lock();
-   if ((f = roms_folder(app.modal_item)))
-   {
-      for (i = 0; i < n; i++)
-      {
-         labels[i] = i ? roms_system_name(i - 1) : "Any system";
-         subs[i] = i ? "" : "Told by folder names, file types and what's on each disc";
-         if (i && SDL_strcmp(f->system, labels[i]) == 0)
-            current = i;
-      }
-      picked = draw_list_modal("What's in this folder?", labels, subs, n, current,
-            NULL);
-      if (picked >= 0)
-         roms_set_folder_system(app.modal_item, picked ? labels[picked] : "");
-   }
-   library_unlock();
-   if (picked != -1)
-      close_modal();
-   if (picked >= 0)
-      rescan(true);
 }
 
 static void draw_emulator_modal(void)
@@ -2930,11 +2897,6 @@ static void draw_modal(void)
    float x, y, w, h;
    int i;
 
-   if (app.modal == MODAL_SYSTEM)
-   {
-      draw_system_modal();
-      return;
-   }
    if (app.modal == MODAL_EMULATOR)
    {
       draw_emulator_modal();

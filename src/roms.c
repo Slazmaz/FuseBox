@@ -334,15 +334,13 @@ static void save(void)
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", tmp, SDL_GetError());
       return;
    }
-   /* Found folders are found again, but for a system picked for one. */
+   /* Found folders are found again. */
    SDL_IOprintf(io, "{\n  \"folders\": [");
    for (i = n = 0; i < cfg.folder_count; i++)
-      if (!cfg.folders[i].found || cfg.folders[i].system[0])
+      if (!cfg.folders[i].found)
       {
          SDL_IOprintf(io, "%s\n    { \"path\": ", n++ ? "," : "");
          json_write_string(io, cfg.folders[i].path);
-         SDL_IOprintf(io, ", \"system\": ");
-         json_write_string(io, cfg.folders[i].system);
          SDL_IOprintf(io, " }");
       }
    SDL_IOprintf(io, "\n  ],\n  \"ignored\": [");
@@ -386,10 +384,7 @@ void roms_init(const char *config_dir)
    {
       struct rom_folder *f;
       if (json_str(o, "path", "")[0] && (f = grow(&cfg.folders, &cfg.folder_count, sizeof(*f))))
-      {
          SDL_strlcpy(f->path, json_str(o, "path", ""), sizeof(f->path));
-         SDL_strlcpy(f->system, json_str(o, "system", ""), sizeof(f->system));
-      }
    }
    for (o = list_of(root, "ignored"); o; o = o->next)
    {
@@ -472,27 +467,9 @@ void roms_remove_folder(int i)
    save();
 }
 
-void roms_set_folder_system(int i, const char *system)
-{
-   if (!roms_folder(i))
-      return;
-   SDL_strlcpy(cfg.folders[i].system, system, sizeof(cfg.folders[i].system));
-   save();
-}
-
 int roms_unknown(void)
 {
    return cfg.unknown;
-}
-
-int roms_system_count(void)
-{
-   return SYSTEMS;
-}
-
-const char *roms_system_name(int system)
-{
-   return systems[system].name;
 }
 
 int roms_options(const struct game *g, const struct rom_option **out, int max)
@@ -1667,10 +1644,7 @@ int scan_roms(void)
    }
    library_unlock();
    for (i = 0; i < count; i++)
-   {
-      n = folders[i].system[0] ? system_by_name(folders[i].system) : -1;
-      rom_dir(&sc, folders[i].path, n >= 0 ? n : system_by_folder(base_name(folders[i].path)), 0);
-   }
+      rom_dir(&sc, folders[i].path, system_by_folder(base_name(folders[i].path)), 0);
    SDL_free(folders);
 
    /* One file per game, the one to start it with. */
