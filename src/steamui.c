@@ -20,7 +20,7 @@ void steamui_start(const struct steam_install *steam)
    int port = 0;
 
    /* Another one each time: not to be found by what looks for a usual one. */
-   if (ra_active())
+   if (steam_menus())
       port = 20000 + (int)SDL_rand(40000);
    if (port || steam_port())
       steam_set_port(port);
@@ -101,7 +101,7 @@ static bool evaluate(const char *url, const char *script, char *result, size_t s
    return ok;
 }
 
-/* A shortcut with achievements. */
+/* A shortcut with achievements to show. */
 struct shown
 {
    Uint32 appid;
@@ -111,11 +111,12 @@ struct shown
 static struct shown *collect(int *count)
 {
    struct shown *games;
+   bool shown = ra_active();
    int i, n = 0;
 
    library_lock();
    games = SDL_calloc((size_t)SDL_max(1, library_count()), sizeof(*games));
-   for (i = 0; games && i < library_count(); i++)
+   for (i = 0; games && shown && i < library_count(); i++)
    {
       const struct game *g = library_game(i);
       if (!g->steam_appid || !g->ra_id || !g->ra_total || !g->rom[0])

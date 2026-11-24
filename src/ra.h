@@ -22,7 +22,8 @@ bool ra_login(const char *user, const char *password, SDL_AtomicInt *abort, char
 /* Forgets the account, and the achievements known of games. */
 void ra_logout(void);
 
-/* Whether Steam shows them (steamui.h); on until turned off. */
+/* Whether Steam shows them, where content is added to its menus at all
+ * (steam_menus); on until turned off. */
 bool ra_in_steam(void);
 void ra_set_in_steam(bool on);
 /* Logged in, with that on. */

@@ -1,14 +1,14 @@
 #ifndef FUSEBOX_BACKGROUND_H
 #define FUSEBOX_BACKGROUND_H
 
-/* The FuseBox without a window (fusebox --background): while achievements
- * are to be shown in Steam it waits for Steam, however that's started, and
- * gives it them (steamui.h), again whenever Steam forgot them or a game
+/* The FuseBox without a window (fusebox --background): while content is
+ * to be added to Steam's menus it waits for Steam, however that's started, and
+ * gives it that (steamui.h), again whenever Steam forgot it or a game
  * ended. Started with the computer, or by a game (background_game). */
 
 /* Makes the computer match the settings: the file that has Steam open its
  * port, starting with the computer, and the background one running now. Run
- * it when they or the login change, and at the start. */
+ * it when they change, and at the start. */
 void background_apply(void);
 
 /* fusebox --background: until it's no longer wanted. data_dir: FuseBox's

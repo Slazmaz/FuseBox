@@ -38,7 +38,7 @@ void background_apply(void)
 {
    const struct steam_install *st = steam_install();
    char path[1100];
-   bool active = ra_active();
+   bool active = steam_menus();
 
    if (st)
    {
@@ -85,7 +85,7 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       /* As the window left them. */
       ra_init(config_dir);
       steam_read_settings(config_dir);
-      if (!ra_active())
+      if (!steam_menus())
          return;
       if (!(st = steam_install()) && !(steam_init() && (st = steam_install())))
          continue;
@@ -114,12 +114,12 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
          continue;
       }
       only_friends = state == STEAMUI_OK && pushed && !ended && now - pushed < REFRESH_MS;
-      if (only_friends && now - friends < FRIENDS_MS)
+      if (only_friends && (!ra_active() || now - friends < FRIENDS_MS))
          continue;
       /* Read again each time, and never written: the window's is newer. */
       if (!library_init(data_dir))
          continue;
-      if (!only_friends)
+      if (!only_friends && ra_active())
          ra_refresh(ended, NULL);
       state = steamui_push(only_friends, &games, NULL);
       library_discard();
@@ -179,7 +179,8 @@ int background_run(const char *data_dir, const char *config_dir)
       return 0;
    /* No icon just to take it away again. */
    ra_init(config_dir);
-   if (!ra_active())
+   steam_read_settings(config_dir);
+   if (!steam_menus())
       return 0;
    platform_tray_start();
    SDL_SetAtomicInt(&stop, 0);
@@ -300,7 +301,7 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
       return 1;
    }
-   if (ra_active())
+   if (steam_menus())
       platform_start_background(true);
    history_playing(data_dir);
    if (!platform_run_game(s.exe, s.args, s.dir, argv, old ? 3 : 2, &code))

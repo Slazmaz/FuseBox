@@ -16,8 +16,12 @@ const struct steam_install *steam_install(void);
 /* The settings, in <config>/steam.json. After ra_init (older FuseBoxes kept
  * them with the achievements'). Again to read them again. */
 void steam_read_settings(const char *config_dir);
-/* Whether FuseBox starts with the computer to show achievements (background.h);
- * on until turned off. */
+/* Whether content is added to Steam's menus (steamui.h). Off until turned
+ * on: the port it needs is open to every program on the computer. */
+bool steam_menus(void);
+void steam_set_menus(bool on);
+/* Whether FuseBox starts with the computer for that (background.h); on until
+ * turned off. */
 bool steam_autostart(void);
 void steam_set_autostart(bool on);
 /* Whether FuseBox made the file that has Steam open its port. */

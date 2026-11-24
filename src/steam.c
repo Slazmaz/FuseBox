@@ -17,7 +17,7 @@ static struct
    char config[1024];
    /* Under lock. */
    SDL_Mutex *lock;
-   bool autostart, made_file;
+   bool menus, autostart, made_file;
    int port;
 } set;
 
@@ -34,8 +34,9 @@ static void save_settings(void)
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
       return;
    }
-   SDL_IOprintf(io, "{\n  \"autostart\": %s,\n  \"made_file\": %s,\n  \"port\": %d\n}\n",
-         set.autostart ? "true" : "false", set.made_file ? "true" : "false", set.port);
+   SDL_IOprintf(io, "{\n  \"menus\": %s,\n  \"autostart\": %s,\n  \"made_file\": %s,\n"
+         "  \"port\": %d\n}\n", set.menus ? "true" : "false", set.autostart ? "true" : "false",
+         set.made_file ? "true" : "false", set.port);
    SDL_CloseIO(io);
 }
 
@@ -49,7 +50,7 @@ void steam_read_settings(const char *config_dir)
    if (!set.lock)
       set.lock = SDL_CreateMutex();
    SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "steam.json", config_dir);
-   /* They were the achievements'. */
+   /* They were the achievements', and on with a login. */
    if ((old = !platform_exists(path)))
       SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "retroachievements.json", config_dir);
    text = SDL_LoadFile(path, NULL);
@@ -58,11 +59,12 @@ void steam_read_settings(const char *config_dir)
    /* One being written just now can't be read: as they were. */
    if (root || old)
    {
+      set.menus = old ? ra_active() : json_bool(root, "menus", false);
       set.autostart = !root || json_bool(root, "autostart", true);
       set.made_file = root && json_bool(root, "made_file", false);
       set.port = root ? (int)json_num(root, "port", 0) : 0;
    }
-   /* Now, as the achievements' are written without them. */
+   /* Now, or a later login would turn the menus on. */
    if (old)
       save_settings();
    SDL_UnlockMutex(set.lock);
@@ -86,6 +88,16 @@ static void change_setting(bool *value, bool on)
    *value = on;
    save_settings();
    SDL_UnlockMutex(set.lock);
+}
+
+bool steam_menus(void)
+{
+   return get_setting(&set.menus);
+}
+
+void steam_set_menus(bool on)
+{
+   change_setting(&set.menus, on);
 }
 
 bool steam_autostart(void)

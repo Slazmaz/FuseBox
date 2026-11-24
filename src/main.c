@@ -655,11 +655,12 @@ static bool wanted_in_steam(const struct game *g)
 struct achievements_job
 {
    /* Steam was just started: give it time. Asked by the user: ask
-    * RetroAchievements whatever it said minutes ago. */
-   bool wait, force;
+    * RetroAchievements whatever it said minutes ago. Take back what Steam
+    * has first: less is shown now. */
+   bool wait, force, clear;
 };
 
-/* RetroAchievements of the ROMs, then Steam given them. */
+/* RetroAchievements of the ROMs, then Steam's menus given what's theirs. */
 static void job_achievements(void *data)
 {
    struct achievements_job *j = data;
@@ -672,12 +673,16 @@ static void job_achievements(void *data)
 
    library_save();
    note[0] = '\0';
-   if (ra_active())
+   if (j->clear)
+      steamui_clear(jobs_abort());
+   if (steam_menus())
    {
       while ((shown = steamui_push(false, &games, jobs_abort())) <= STEAMUI_WAIT
             && SDL_GetTicks() < until && !SDL_GetAtomicInt(jobs_abort()))
          SDL_Delay(1000);
-      if (shown == STEAMUI_OK)
+      if (shown == STEAMUI_OK && !ra_active())
+         SDL_strlcpy(note, "Added to Steam's menus", sizeof(note));
+      else if (shown == STEAMUI_OK)
          SDL_snprintf(note, sizeof(note), "Steam shows the achievements of %d game%s", games,
                games == 1 ? "" : "s");
       else if (shown == STEAMUI_UNSUPPORTED)
@@ -685,7 +690,7 @@ static void job_achievements(void *data)
       else if (shown == STEAMUI_WAIT)
          SDL_strlcpy(note, "Steam isn't ready yet", sizeof(note));
       else
-         SDL_strlcpy(note, "Restart Steam to show them", sizeof(note));
+         SDL_strlcpy(note, "Restart Steam to show it", sizeof(note));
    }
    if (!ok && ra_user(user, sizeof(user)))
       SDL_strlcpy(note, "Couldn't get everything from RetroAchievements", sizeof(note));
@@ -697,7 +702,7 @@ static void job_achievements(void *data)
    SDL_free(j);
 }
 
-static void start_achievements(bool wait, bool force)
+static void start_achievements(bool wait, bool force, bool clear)
 {
    struct achievements_job *j = SDL_calloc(1, sizeof(*j));
 
@@ -705,6 +710,7 @@ static void start_achievements(bool wait, bool force)
       return;
    j->wait = wait;
    j->force = force;
+   j->clear = clear;
    jobs_add(job_achievements, j, JOB_NOW, false);
 }
 
@@ -788,8 +794,8 @@ static void job_steam(void *data)
    if (st && (was_running || j->only_restart) && !platform_steam_running(st))
    {
       steamui_start(st);
-      if (ra_active())
-         start_achievements(true, false);
+      if (steam_menus())
+         start_achievements(true, false, false);
    }
    SDL_free(j);
 }
@@ -915,10 +921,10 @@ static struct
    char filter[128];
    char key[128];
    /* Logging in to RetroAchievements, and what came of it; and how far
-    * showing achievements in Steam is. */
+    * adding to Steam's menus is. */
    char ra_user[128], ra_password[256];
    bool ra_busy;
-   char ra_error[128], ra_note[128];
+   char ra_error[128], menus_note[128];
    /* MODAL_STEAM: only to restart it. */
    bool only_restart;
    char match[256];
@@ -2618,9 +2624,8 @@ static void draw_login(float x, float y, float w, bool in, const char *user)
       if (button(rx - bw, y, bw, S(36), "Log out", false, true, false))
       {
          ra_logout();
-         background_apply();
-         app.ra_note[0] = '\0';
-         jobs_add(job_clear_steam, NULL, JOB_NOW, false);
+         app.menus_note[0] = '\0';
+         start_achievements(false, false, true);
       }
       return;
    }
@@ -2636,41 +2641,51 @@ static void draw_login(float x, float y, float w, bool in, const char *user)
       ui_text(UI_MEDIUM, S(13), x, y + S(60), UI_LEFT, w, C_DIM, 1, "Logging in...");
 }
 
-/* Steam: where it is, and the achievements it shows. Returns the card's
+/* Steam: where it is, and what's added to its menus. Returns the card's
  * height. */
 static float draw_steam_card(float x, float y, float w)
 {
-   static const char autostart[] = "FuseBox needs to be running to show achievements in Steam. If"
+   static const char menus[] = "Activity, achievements and buttons on games' pages in your library."
+      " This opens a debugging port to access Steam.";
+   static const char autostart[] = "FuseBox needs to be running to add content to Steam menus. If"
       " toggled off FuseBox will not open until manually opened or starting a game added to Steam"
       " with FuseBox.";
    char user[128];
-   bool in = ra_user(user, sizeof(user)), on = ra_active(), running;
+   bool on = steam_menus(), in = ra_user(user, sizeof(user)), running;
    const char *shown = in ? "On ROMs' pages in your library, with friends who play them and"
-      " leaderboards. This opens a debugging port to access Steam."
-      : "On ROMs' pages in your library, with friends who play them and leaderboards. This opens a"
-      " debugging port to access Steam. Log in to retroachievements.org; the password isn't kept.";
-   float ah = setting_h(w, autostart);
+      " leaderboards." : "On ROMs' pages in your library, with friends who play them and leaderboards."
+      " Log in to retroachievements.org; the password isn't kept.";
+   float mh = setting_h(w, menus), ah = setting_h(w, autostart);
    float sh = setting_h(w, shown), lh = login_h(in), cy, bw, fw, rx = x + w - S(24);
-   float h = S(58) + S(28) + sh + lh + S(12) + ah + S(22)
-      + (on ? S(52) : app.ra_note[0] ? S(26) : 0);
+   float h = S(58) + S(28) + mh + S(12) + sh + lh + S(12) + ah + S(22)
+      + (on ? S(52) : app.menus_note[0] ? S(26) : 0);
 
    cy = settings_card(x, y, w, h, "Steam");
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
          steam_install() ? steam_install()->config : "Not found");
    cy += S(28);
-   if (setting_row(x, cy, w, "Show RetroAchievements in Steam", shown, lh, on, in))
+   if (setting_row(x, cy, w, "Add content to Steam menus", menus, 0, on, true))
    {
-      ra_set_in_steam(!on);
+      steam_set_menus(!on);
       background_apply();
-      app.ra_note[0] = '\0';
-      if (on)
+      app.menus_note[0] = '\0';
+      if (!on)
+         start_achievements(false, false, false);
+      else
       {
          /* The port itself stays until Steam restarts. */
-         SDL_strlcpy(app.ra_note, "Restart Steam to close its port", sizeof(app.ra_note));
+         SDL_strlcpy(app.menus_note, "Restart Steam to close its port", sizeof(app.menus_note));
          jobs_add(job_clear_steam, NULL, JOB_NOW, false);
       }
-      else
-         start_achievements(false, false);
+   }
+   cy += mh + S(12);
+   if (setting_row(x, cy, w, "Show RetroAchievements in Steam", shown, lh, ra_in_steam(), on))
+   {
+      bool was = ra_in_steam();
+
+      ra_set_in_steam(!was);
+      app.menus_note[0] = '\0';
+      start_achievements(false, false, was);
    }
    /* Never grey: FuseBox shows achievements too. */
    draw_login(x + S(36), cy + sh, w - S(72), in, user);
@@ -2687,7 +2702,7 @@ static float draw_steam_card(float x, float y, float w)
       bw = button_w(running ? "Restart Steam" : "Start Steam");
       fw = button_w("Refresh");
       ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(20), UI_LEFT, w - S(72) - bw - fw, C_DIM, 1,
-            app.ra_note);
+            app.menus_note);
       if (button(rx - bw, cy, bw, S(40), running ? "Restart Steam" : "Start Steam", false,
                steam_install() && !app.busy, false))
       {
@@ -2699,12 +2714,13 @@ static float draw_steam_card(float x, float y, float w)
       }
       if (button(rx - bw - S(8) - fw, cy, fw, S(40), "Refresh", false, true, false))
       {
-         SDL_strlcpy(app.ra_note, "Refreshing...", sizeof(app.ra_note));
-         start_achievements(false, true);
+         SDL_strlcpy(app.menus_note, "Refreshing...", sizeof(app.menus_note));
+         start_achievements(false, true, false);
       }
    }
-   else if (app.ra_note[0])
-      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(12), UI_LEFT, w - S(48), C_DIM, 1, app.ra_note);
+   else if (app.menus_note[0])
+      ui_text(UI_MEDIUM, S(13), x + S(24), cy + S(12), UI_LEFT, w - S(48), C_DIM, 1,
+            app.menus_note);
    return h;
 }
 
@@ -3091,7 +3107,7 @@ static void handle_msg(struct msg *m)
          SDL_strlcpy(app.status, m->text, sizeof(app.status));
          app.view_built_for = -1;
          start_fill();
-         start_achievements(false, false);
+         start_achievements(false, false, false);
          if (app.scan_again && !app.busy)
          {
             app.scan_again = false;
@@ -3219,12 +3235,11 @@ static void handle_msg(struct msg *m)
          if (m->count)
          {
             app.ra_user[0] = '\0';
-            background_apply();
-            start_achievements(false, true);
+            start_achievements(false, true, false);
          }
          break;
       case MSG_ACHIEVEMENTS:
-         SDL_strlcpy(app.ra_note, m->text, sizeof(app.ra_note));
+         SDL_strlcpy(app.menus_note, m->text, sizeof(app.menus_note));
          break;
       case MSG_STEAM_DONE:
          app.busy = false;
@@ -3472,8 +3487,8 @@ static void SDLCALL log_to_file(void *user, int category, SDL_LogPriority priori
    }
 }
 
-/* fusebox --steam: starts Steam (unless it runs) showing achievements as
- * the settings say, with no window; ends once Steam has them. */
+/* fusebox --steam: starts Steam (unless it runs) with what the settings
+ * add to its menus, with no window; ends once Steam has them. */
 static int start_steam(void)
 {
    const struct steam_install *st = steam_install();
@@ -3489,7 +3504,7 @@ static int start_steam(void)
       steamui_start(st);
       started = true;
    }
-   if (!ra_active())
+   if (!steam_menus())
       return 0;
    ra_refresh(false, NULL);
    /* The window's to write. */
