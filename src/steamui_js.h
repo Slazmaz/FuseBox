@@ -714,8 +714,11 @@
    "      const invite = props && props.gameInvite, friend = props && props.inviter;\n" \
    "      if (fromFusebox(invite) && friend && ui && friend !== ui.FriendStore.self && friend.persona && friend.persona.is_ingame)\n" \
    "         return [type, { ...props, inviter: hostOf(friend, invite.appID) }];\n" \
+   "      /* An invite's picture is made right before its name: the name alone may be\n" \
+   "         one of Steam's games' too. */\n" \
+   "      if (props && typeof props.strClassNames === 'string' && 'appID' in props) drawn = props.appID;\n" \
    "      /* The game's name on it, and what it's with, small. */\n" \
-   "      if (type === 'div' && props && props.className === 'productName' && titles.has(props.children))\n" \
+   "      if (type === 'div' && props && props.className === 'productName' && (drawn >= ABSENT || lanGames.has(drawn)))\n" \
    "         return [type, { ...props, children: react.createElement(react.Fragment, null, props.children,\n" \
    "            react.createElement('span', { style: { marginLeft: '8px', fontSize: '11px', opacity: 0.5 } }, 'FuseBox')) }];\n" \
    "      if (props && typeof props.strClassNames === 'string' && (props.appID >= ABSENT || lanGames.has(props.appID))) {\n" \
@@ -727,8 +730,8 @@
    "      return [type, props];\n" \
    "   };\n" \
    "   let fresh = { app: 0, until: 0 };\n" \
-   "   /* Names of games invites were to. */\n" \
-   "   const titles = new Set();\n" \
+   "   /* The app whose invite is being drawn. */\n" \
+   "   let drawn = 0;\n" \
    "   /* A function of Steam's, replaced by one that may leave it to it. */\n" \
    "   const around = (o, name, mine) => {\n" \
    "      const was = Object.getOwnPropertyDescriptor(o, name), f = o[name];\n" \
@@ -813,9 +816,7 @@
    "         around(ui.AppInfoStore, 'GetAppInfo', function(steams, app) {\n" \
    "            if (app === SPACEWAR && fresh.app && Date.now() < fresh.until) return infoOf(fresh.app, steams(SPACEWAR));\n" \
    "            if (!lanGames.has(app) && !(app >= ABSENT)) return steams(app);\n" \
-   "            const info = infoOf(app, steams(SPACEWAR));\n" \
-   "            titles.add(info.name);\n" \
-   "            return info;\n" \
+   "            return infoOf(app, steams(SPACEWAR));\n" \
    "         });\n" \
    "      } catch (e) { }\n" \
    "   };\n" \
