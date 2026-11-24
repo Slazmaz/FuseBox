@@ -303,6 +303,16 @@ static bool unpack(const Uint8 *zip, size_t total, const struct entry *e, const 
 
 void update_init(const char *data_dir, const char *config_dir)
 {
+#ifdef _WIN32
+   /* What came along until 0.1.2. */
+   static const char *const once[] = { "SDL3.dll", "fuseboxlan.dll", "libbrotlicommon.dll",
+      "libbrotlidec.dll", "libcrypto-3-x64.dll", "libcurl-4.dll", "libiconv-2.dll",
+      "libidn2-0.dll", "libintl-8.dll", "libnghttp2-14.dll", "libnghttp3-9.dll",
+      "libngtcp2-16.dll", "libngtcp2_crypto_ossl-0.dll", "libpsl-5.dll", "libsharpyuv-0.dll",
+      "libssh2-1.dll", "libssl-3-x64.dll", "libunistring-5.dll", "libwebp-7.dll",
+      "libwebpdemux-2.dll", "libwinpthread-1.dll", "libzstd.dll", "zlib1.dll" };
+   size_t i;
+#endif
    char path[1200], *text;
    struct json *root;
 
@@ -311,6 +321,14 @@ void update_init(const char *data_dir, const char *config_dir)
    SDL_strlcpy(up.config, config_dir, sizeof(up.config));
    work_path("", path, sizeof(path));
    remove_tree(path);
+#ifdef _WIN32
+   /* Those in use, by an older FuseBox that still runs: at the next start. */
+   for (i = 0; i < SDL_arraysize(once); i++)
+   {
+      SDL_snprintf(path, sizeof(path), "%s%s", data_dir, once[i]);
+      SDL_RemovePath(path);
+   }
+#endif
    state_path(path, sizeof(path));
    text = SDL_LoadFile(path, NULL);
    if ((root = text ? json_parse(text) : NULL))

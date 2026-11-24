@@ -14,9 +14,9 @@ import zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LINUX = sys.platform == "linux"
 BUILD = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "build")
-PROGRAMS = ("fusebox", "fusebox-cli", "libfuseboxlan.so") if LINUX else ("fusebox.exe", "fusebox-cli.exe", "*.dll")
+PROGRAMS = ("fusebox", "fusebox-cli", "lib/libfuseboxlan.so") if LINUX else ("fusebox.exe", "fusebox-cli.exe", "lib/fuseboxlan.dll")
 LICENSES = {
-    "LICENSE": "LICENSE",
+    "licenses/FuseBox.txt": "LICENSE",
     "licenses/rcheevos.txt": "third_party/rcheevos/LICENSE",
 }
 if not LINUX:

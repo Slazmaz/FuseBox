@@ -49,7 +49,7 @@ cmake --install curl >/dev/null
 cmake -S "$ROOT" -B "$WORK/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DFUSEBOX_PORTABLE=ON \
    -DOPENSSL_USE_STATIC_LIBS=ON -DCMAKE_PREFIX_PATH="$WORK/lib"
 cmake --build "$WORK/build"
-strip "$WORK/build/fusebox" "$WORK/build/fusebox-cli" "$WORK/build/libfuseboxlan.so"
+strip "$WORK/build/fusebox" "$WORK/build/fusebox-cli" "$WORK/build/lib/libfuseboxlan.so"
 echo "Needs:"
 readelf -d "$WORK/build/fusebox" "$WORK/build/fusebox-cli" | grep NEEDED | sort -u
 readelf -VW "$WORK/build/fusebox" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1

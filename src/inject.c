@@ -116,7 +116,7 @@ static void drop(struct game *g)
 static bool load_into(HANDLE process)
 {
    WCHAR dll[1024];
-   DWORD n = GetModuleFileNameW(NULL, dll, SDL_arraysize(dll) - 16), code = 0;
+   DWORD n = GetModuleFileNameW(NULL, dll, SDL_arraysize(dll) - 24), code = 0;
    WCHAR *slash = n ? wcsrchr(dll, '\\') : NULL;
    SIZE_T size;
    void *there;
@@ -125,7 +125,7 @@ static bool load_into(HANDLE process)
 
    if (!slash)
       return false;
-   wcscpy(slash + 1, L"fuseboxlan.dll");
+   wcscpy(slash + 1, L"lib\\fuseboxlan.dll");
    size = (wcslen(dll) + 1) * sizeof(WCHAR);
    if (!(there = VirtualAllocEx(process, NULL, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)))
       return false;

@@ -46,7 +46,7 @@ static bool library(char *dst, size_t size)
    const char *run = SDL_getenv("XDG_RUNTIME_DIR");
    char real[1100];
 
-   SDL_snprintf(real, sizeof(real), "%s" LANHOOK_LIBRARY, SDL_GetBasePath());
+   SDL_snprintf(real, sizeof(real), "%slib/" LANHOOK_LIBRARY, SDL_GetBasePath());
    if (!platform_exists(real))
       return false;
    SDL_strlcpy(dst, real, size);
