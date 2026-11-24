@@ -3,11 +3,14 @@
 #include "json.h"
 #include "library.h"
 #include "ra.h"
+#include "steamui.h"
 #include "vdf.h"
 
 #include <SDL3/SDL.h>
 
 #define TAG "FuseBox"
+/* Steam writes its shortcuts down within this (ms). */
+#define WRITTEN_MS 8000
 
 static struct steam_install steam;
 static bool found;
@@ -454,11 +457,12 @@ static int shortcut_game(Uint32 appid, const struct vdf *s)
          if (old < 0)
             old = i;
       }
-   if (old < 0 && through && tagged(s))
+   /* One added while Steam ran has no tag. */
+   if (old < 0 && through)
       old = library_by_path(exe, 0);
    if (old >= 0 && library_game(old)->scan.installed)
       return old;
-   for (i = 0; tagged(s) && i < library_count(); i++)
+   for (i = 0; (through || tagged(s)) && i < library_count(); i++)
    {
       if (!starts_rom(options, library_game(i)))
          continue;
@@ -588,6 +592,34 @@ Sint64 steam_art_time(Uint32 appid)
    return first;
 }
 
+/* The grid's file for that art. Steam only looks for .png and .jpg, but goes
+ * by what's in them: a .webp named .png shows, and moves. */
+static void grid_file(const struct game *g, Uint32 appid, enum art_type type, char *dst, size_t size)
+{
+   const char *ext = SDL_strrchr(g->art[type].path, '.');
+   char base[1100];
+
+   grid_name(appid, type, base, sizeof(base));
+   SDL_snprintf(dst, size, "%s%s", base, !ext || SDL_strcasecmp(ext, ".webp") == 0 ? ".png" : ext);
+}
+
+static bool same_file(const char *a, const char *b)
+{
+   SDL_PathInfo x, y;
+   size_t n = 0, m = 0;
+   void *p, *q;
+   bool same;
+
+   if (!SDL_GetPathInfo(a, &x) || !SDL_GetPathInfo(b, &y) || x.size != y.size)
+      return false;
+   p = SDL_LoadFile(a, &n);
+   q = SDL_LoadFile(b, &m);
+   same = p && q && n == m && SDL_memcmp(p, q, n) == 0;
+   SDL_free(p);
+   SDL_free(q);
+   return same;
+}
+
 /* Copies the game's art into Steam's grid; the icon's path for the
  * shortcut in icon (empty if none). */
 static void copy_art(const struct game *g, Uint32 appid, char *icon, size_t size)
@@ -601,22 +633,17 @@ static void copy_art(const struct game *g, Uint32 appid, char *icon, size_t size
    SDL_CreateDirectory(grid);
    for (t = 0; t < ART_TYPES; t++)
    {
-      const char *src = g->art[t].path, *ext;
+      const char *src = g->art[t].path;
 
       if (!src[0])
          continue;
-      ext = SDL_strrchr(src, '.');
       grid_name(appid, (enum art_type)t, base, sizeof(base));
       /* An old one in the other format would win or confuse Steam. */
       SDL_snprintf(dst, sizeof(dst), "%s.png", base);
       SDL_RemovePath(dst);
       SDL_snprintf(dst, sizeof(dst), "%s.jpg", base);
       SDL_RemovePath(dst);
-      /* Steam only looks for .png and .jpg, but goes by what's in them: a
-       * .webp named .png shows, and moves. */
-      if (!ext || SDL_strcasecmp(ext, ".webp") == 0)
-         ext = ".png";
-      SDL_snprintf(dst, sizeof(dst), "%s%s", base, ext);
+      grid_file(g, appid, (enum art_type)t, dst, sizeof(dst));
       if (!SDL_CopyFile(src, dst))
          SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't copy art to %s: %s", dst, SDL_GetError());
       else if (t == ART_ICON)
@@ -720,9 +747,71 @@ static void remove_art(Uint32 appid)
    }
 }
 
+enum todo
+{
+   TODO_NOTHING,
+   TODO_REMOVE,
+   /* Steam's own shortcut: only its art (and icon) and settings change. */
+   TODO_OWN,
+   TODO_PUT
+};
+
+static enum todo todo(const struct game *g)
+{
+   bool own = SDL_strcmp(g->source, "Steam") == 0;
+
+   /* Out of Steam: a gone game ticked for it (whoever made its
+    * shortcut), or an installed launcher game unticked. */
+   if (g->gone ? g->selected : (g->installed && !own && !g->selected))
+      return TODO_REMOVE;
+   if (!g->installed)
+      return TODO_NOTHING;
+   if (own)
+      return TODO_OWN;
+   /* A ROM without an emulator: nothing to start it with. */
+   return g->no_emulator ? TODO_NOTHING : TODO_PUT;
+}
+
+/* Its shortcut was taken out; none: it had none. */
+static void left_steam(struct game *g, bool none)
+{
+   if (!none)
+   {
+      remove_art(g->steam_appid);
+      history_removed(library_dir(), g->steam_appid);
+   }
+   g->steam_appid = g->shortcut_id = 0;
+   g->gone = false;
+   if (SDL_strcmp(g->source, "Steam") == 0)
+      g->installed = false;
+}
+
+/* The app id of the game's shortcut: the one it has in the list, else a new
+ * one's. Under the library's lock. */
+static Uint32 choose_appid(struct vdf *list, int index)
+{
+   const struct game *g = library_game(index);
+   Uint32 appid = game_appid(g);
+   char exe[1100];
+   int other;
+
+   /* A shortcut keeps its id, whatever its game is renamed to or
+    * whichever emulator it's for: Steam keeps play time and collections
+    * by it. A new one doesn't take one that's kept. */
+   if (g->steam_appid && find_appid(list, g->steam_appid))
+      return g->steam_appid;
+   for (other = 0; other < library_count(); other++)
+      if (other != index && library_game(other)->steam_appid == appid)
+      {
+         quote(g->exe, exe, sizeof(exe));
+         return shortcut_appid(exe, g->id);
+      }
+   return appid;
+}
+
 bool steam_sync(char *msg, size_t size)
 {
-   char path[1100], icon[1200], exe[1100];
+   char path[1100], icon[1200];
    struct vdf *root, *list;
    int i, added = 0, updated = 0, removed = 0, art_only = 0;
    bool ok;
@@ -756,30 +845,19 @@ bool steam_sync(char *msg, size_t size)
       struct game *g = library_game(i);
       struct vdf *s;
       Uint32 appid;
+      enum todo what = todo(g);
 
-      bool own = SDL_strcmp(g->source, "Steam") == 0;
-
-      /* Out of Steam: a gone game ticked for it (whoever made its
-       * shortcut), or an installed launcher game unticked. */
-      if (g->gone ? g->selected : (g->installed && !own && !g->selected))
+      if (what == TODO_REMOVE)
       {
-         if (g->steam_appid && (s = find_appid(list, g->steam_appid)))
+         if ((s = g->steam_appid ? find_appid(list, g->steam_appid) : NULL))
          {
             vdf_remove(list, s);
-            remove_art(g->steam_appid);
-            history_removed(library_dir(), g->steam_appid);
             removed++;
          }
-         g->steam_appid = g->shortcut_id = 0;
-         g->gone = false;
-         if (own)
-            g->installed = false;
+         left_steam(g, !s);
          continue;
       }
-      if (!g->installed)
-         continue;
-      /* Steam's own shortcuts: only their art (and icon) change. */
-      if (own)
+      if (what == TODO_OWN)
       {
          copy_art(g, g->steam_appid, icon, sizeof(icon));
          if ((s = find_appid(list, g->steam_appid)))
@@ -794,26 +872,9 @@ bool steam_sync(char *msg, size_t size)
          art_only++;
          continue;
       }
-      /* A ROM without an emulator: nothing to start it with. */
-      if (g->no_emulator)
+      if (what != TODO_PUT)
          continue;
-      quote(g->exe, exe, sizeof(exe));
-      appid = shortcut_appid(exe, g->name);
-      /* A shortcut keeps its id, whatever its game is renamed to or
-       * whichever emulator it's for: Steam keeps play time and collections
-       * by it. A new one doesn't take one that's kept. */
-      if (g->steam_appid && find_appid(list, g->steam_appid))
-         appid = g->steam_appid;
-      else
-      {
-         int other;
-         for (other = 0; other < library_count(); other++)
-            if (other != i && library_game(other)->steam_appid == appid)
-            {
-               appid = shortcut_appid(exe, g->id);
-               break;
-            }
-      }
+      appid = choose_appid(list, i);
       /* Ours from before, perhaps under an older id (renamed, moved). */
       s = find_appid(list, appid);
       if (!s && g->steam_appid)
@@ -861,5 +922,257 @@ bool steam_sync(char *msg, size_t size)
    else
       SDL_snprintf(msg, size, "Can't write %s", path);
    SDL_Log("%s (%s)", msg, path);
+   return ok;
+}
+
+/* ---- In the Steam that runs ---------------------------------------------- */
+
+/* What's to do for a game, copied: Steam's answers take a while. */
+struct change
+{
+   char id[256];
+   enum todo what;
+   /* 0: a new shortcut. */
+   Uint32 appid;
+   /* Its name, target and options; its icon; Steam Input. Types of art, as
+    * bits. */
+   bool fields, icon, input;
+   unsigned art;
+   bool on;
+   char name[256], exe[1100], options[2048];
+};
+
+/* Whether a path of the shortcut's is that one; Steam quotes them. */
+static bool is_quoted(const struct vdf *s, const char *key, const char *path)
+{
+   char own[1100];
+
+   unquote(vdf_str(s, key), own, sizeof(own));
+   return SDL_strcmp(own, path) == 0;
+}
+
+/* How the shortcut (NULL: none yet) differs from the game. False: in what only
+ * steam_sync changes. Under the library's lock. */
+static bool compare(const struct game *g, const struct vdf *s, struct change *c)
+{
+   char file[1200];
+   int t;
+
+   /* Turned off there, Steam keeps the overlay elsewhere. */
+   if (g->steam_overlay != (!s || !vdf_find(s, "AllowOverlay") || vdf_int(s, "AllowOverlay")))
+      return false;
+   c->on = g->steam_input;
+   c->input = g->steam_input != (!s || !vdf_find(s, "AllowDesktopConfig")
+         || vdf_int(s, "AllowDesktopConfig"));
+   if (c->what == TODO_PUT)
+   {
+      SDL_strlcpy(c->name, g->name, sizeof(c->name));
+      steam_target(g, c->exe, sizeof(c->exe), c->options, sizeof(c->options));
+      c->fields = !s || SDL_strcmp(vdf_str(s, "AppName"), c->name) != 0
+         || !is_quoted(s, "Exe", c->exe) || !is_quoted(s, "StartDir", SDL_GetBasePath())
+         || SDL_strcmp(vdf_str(s, "LaunchOptions"), c->options) != 0;
+   }
+   for (t = 0; t < ART_TYPES; t++)
+   {
+      if (!g->art[t].path[0])
+         continue;
+      if (s)
+         grid_file(g, c->appid, (enum art_type)t, file, sizeof(file));
+      if (s && same_file(g->art[t].path, file)
+            && (t != ART_ICON || SDL_strcmp(vdf_str(s, "icon"), file) == 0))
+         continue;
+      if (t == ART_ICON)
+         c->icon = true;
+      else
+         c->art |= 1u << t;
+   }
+   return true;
+}
+
+/* What's to do; NULL: not this way. */
+static struct change *find_changes(int *count)
+{
+   struct change *list = NULL, *more;
+   struct vdf *root, *shortcuts;
+   char path[1100], backup[1200];
+   bool ok = true;
+   int i, n = 0;
+
+   shortcuts_path(path, sizeof(path));
+   if (!(root = vdf_load(path)))
+      return NULL;
+   SDL_snprintf(backup, sizeof(backup), "%s.fusebox-backup", path);
+   if (platform_exists(path) && !platform_exists(backup))
+      SDL_CopyFile(path, backup);
+   shortcuts = vdf_map(root, "shortcuts");
+   list = SDL_calloc(1, sizeof(*list));
+   library_lock();
+   for (i = 0; ok && list && i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+      struct change c = { 0 };
+      const struct vdf *s = NULL;
+
+      if ((c.what = todo(g)) == TODO_NOTHING)
+         continue;
+      SDL_strlcpy(c.id, g->id, sizeof(c.id));
+      if (c.what == TODO_PUT)
+         s = find_appid(shortcuts, choose_appid(shortcuts, i));
+      if (!s && g->steam_appid)
+         s = find_appid(shortcuts, g->steam_appid);
+      if (s)
+         c.appid = vdf_int(s, "appid") ? vdf_int(s, "appid")
+            : shortcut_appid(vdf_str(s, "Exe"), vdf_str(s, "AppName"));
+      if (c.what == TODO_OWN && !s)
+         continue;
+      if (c.what != TODO_REMOVE)
+      {
+         if (!compare(g, s, &c))
+            ok = false;
+         /* As it is, but the library may not know the id. */
+         else if (s && !c.fields && !c.icon && !c.input && !c.art && g->steam_appid == c.appid
+               && !g->art_edited)
+            continue;
+      }
+      else if (!g->steam_appid && !g->gone)
+         continue;
+      if (!(more = SDL_realloc(list, sizeof(*list) * (size_t)(n + 1))))
+         ok = false;
+      else
+      {
+         list = more;
+         list[n++] = c;
+      }
+   }
+   library_unlock();
+   vdf_free(root);
+   if (!ok)
+   {
+      SDL_free(list);
+      return NULL;
+   }
+   *count = n;
+   return list;
+}
+
+/* The file has them all, as they are now. */
+static bool written(const struct change *list, int count)
+{
+   char path[1100];
+   struct vdf *root, *shortcuts;
+   bool ok = true;
+   int i;
+
+   shortcuts_path(path, sizeof(path));
+   if (!(root = vdf_load(path)))
+      return false;
+   shortcuts = vdf_map(root, "shortcuts");
+   for (i = 0; i < count && ok; i++)
+   {
+      const struct vdf *s = list[i].appid ? find_appid(shortcuts, list[i].appid) : NULL;
+
+      if (list[i].what == TODO_REMOVE)
+         ok = !s;
+      else
+         ok = s && (list[i].what == TODO_OWN
+               || (SDL_strcmp(vdf_str(s, "AppName"), list[i].name) == 0
+                  && SDL_strcmp(vdf_str(s, "LaunchOptions"), list[i].options) == 0))
+            && (!list[i].input || (vdf_int(s, "AllowDesktopConfig") != 0) == list[i].on);
+   }
+   vdf_free(root);
+   return ok;
+}
+
+/* The game's art, where Steam has it. */
+static bool put_art(struct change *c, SDL_AtomicInt *abort)
+{
+   char icon[1200] = "", files[ART_TYPES][1200];
+   int t, i;
+
+   library_lock();
+   if ((i = library_find(c->id)) >= 0)
+   {
+      if (c->icon || c->art)
+         copy_art(library_game(i), c->appid, icon, sizeof(icon));
+      for (t = 0; t < ART_TYPES; t++)
+         grid_file(library_game(i), c->appid, (enum art_type)t, files[t], sizeof(files[t]));
+   }
+   library_unlock();
+   if (i < 0)
+      return false;
+   if (c->icon && icon[0] && !steamui_put_icon(c->appid, icon, abort))
+      return false;
+   for (t = 0; t < ART_TYPES; t++)
+   {
+      const char *name = SDL_strrchr(files[t], PATH_SEP[0]);
+
+      if ((c->art & 1u << t) && (!name
+               || !steamui_put_art(c->appid, (enum art_type)t, name + 1, abort)))
+         return false;
+   }
+   return true;
+}
+
+bool steam_sync_live(char *msg, size_t size, SDL_AtomicInt *abort)
+{
+   struct change *list;
+   int i, k, count, added = 0, updated = 0, removed = 0;
+   Uint64 until;
+   bool ok = true;
+
+   if (!found || !steamui_can_put(abort) || !(list = find_changes(&count)))
+      return false;
+   for (i = 0; i < count && ok && !SDL_GetAtomicInt(abort); i++)
+   {
+      struct change *c = &list[i];
+      bool fresh = !c->appid;
+
+      if (c->what == TODO_REMOVE)
+         ok = fresh || steamui_take_out(c->appid, abort);
+      else if (c->fields)
+         ok = (c->appid = steamui_put(c->appid, c->name, c->exe, SDL_GetBasePath(), c->options,
+                  abort)) != 0;
+      if (ok && c->what != TODO_REMOVE)
+      {
+         /* At once: what's left undone isn't added again. */
+         library_lock();
+         if ((k = library_find(c->id)) >= 0)
+            library_game(k)->steam_appid = library_game(k)->shortcut_id = c->appid;
+         library_unlock();
+         if (fresh)
+            history_added(library_dir(), c->appid);
+         ok = (!c->input || steamui_put_input(c->appid, c->on, abort)) && put_art(c, abort);
+      }
+      if (!ok)
+         break;
+      if (c->what == TODO_REMOVE)
+         removed += !fresh;
+      else if (fresh)
+         added++;
+      else if (c->fields || c->icon || c->input || c->art)
+         updated++;
+   }
+   ok = ok && i == count;
+   for (until = SDL_GetTicks() + WRITTEN_MS; ok && !written(list, count);)
+   {
+      if (SDL_GetTicks() >= until || SDL_GetAtomicInt(abort))
+         ok = false;
+      SDL_Delay(200);
+   }
+   library_lock();
+   for (i = 0; i < count && ok; i++)
+      if ((k = library_find(list[i].id)) >= 0)
+      {
+         if (list[i].what == TODO_REMOVE)
+            left_steam(library_game(k), !list[i].appid);
+         else
+            library_game(k)->art_edited = false;
+      }
+   library_unlock();
+   library_changed();
+   SDL_free(list);
+   SDL_snprintf(msg, size, "Steam shortcuts: %d added, %d updated, %d removed", added, updated,
+         removed);
+   SDL_Log("%s (%s)", msg, ok ? "while Steam runs" : "not all of it: Steam has to restart");
    return ok;
 }

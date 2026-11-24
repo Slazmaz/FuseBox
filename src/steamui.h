@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <SDL3/SDL_atomic.h>
 #include <SDL3/SDL_stdinc.h>
+#include "library.h"
 #include "platform.h"
 
 /* What FuseBox adds to Steam's own library (steam_menus): its interface is a
@@ -46,6 +47,17 @@ Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort);
 Uint32 steamui_once(const char *name, const char *exe, const char *options, const char *icon,
       bool overlay, bool input, SDL_AtomicInt *abort);
 bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort);
+/* The shortcuts of the Steam that runs, changed there (it writes them down
+ * itself). steamui_put: adds one (appid 0) or changes it; its app id, 0 if
+ * Steam can't now. exe and dir without quotes. Art is what's in the grid's file
+ * of that name (<app id>p.png, say). Blocking. */
+bool steamui_can_put(SDL_AtomicInt *abort);
+Uint32 steamui_put(Uint32 appid, const char *name, const char *exe, const char *dir,
+      const char *options, SDL_AtomicInt *abort);
+bool steamui_put_input(Uint32 appid, bool on, SDL_AtomicInt *abort);
+bool steamui_put_icon(Uint32 appid, const char *path, SDL_AtomicInt *abort);
+bool steamui_put_art(Uint32 appid, enum art_type type, const char *file, SDL_AtomicInt *abort);
+bool steamui_take_out(Uint32 appid, SDL_AtomicInt *abort);
 /* Gives Steam the pictures of a game that isn't in Steam, for an invite to it:
  * "art <id>", which steamui_asked also tells of. */
 bool steamui_art(Uint32 id, SDL_AtomicInt *abort);

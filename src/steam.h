@@ -2,6 +2,7 @@
 #define FUSEBOX_STEAM_H
 
 #include <stdbool.h>
+#include <SDL3/SDL_atomic.h>
 #include <stddef.h>
 #include "library.h"
 #include "platform.h"
@@ -65,5 +66,8 @@ Sint64 steam_art_time(Uint32 appid);
  * removing shortcuts FuseBox made). Steam must not be running (it would
  * write its own copy over ours on exit). msg gets what happened. */
 bool steam_sync(char *msg, size_t size);
+/* The same in the Steam that runs, through its port (steamui.h). False when
+ * that can't be (all of it) done: steam_sync does what's left. Blocking. */
+bool steam_sync_live(char *msg, size_t size, SDL_AtomicInt *abort);
 
 #endif

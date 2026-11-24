@@ -464,6 +464,128 @@ bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort)
       && evaluate(url, script, result, sizeof(result), abort);
 }
 
+/* ---- Shortcuts ----------------------------------------------------------- */
+
+/* What the scripts start with. */
+#define APPS "(async () => { const a = SteamClient.Apps, wait = ms => new Promise(f => setTimeout(f, ms));" \
+   " const has = app => appStore.GetAppOverviewByAppID(app); "
+
+bool steamui_can_put(SDL_AtomicInt *abort)
+{
+   char url[512], result[64];
+
+   return find_target(url, sizeof(url), abort)
+      && evaluate(url, "['AddShortcut', 'RemoveShortcut', 'SetShortcutName', 'SetShortcutExe', 'SetShortcutIcon',"
+            " 'SetShortcutStartDir', 'SetShortcutLaunchOptions', 'SetCustomArtworkForApp', 'RequestIconDataForApp',"
+            " 'ToggleAllowDesktopConfiguration', 'RegisterForAppDetails']"
+            ".every(f => typeof SteamClient.Apps[f] === 'function') && appStore.GetAppOverviewByAppID"
+            " && App.m_CurrentUser.strSteamID ? 'yes' : ''", result, sizeof(result), abort)
+      && result[0];
+}
+
+/* Runs it, and frees it. */
+static bool run_script(SDL_IOStream *io, char *result, size_t size, SDL_AtomicInt *abort)
+{
+   char url[512];
+   bool ok;
+
+   result[0] = '\0';
+   SDL_WriteU8(io, '\0');
+   ok = find_target(url, sizeof(url), abort)
+      && evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, size, abort) && result[0];
+   SDL_CloseIO(io);
+   return ok;
+}
+
+Uint32 steamui_put(Uint32 appid, const char *name, const char *exe, const char *dir,
+      const char *options, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+
+   if (!io)
+      return 0;
+   SDL_IOprintf(io, APPS "let app = %u; const name = ", (unsigned)appid);
+   json_write_string(io, name);
+   SDL_IOprintf(io, ", exe = ");
+   json_write_string(io, exe);
+   SDL_IOprintf(io, ", dir = ");
+   json_write_string(io, dir);
+   SDL_IOprintf(io, ", options = ");
+   json_write_string(io, options);
+   SDL_IOprintf(io, "; if (app) { if (!has(app)) return ''; }"
+         " else { app = await a.AddShortcut(name, exe, '', ''); if (!app) return '';"
+         " for (let i = 0; i < 100 && !has(app); i++) await wait(50); }"
+         " a.SetShortcutName(app, name); a.SetShortcutExe(app, '\"' + exe + '\"');"
+         " a.SetShortcutStartDir(app, '\"' + dir + '\"'); a.SetShortcutLaunchOptions(app, options);"
+         " return String(app); })()");
+   return run_script(io, result, sizeof(result), abort) ? (Uint32)SDL_strtoul(result, NULL, 10) : 0;
+}
+
+bool steamui_put_input(Uint32 appid, bool on, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+
+   if (!io)
+      return false;
+   /* It can only be turned around: first, which way it is. */
+   SDL_IOprintf(io, APPS "const app = %u, d = await new Promise((f, no) => { setTimeout(() => f(null), 5000);"
+         " const h = a.RegisterForAppDetails(app, x => { setTimeout(() => h.unregister(), 0); f(x); }); });"
+         " if (!d || typeof d.bEnableAllowDesktopConfiguration !== 'boolean') return '';"
+         " if (d.bEnableAllowDesktopConfiguration !== %s) a.ToggleAllowDesktopConfiguration(app);"
+         " return 'ok'; })()", (unsigned)appid, on ? "true" : "false");
+   return run_script(io, result, sizeof(result), abort);
+}
+
+bool steamui_put_icon(Uint32 appid, const char *path, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+
+   if (!io)
+      return false;
+   SDL_IOprintf(io, APPS "const app = %u; a.SetShortcutIcon(app, ", (unsigned)appid);
+   json_write_string(io, path);
+   /* The one it has is kept until it's asked for again. */
+   SDL_IOprintf(io, "); await wait(200); const o = has(app); if (o) { o.icon_data = undefined;"
+         " a.RequestIconDataForApp(app); } return 'ok'; })()");
+   return run_script(io, result, sizeof(result), abort);
+}
+
+bool steamui_put_art(Uint32 appid, enum art_type type, const char *file, SDL_AtomicInt *abort)
+{
+   static const int kinds[ART_TYPES] = { 0, 3, 1, 2, -1 };
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   const char *ext = SDL_strrchr(file, '.');
+   char result[64];
+
+   if (!io || !ext || kinds[type] < 0)
+   {
+      SDL_CloseIO(io);
+      return false;
+   }
+   /* Steam's page has the grid's files: megabytes needn't be sent there. */
+   SDL_IOprintf(io, APPS "const r = await fetch('/customimages/%s?v=' + Date.now()); if (!r.ok) return '';"
+         " const b = new Uint8Array(await r.arrayBuffer()); let s = '';"
+         " for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode.apply(null, b.subarray(i, i + 32768));"
+         " await a.SetCustomArtworkForApp(%u, btoa(s), '%s', %d); return 'ok'; })()", file, (unsigned)appid,
+         ext + 1, kinds[type]);
+   return run_script(io, result, sizeof(result), abort);
+}
+
+bool steamui_take_out(Uint32 appid, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+
+   if (!io)
+      return false;
+   SDL_IOprintf(io, APPS "a.RemoveShortcut(%u); return 'ok'; })()", (unsigned)appid);
+   return run_script(io, result, sizeof(result), abort);
+}
+
 /* An image as an address that holds it; empty without one, or one that's too
  * big for that. */
 static void write_image(SDL_IOStream *io, const char *path)

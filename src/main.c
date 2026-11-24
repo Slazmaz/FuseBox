@@ -779,6 +779,8 @@ struct steam_job
    bool close_steam;
    /* Nothing to write: only to start Steam again (see steamui.h). */
    bool only_restart;
+   /* In the Steam that runs, if that can be. */
+   bool live;
 };
 
 /* How long Steam may take to close (ms). */
@@ -810,6 +812,18 @@ static void job_steam(void *data)
    }
    /* While Steam runs: it tells who's logged in. */
    steam_account();
+   if (j->live)
+   {
+      post_status("Updating Steam...");
+      if (m)
+      {
+         m->count = !steam_sync_live(m->text, sizeof(m->text), jobs_abort());
+         post(m);
+      }
+      library_save();
+      SDL_free(j);
+      return;
+   }
    if (st && j->close_steam && (pid = platform_steam_pid(st)))
    {
       Uint64 until = SDL_GetTicks() + CLOSE_MS;
@@ -1603,7 +1617,7 @@ static void open_game(int index)
 
 /* ---- Sidebar ----------------------------------------------------------- */
 
-static void start_steam_job(bool close_steam, bool only_restart)
+static void start_steam_job(bool close_steam, bool only_restart, bool live)
 {
    struct steam_job *j = SDL_calloc(1, sizeof(*j));
 
@@ -1611,6 +1625,7 @@ static void start_steam_job(bool close_steam, bool only_restart)
       return;
    j->close_steam = close_steam;
    j->only_restart = only_restart;
+   j->live = live;
    app.busy = true;
    app.steam_note[0] = '\0';
    jobs_add(job_steam, j, JOB_NOW, true);
@@ -2057,10 +2072,12 @@ static void draw_sidebar(float w)
             steam_install() && !app.busy && app.scanned && !choosing(), false))
    {
       app.only_restart = false;
-      if (platform_steam_running(steam_install()))
-         app.modal = MODAL_STEAM;
+      if (!platform_steam_running(steam_install()))
+         start_steam_job(false, false, false);
+      else if (steam_menus())
+         start_steam_job(false, false, true);
       else
-         start_steam_job(false, false);
+         app.modal = MODAL_STEAM;
    }
 }
 
@@ -2937,7 +2954,7 @@ static float draw_steam_card(float x, float y, float w)
          if (running)
             app.modal = MODAL_STEAM;
          else
-            start_steam_job(false, true);
+            start_steam_job(false, true, false);
       }
       if (button(rx - bw - S(8) - fw, cy, fw, S(40), "Refresh", false, true, false))
       {
@@ -3385,7 +3402,7 @@ static void draw_modal(void)
                true, true, true))
       {
          close_modal();
-         start_steam_job(true, app.only_restart);
+         start_steam_job(true, app.only_restart, false);
       }
       if (button(x + w - S(28) - S(290), y + h - S(66), S(110), S(42), "Cancel", false, true,
                true))
@@ -3610,6 +3627,14 @@ static void handle_msg(struct msg *m)
          break;
       case MSG_STEAM_DONE:
          app.busy = false;
+         /* It has to restart after all. */
+         if (m->count)
+         {
+            app.only_restart = false;
+            if (app.modal == MODAL_NONE)
+               app.modal = MODAL_STEAM;
+            break;
+         }
          SDL_strlcpy(app.steam_note, m->text, sizeof(app.steam_note));
          /* Scanned again: the counts up top, and what Steam has now. */
          rescan(false);
