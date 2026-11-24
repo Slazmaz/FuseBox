@@ -32,6 +32,8 @@
  * Its store keeps each game's, so one is made here from events like those
  * Steam's servers send, and the store is kept from asking them about it. An
  * event is drawn only for a game the Steam store knows, by another query.
+ * A game that isn't in Steam is run by it all the same, for the overlay and the
+ * rest: by a shortcut that's there only meanwhile.
  * Friends' achievements go in the achievements' section, under its link, and
  * leaderboards after it, a section made of Steam's parts: like the button.
  * Modules are
@@ -43,7 +45,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 29) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 30) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -561,7 +563,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 29,\n" \
+   "      version: 30,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -574,6 +576,27 @@
    "         if (!overview(app)) return '';\n" \
    "         SteamClient.Apps.RunGame(String((BigInt(app) << 32n) | 0x2000000n), '', -1, 100);\n" \
    "         return String(app);\n" \
+   "      },\n" \
+   "      /* Makes one, and runs it: its app id. */\n" \
+   "      async once(name, exe, dir, options, icon, overlay, input) {\n" \
+   "         const apps = SteamClient.Apps, app = await apps.AddShortcut(name, exe, '', '');\n" \
+   "         if (!app) return '';\n" \
+   "         apps.SetShortcutName(app, name);\n" \
+   "         apps.SetShortcutExe(app, '\"' + exe + '\"');\n" \
+   "         apps.SetShortcutStartDir(app, '\"' + dir + '\"');\n" \
+   "         apps.SetShortcutLaunchOptions(app, options);\n" \
+   "         if (icon) apps.SetShortcutIcon(app, icon);\n" \
+   "         if (!overlay) apps.ToggleEnableSteamOverlayForApp(app);\n" \
+   "         if (!input) apps.ToggleAllowDesktopConfiguration(app);\n" \
+   "         if (await window.__fusebox.run(app)) return String(app);\n" \
+   "         window.__fusebox.unonce(app);\n" \
+   "         return '';\n" \
+   "      },\n" \
+   "      unonce(app) {\n" \
+   "         if (games.has(app)) drop(app);\n" \
+   "         forget(app);\n" \
+   "         SteamClient.Apps.RemoveShortcut(app);\n" \
+   "         return 'ok';\n" \
    "      },\n" \
    "      /* The next click, '' for none in that time. */\n" \
    "      asked(ms) {\n" \

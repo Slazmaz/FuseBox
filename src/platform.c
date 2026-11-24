@@ -780,6 +780,12 @@ static const WCHAR *typed_from(int n)
    return p;
 }
 
+void platform_arguments(char **argv, int skip, char *dst, size_t size)
+{
+   (void)argv;
+   narrow(typed_from(skip), dst, size);
+}
+
 bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,
       int *code)
 {
@@ -928,6 +934,30 @@ void platform_start_background(bool by_game)
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+void platform_arguments(char **argv, int skip, char *dst, size_t size)
+{
+   size_t n = 0;
+   const char *p;
+
+   /* Quoted, as the shell that takes them apart needs them. */
+   for (argv += skip; *argv && n + 4 < size; argv++)
+   {
+      if (n)
+         dst[n++] = ' ';
+      dst[n++] = '\'';
+      for (p = *argv; *p && n + 6 < size; p++)
+         if (*p == '\'')
+         {
+            SDL_memcpy(dst + n, "'\\''", 4);
+            n += 4;
+         }
+         else
+            dst[n++] = *p;
+      dst[n++] = '\'';
+   }
+   dst[n] = '\0';
 }
 
 bool platform_open(const char *exe)

@@ -86,7 +86,8 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       Uint64 now = SDL_GetTicks();
       enum steamui state;
       bool ended = false, only_friends;
-      int games = 0;
+      int games = 0, left;
+      Uint32 appid;
 
       /* As the window left them. */
       ra_init(config_dir);
@@ -122,6 +123,10 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       only_friends = state == STEAMUI_OK && pushed && !ended && now - pushed < REFRESH_MS;
       if (only_friends && (!ra_active() || now - friends < FRIENDS_MS))
          continue;
+      /* What a game that didn't get to end left in Steam. */
+      for (left = 0; left < 16 && (appid = lan_once_left(config_dir))
+            && steamui_unonce(appid, NULL); left++)
+         lan_once(config_dir, appid, "", false);
       /* Read again each time, and never written: the window's is newer. */
       if (!library_init(data_dir))
          continue;
@@ -225,7 +230,9 @@ int background_open(const char *data_dir, const char *appid)
 struct start
 {
    char exe[1024], args[1600], dir[1024];
+   char name[256], icon[1024], launch_options[512];
    Uint32 appid;
+   bool overlay, input;
 };
 
 static bool is_program(const char *path)
@@ -259,7 +266,12 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
             library_launch_options(g, s->args, sizeof(s->args));
             if (platform_exists(g->start_dir))
                SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+            SDL_strlcpy(s->name, g->name, sizeof(s->name));
+            SDL_strlcpy(s->icon, g->art[ART_ICON].path, sizeof(s->icon));
+            SDL_strlcpy(s->launch_options, g->launch_options, sizeof(s->launch_options));
             s->appid = g->steam_appid;
+            s->overlay = g->steam_overlay;
+            s->input = g->steam_input;
          }
          library_unlock();
          if (found || scanned || (g && !rom) || is_program(path) || !platform_exists(path))
@@ -284,6 +296,11 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
       SDL_strlcpy(s->exe, path, sizeof(s->exe));
       SDL_strlcpy(s->dir, path, sizeof(s->dir));
       slash = SDL_strrchr(s->dir, PATH_SEP[0]);
+      SDL_strlcpy(s->name, slash ? slash + 1 : path, sizeof(s->name));
+      if ((slash = SDL_strrchr(s->name, '.')))
+         *slash = '\0';
+      s->overlay = s->input = true;
+      slash = SDL_strrchr(s->dir, PATH_SEP[0]);
       if (slash)
          *slash = '\0';
       if (!slash || !platform_exists(s->dir))
@@ -296,18 +313,19 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
 /* How long Steam may take to start a game (ms). */
 #define START_MS 60000
 
-/* Has Steam run the game by its shortcut, with the overlay and the rest; waits
- * until it's over. False if Steam can't now: it's started without. */
-static bool through_steam(const char *config_dir, const char *path, Uint32 appid)
+/* Has Steam run the game, with its overlay and the rest; waits until it's over.
+ * False if Steam can't now: it's started without. more: arguments after it. */
+static bool through_steam(const char *config_dir, const char *path, const struct start *s,
+      const char *more)
 {
-   char asked[1100], played[1100], *text;
+   char exe[1024], options[4096], asked[1100], played[1100], *text;
    SDL_PathInfo info;
    SDL_Time now = 0;
-   Uint32 pid;
+   Uint32 appid = 0, pid;
    Uint64 until;
-   bool over = false;
+   bool once = !s->appid || more[0], over = false;
 
-   if (!appid || !steam_menus() || !steam_init() || !platform_steam_running(steam_install()))
+   if (!steam_menus() || !steam_init() || !platform_steam_running(steam_install()))
       return false;
    /* One that comes back here didn't come from Steam as it looks: not again. */
    SDL_snprintf(asked, sizeof(asked), "%s" PATH_SEP "asked", config_dir);
@@ -322,8 +340,17 @@ static bool through_steam(const char *config_dir, const char *path, Uint32 appid
    }
    SDL_SaveFile(asked, path, SDL_strlen(path));
    played_file(config_dir, played, sizeof(played));
-   if (!steamui_run(appid, NULL))
-      return false;
+   if (!once)
+      appid = steamui_run(s->appid, NULL);
+   /* Also where Steam doesn't have the shortcut any more. */
+   if (!appid)
+   {
+      once = true;
+      steam_once_target(path, s->launch_options, more, exe, sizeof(exe), options, sizeof(options));
+      if (!(appid = steamui_once(s->name, exe, options, s->icon, s->overlay, s->input, NULL)))
+         return false;
+      lan_once(config_dir, appid, path, true);
+   }
    for (until = SDL_GetTicks() + START_MS; !(pid = lan_game(config_dir, appid, "")) && !over
          && SDL_GetTicks() < until; SDL_Delay(250))
       /* Over before it was seen. */
@@ -335,16 +362,23 @@ static bool through_steam(const char *config_dir, const char *path, Uint32 appid
       }
    while (pid && lan_running(pid))
       SDL_Delay(500);
+   if (once)
+   {
+      /* Steam still notes that it ended. */
+      SDL_Delay(3000);
+      if (steamui_unonce(appid, NULL))
+         lan_once(config_dir, appid, "", false);
+   }
    return true;
 }
 
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
-   char played[1100], error[1200], ended[16];
+   char played[1100], error[1200], more[2048], ended[16];
    /* Older shortcuts say how. */
-   bool old = SDL_strcmp(argv[1], "--run") == 0;
-   const char *path = argv[1], *in_steam = SDL_getenv("SteamGameId");
-   int code = 1, skip = old ? 3 : 2;
+   bool old = SDL_strcmp(argv[1], "--run") == 0, once = SDL_strcmp(argv[1], "--once") == 0;
+   const char *path = once ? argv[2] : argv[1], *in_steam = SDL_getenv("SteamGameId");
+   int code = 1, skip = old || once ? 3 : 2;
    struct start s;
 
    ra_init(config_dir);
@@ -359,10 +393,13 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    }
    if (steam_menus())
       platform_start_background(true);
-   /* Not by Steam: by it now. Its shortcut has no other arguments. */
-   if (!old && !argv[skip] && !(in_steam && in_steam[0])
-         && through_steam(config_dir, path, s.appid))
-      return 0;
+   /* Not by Steam: by it now. */
+   if (!old && !once && !(in_steam && in_steam[0]))
+   {
+      platform_arguments(argv, skip, more, sizeof(more));
+      if (through_steam(config_dir, path, &s, more))
+         return 0;
+   }
    history_playing(data_dir);
    lan_playing(config_dir, history_appid(), old ? "" : path, true);
    if (!platform_run_game(s.exe, s.args, s.dir, argv, skip, &code))

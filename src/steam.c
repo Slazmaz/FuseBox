@@ -216,6 +216,8 @@ static bool is_path(const char *p)
 #endif
 /* What shortcuts had before their game's path alone. */
 #define RUN "--run "
+/* One that's there only while its game runs. */
+#define ONCE "--once "
 #define COMMAND "%command%"
 
 /* A quoted argument: on Linux what a shell would take for its own is escaped
@@ -270,20 +272,50 @@ static const char *own_exe(void)
    return own;
 }
 
+/* FuseBox's arguments, where the launch options have them go. */
+static void around_options(const char *lo, const char *args, char *options, size_t size)
+{
+   const char *command = SDL_strstr(lo, COMMAND);
+
+   /* Steam puts FuseBox there. */
+   if (command)
+      SDL_snprintf(options, size, "%.*s%s %s%s", (int)(command - lo), lo, COMMAND, args,
+            command + SDL_strlen(COMMAND));
+   else
+      SDL_strlcpy(options, args, size);
+}
+
 void steam_target(const struct game *g, char *exe, size_t exe_size, char *options,
       size_t options_size)
 {
-   const char *lo = g->launch_options, *command = SDL_strstr(lo, COMMAND);
    char path[1100];
 
    SDL_strlcpy(exe, own_exe(), exe_size);
    quote_arg(library_path(g), path, sizeof(path));
-   /* Steam puts FuseBox there. */
-   if (command)
-      SDL_snprintf(options, options_size, "%.*s%s %s%s", (int)(command - lo), lo, COMMAND, path,
-            command + SDL_strlen(COMMAND));
-   else
-      SDL_strlcpy(options, path, options_size);
+   around_options(g->launch_options, path, options, options_size);
+}
+
+void steam_once_target(const char *path, const char *launch_options, const char *more, char *exe,
+      size_t exe_size, char *options, size_t options_size)
+{
+   char quoted[1100], args[3200];
+
+   SDL_strlcpy(exe, own_exe(), exe_size);
+   quote_arg(path, quoted, sizeof(quoted));
+   SDL_snprintf(args, sizeof(args), ONCE "%s%s%s", quoted, more[0] ? " " : "", more);
+   around_options(launch_options, args, options, options_size);
+}
+
+/* One of steam_once_target's. */
+static bool is_once(const struct vdf *s)
+{
+   char exe[1024];
+   size_t len, own = SDL_strlen(OWN_EXE);
+
+   unquote(vdf_str(s, "Exe"), exe, sizeof(exe));
+   len = SDL_strlen(exe);
+   return len > own && SDL_strcasecmp(exe + len - own, OWN_EXE) == 0
+      && SDL_strstr(vdf_str(s, "LaunchOptions"), ONCE "\"");
 }
 
 /* What the shortcut starts (into exe), and with which options. One of
@@ -429,7 +461,7 @@ int steam_read_shortcuts(void)
       bool present, matched = false;
       int i;
 
-      if (s->type != VDF_MAP || !vdf_str(s, "AppName")[0])
+      if (s->type != VDF_MAP || !vdf_str(s, "AppName")[0] || is_once(s))
          continue;
       appid = vdf_int(s, "appid");
       if (!appid)
@@ -671,6 +703,16 @@ bool steam_sync(char *msg, size_t size)
       return false;
    }
    list = vdf_map(root, "shortcuts");
+   /* Left behind by a Steam that ended before its game. */
+   {
+      struct vdf *s, *next;
+      for (s = list->child; s; s = next)
+      {
+         next = s->next;
+         if (s->type == VDF_MAP && is_once(s))
+            vdf_remove(list, s);
+      }
+   }
 
    library_lock();
    for (i = 0; i < library_count(); i++)

@@ -322,7 +322,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 29"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 30"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
@@ -358,6 +358,43 @@ Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort)
 
    SDL_snprintf(script, sizeof(script), "__fusebox.run(%u)", (unsigned)appid);
    return run_in_steam(script, abort);
+}
+
+Uint32 steamui_once(const char *name, const char *exe, const char *options, const char *icon,
+      bool overlay, bool input, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   Uint32 appid;
+
+   if (!io)
+      return 0;
+   SDL_IOprintf(io, "__fusebox.once(");
+   json_write_string(io, name);
+   SDL_IOprintf(io, ",");
+   json_write_string(io, exe);
+   SDL_IOprintf(io, ",");
+   json_write_string(io, SDL_GetBasePath());
+   SDL_IOprintf(io, ",");
+   json_write_string(io, options);
+   SDL_IOprintf(io, ",");
+   json_write_string(io, icon);
+   SDL_IOprintf(io, ",%s,%s)", overlay ? "true" : "false", input ? "true" : "false");
+   SDL_WriteU8(io, '\0');
+   appid = run_in_steam(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), abort);
+   SDL_CloseIO(io);
+   return appid;
+}
+
+bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort)
+{
+   char url[512], script[128], result[64];
+
+   /* Without the script in it (Steam was restarted) too. */
+   SDL_snprintf(script, sizeof(script), "window.__fusebox && __fusebox.unonce ? __fusebox.unonce(%u)"
+         " : (SteamClient.Apps.RemoveShortcut(%u), 'ok')", (unsigned)appid, (unsigned)appid);
+   return find_target(url, sizeof(url), abort)
+      && evaluate(url, script, result, sizeof(result), abort);
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

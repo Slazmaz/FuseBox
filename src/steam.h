@@ -41,6 +41,12 @@ void steam_set_port(int port);
 void steam_target(const struct game *g, char *exe, size_t exe_size, char *options,
       size_t options_size);
 
+/* What the shortcut starts that's there only while the game runs
+ * (steamui_once): fusebox --once "<path>", and more after it. The launch
+ * options count where they have %command%; the rest is FuseBox's to add. */
+void steam_once_target(const char *path, const char *launch_options, const char *more, char *exe,
+      size_t exe_size, char *options, size_t options_size);
+
 /* Adds Steam's own non-Steam shortcuts (those FuseBox didn't make) to the
  * library, so their art can be picked too. */
 int steam_read_shortcuts(void);

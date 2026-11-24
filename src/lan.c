@@ -101,3 +101,87 @@ Uint32 lan_game(const char *config_dir, Uint32 appid, const char *game)
       SDL_EnumerateDirectory(path, on_playing, &s);
    return s.pid;
 }
+
+/* ---- Shortcuts that are there only meanwhile ------------------------------ */
+
+#define ONCE_MAX 16
+
+static struct
+{
+   SDL_Mutex *lock;
+   struct
+   {
+      Uint32 appid, pid;
+      char path[1024];
+   } list[ONCE_MAX];
+   int count;
+} once;
+
+static void once_path(const char *config_dir, Uint32 appid, char *dst, size_t size)
+{
+   if (appid)
+      SDL_snprintf(dst, size, "%s" PATH_SEP "once" PATH_SEP "%u", config_dir, (unsigned)appid);
+   else
+      SDL_snprintf(dst, size, "%s" PATH_SEP "once", config_dir);
+}
+
+void lan_once(const char *config_dir, Uint32 appid, const char *path, bool on)
+{
+   char file[1100], text[1100];
+
+   once_path(config_dir, 0, file, sizeof(file));
+   SDL_CreateDirectory(file);
+   once_path(config_dir, appid, file, sizeof(file));
+   if (!on)
+   {
+      SDL_RemovePath(file);
+      return;
+   }
+   SDL_snprintf(text, sizeof(text), "%u\n%s", (unsigned)own_pid(), path);
+   SDL_SaveFile(file, text, SDL_strlen(text));
+}
+
+static SDL_EnumerationResult SDLCALL on_once(void *user, const char *dir, const char *name)
+{
+   char file[1200], *text, *path;
+
+   SDL_snprintf(file, sizeof(file), "%s%s", dir, name);
+   if (once.count < ONCE_MAX && (text = SDL_LoadFile(file, NULL)))
+   {
+      once.list[once.count].appid = (Uint32)SDL_strtoul(name, NULL, 10);
+      once.list[once.count].pid = (Uint32)SDL_strtoul(text, NULL, 10);
+      path = SDL_strchr(text, '\n');
+      SDL_strlcpy(once.list[once.count].path, path ? path + 1 : "", sizeof(once.list[0].path));
+      once.count++;
+      SDL_free(text);
+   }
+   return SDL_ENUM_CONTINUE;
+}
+
+static void read_once(const char *config_dir)
+{
+   char dir[1100];
+
+   if (!once.lock)
+      once.lock = SDL_CreateMutex();
+   once_path(config_dir, 0, dir, sizeof(dir));
+   SDL_LockMutex(once.lock);
+   once.count = 0;
+   if (platform_exists(dir))
+      SDL_EnumerateDirectory(dir, on_once, NULL);
+   SDL_UnlockMutex(once.lock);
+}
+
+Uint32 lan_once_left(const char *config_dir)
+{
+   Uint32 appid = 0;
+   int i;
+
+   read_once(config_dir);
+   SDL_LockMutex(once.lock);
+   for (i = 0; i < once.count && !appid; i++)
+      if (!lan_running(once.list[i].pid))
+         appid = once.list[i].appid;
+   SDL_UnlockMutex(once.lock);
+   return appid;
+}

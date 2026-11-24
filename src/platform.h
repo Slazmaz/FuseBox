@@ -66,6 +66,9 @@ bool platform_open(const char *exe);
 bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,
       int *code);
 
+/* This program's own arguments from argv[skip] on, as in a command line. */
+void platform_arguments(char **argv, int skip, char *dst, size_t size);
+
 #ifdef _WIN32
 /* hive: "HKLM" or "HKCU". value NULL reads the key's default value. */
 bool platform_reg_string(const char *hive, const char *key, const char *value,
