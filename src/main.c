@@ -2662,7 +2662,7 @@ static void draw_settings(float x, float y, float w, float h)
    char line[1200];
    float cw = SDL_min(w, S(720)), cy, top = y, start;
    /* Scrolled out under the top bar, nothing is there to click. */
-   bool held = app.click && app.cy < top;
+   bool held = app.click && app.cy < top, has_key = sgdb_has_key();
 
    if (held)
       app.click = false;
@@ -2679,16 +2679,17 @@ static void draw_settings(float x, float y, float w, float h)
    ui_text(UI_BOLD, S(22), x, y + S(30), UI_LEFT, 0, C_TEXT, 1, "Settings");
    y += S(64);
 
-   cy = settings_card(x, y, cw, S(186), "SteamGridDB API key");
+   /* A saved key shows as one, until there's something to paste over it. */
+   cy = settings_card(x, y, cw, S(156), "SteamGridDB API key");
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, cw - S(48), C_DIM, 1,
-         sgdb_has_key() ? "A key is saved. Paste a new one to replace it."
-         : "Free at steamgriddb.com/profile/preferences/api");
+         has_key ? "Your key is saved." : "Free at steamgriddb.com/profile/preferences/api");
    text_field(x + S(24), cy + S(30), cw - S(48) - S(120), S(44), FIELD_KEY, app.key,
-         "Paste the key", true, false, 0);
-   if (button(x + cw - S(24) - S(108), cy + S(30), S(108), S(44), "Save", true, app.key[0] != '\0',
-            false))
+         !has_key ? "Paste the key" : app.field == FIELD_KEY ? "Paste a new key to replace it"
+         : "********************************", true, false, 0);
+   if (button(x + cw - S(24) - S(108), cy + S(30), S(108), S(44), has_key ? "Replace" : "Save", true,
+            app.key[0] != '\0', false))
       save_key();
-   y += S(186) + S(20);
+   y += S(156) + S(20);
 
    cy = settings_card(x, y, cw, S(100), "Steam");
    if (steam_install())
