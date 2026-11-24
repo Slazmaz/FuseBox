@@ -70,12 +70,15 @@ add_library(fusebox_core STATIC
    src/background.c
    src/history.c
    src/lan.c
+   src/stream.c
+   src/tunnel.c
 )
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
 if(WIN32)
-   target_compile_definitions(fusebox_core PRIVATE WIN32_LEAN_AND_MEAN)
-   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv)
+   # More sockets to wait on than Windows' 64.
+   target_compile_definitions(fusebox_core PRIVATE FD_SETSIZE=1024 WIN32_LEAN_AND_MEAN)
+   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv ws2_32)
 endif()
 
 add_executable(fusebox src/main.c src/ui.c src/gl.c src/anim.c)
