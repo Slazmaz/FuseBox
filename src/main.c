@@ -3474,7 +3474,7 @@ int main(int argc, char **argv)
    if (argc >= 3 && SDL_strcmp(argv[1], "--run") == 0)
    {
       SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
-      return background_game(config, argv);
+      return background_game(base ? base : "", config, argv);
    }
    if (argc == 3 && SDL_strcmp(argv[1], "--open") == 0)
    {

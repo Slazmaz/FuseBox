@@ -18,7 +18,7 @@ int background_run(const char *data_dir, const char *config_dir);
 /* fusebox --run "<exe>" <arguments>, as Steam's shortcuts have it: starts
  * the background one if it's wanted, then the game; returns when that ends,
  * with its exit code. argv: main's. */
-int background_game(const char *config_dir, char **argv);
+int background_game(const char *data_dir, const char *config_dir, char **argv);
 
 /* fusebox --open <app id>: opens the emulator or launcher of the game whose
  * shortcut that is (its button in Steam). */

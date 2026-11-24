@@ -1,4 +1,5 @@
 #include "background.h"
+#include "history.h"
 #include "library.h"
 #include "platform.h"
 #include "ra.h"
@@ -207,7 +208,7 @@ int background_open(const char *data_dir, const char *appid)
    return found && platform_open(exe) ? 0 : 1;
 }
 
-int background_game(const char *config_dir, char **argv)
+int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
    char played[1100];
    int code;
@@ -215,6 +216,7 @@ int background_game(const char *config_dir, char **argv)
    ra_init(config_dir);
    if (ra_active())
       platform_start_background(true);
+   history_playing(data_dir);
    code = platform_run_game(argv + 2);
    played_file(config_dir, played, sizeof(played));
    SDL_SaveFile(played, "1", 1);

@@ -1,4 +1,5 @@
 #include "steam.h"
+#include "history.h"
 #include "library.h"
 #include "ra.h"
 #include "vdf.h"
@@ -465,6 +466,7 @@ bool steam_sync(char *msg, size_t size)
          {
             vdf_remove(list, s);
             remove_art(g->steam_appid);
+            history_removed(library_dir(), g->steam_appid);
             removed++;
          }
          g->steam_appid = g->shortcut_id = 0;
@@ -520,6 +522,7 @@ bool steam_sync(char *msg, size_t size)
       else
       {
          s = new_shortcut(list);
+         history_added(library_dir(), appid);
          added++;
       }
       copy_art(g, appid, icon, sizeof(icon));
