@@ -51,7 +51,8 @@ void steam_read_settings(const char *config_dir)
    if (!set.lock)
       set.lock = SDL_CreateMutex();
    SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "steam.json", config_dir);
-   /* They were the achievements', and on with a login. */
+   /* They were the achievements', and on with a login; a new FuseBox has
+    * neither file. */
    if ((old = !platform_exists(path)))
       SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "retroachievements.json", config_dir);
    text = SDL_LoadFile(path, NULL);
@@ -61,12 +62,12 @@ void steam_read_settings(const char *config_dir)
    if (root || old)
    {
       set.shortcuts = old || json_bool(root, "shortcuts", true);
-      set.menus = old ? ra_active() : json_bool(root, "menus", false);
+      set.menus = old && root ? ra_active() : json_bool(root, "menus", true);
       set.autostart = !root || json_bool(root, "autostart", true);
       set.made_file = root && json_bool(root, "made_file", false);
       set.port = root ? (int)json_num(root, "port", 0) : 0;
    }
-   /* Now, or a later login would turn the menus on. */
+   /* Now, or a login would change the menus later. */
    if (old)
       save_settings();
    SDL_UnlockMutex(set.lock);

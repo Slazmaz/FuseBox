@@ -24,8 +24,8 @@ void steam_read_settings(const char *config_dir);
  * off. */
 bool steam_shortcuts(void);
 void steam_set_shortcuts(bool on);
-/* Whether content is added to Steam's menus (steamui.h). Off until turned
- * on: the port it needs is open to every program on the computer. */
+/* Whether content is added to Steam's menus (steamui.h). On until turned
+ * off; the port it needs is open to every program on the computer. */
 bool steam_menus(void);
 void steam_set_menus(bool on);
 /* Whether FuseBox starts with the computer for that (background.h); on until
