@@ -60,7 +60,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 37) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 38) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -634,6 +634,20 @@
    "      const t = toldOf(invite);\n" \
    "      return t ? gameNamed(t.name) || absentNamed(t.name) : 0;\n" \
    "   };\n" \
+   "   /* One to Spacewar, as to the game that's said of it, if any is. */\n" \
+   "   const markInvite = invite => {\n" \
+   "      if (!invite || !invite.lobbyID || Number(invite.appID) !== SPACEWAR || marked(invite)) return;\n" \
+   "      const url = invite.inviteString, was = Object.getOwnPropertyDescriptor(invite, 'appID');\n" \
+   "      if (!was || !was.configurable) return;\n" \
+   "      Object.defineProperty(invite, 'fusebox', { configurable: true, value: true });\n" \
+   "      Object.defineProperty(invite, 'inviteString', { configurable: true, get: () => url });\n" \
+   "      Object.defineProperty(invite, 'appID', { configurable: true, get: () => gameOf(invite) || SPACEWAR });\n" \
+   "      undoLan.push(() => {\n" \
+   "         Object.defineProperty(invite, 'appID', was);\n" \
+   "         delete invite.inviteString;\n" \
+   "         delete invite.fusebox;\n" \
+   "      });\n" \
+   "   };\n" \
    "   /* An invite that was drawn already is drawn again. */\n" \
    "   const again = who => {\n" \
    "      try {\n" \
@@ -788,18 +802,14 @@
    "            return chat;\n" \
    "         });\n" \
    "      } catch (e) { }\n" \
+   "      try { ui.ChatStore.GameInviteStore.m_mapGameInvites.forEach(list => list.forEach(markInvite)); } catch (e) { }\n" \
    "      quietChats();\n" \
    "      /* An invite's game is the one it was said to be to, where that's here. */\n" \
    "      try {\n" \
    "         const invites = ui.ChatStore.GameInviteStore;\n" \
    "         around(invites, 'RegisterGameInvite', function(steams, who, time, app, ...more) {\n" \
-   "            const invite = steams(who, time, app, ...more), lobby = invite && invite.lobbyID;\n" \
-   "            if (lobby && Number(invite.appID) === SPACEWAR && !marked(invite)) {\n" \
-   "               const url = invite.inviteString;\n" \
-   "               Object.defineProperty(invite, 'fusebox', { value: true });\n" \
-   "               Object.defineProperty(invite, 'inviteString', { configurable: true, get: () => url });\n" \
-   "               Object.defineProperty(invite, 'appID', { configurable: true, get: () => gameOf(invite) || SPACEWAR });\n" \
-   "            }\n" \
+   "            const invite = steams(who, time, app, ...more);\n" \
+   "            markInvite(invite);\n" \
    "            return invite;\n" \
    "         });\n" \
    "         around(invites, 'RegisterGameInvitesInMessage', function(steams, who, time, text) {\n" \
@@ -838,7 +848,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 37,\n" \
+   "      version: 38,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
