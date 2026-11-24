@@ -5,8 +5,10 @@
 #include <stddef.h>
 #include <SDL3/SDL_stdinc.h>
 #include "library.h"
+#include "tunnel.h"
 
-/* The games that run through FuseBox (background_game). */
+/* The games that run through FuseBox (background_game), and what they're
+ * connected to on this computer. */
 
 /* Notes that this process runs the game of that shortcut (0: none) and path
  * (empty: not known), or that it's over. <config>/playing/<process>. */
@@ -26,5 +28,18 @@ void lan_read_once(const char *config_dir);
 Uint32 lan_app(const struct game *g);
 /* One whose process is gone, 0 for none (lan_once then). */
 Uint32 lan_once_left(const char *config_dir);
+
+/* The ports a game's friends need, going by what runs now: those on this
+ * computer that the game (what that process started) is connected to, the
+ * others of the servers there, and its own. Added to the count ports there are;
+ * returns how many there are then. Windows; none elsewhere. */
+int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max);
+/* Whether a friend's port may be opened here: not one of the system's, or
+ * where FuseBox looks for Steam. */
+bool lan_port_allowed(Uint16 port);
+
+/* Ports as text: "t1027 u7777". */
+void lan_write_ports(const struct tunnel_port *ports, int count, char *dst, size_t size);
+int lan_read_ports(const char *text, struct tunnel_port *ports, int max);
 
 #endif

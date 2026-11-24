@@ -78,7 +78,7 @@ target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rchee
 if(WIN32)
    # More sockets to wait on than Windows' 64.
    target_compile_definitions(fusebox_core PRIVATE FD_SETSIZE=1024 WIN32_LEAN_AND_MEAN)
-   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv ws2_32)
+   target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv ws2_32 iphlpapi)
 endif()
 
 add_executable(fusebox src/main.c src/ui.c src/gl.c src/anim.c)
