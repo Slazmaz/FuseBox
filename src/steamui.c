@@ -15,6 +15,8 @@
 #define TIMEOUT_S 15
 /* The port Steam opens when nothing says which (background.c). */
 #define STEAM_PORT 8080
+/* Bigger images (animated ones) aren't sent to Steam's page. */
+#define IMAGE_MAX (3 * 1024 * 1024)
 
 void steamui_start(const struct steam_install *steam)
 {
@@ -163,7 +165,14 @@ static void push_opens(const char *url, SDL_AtomicInt *abort)
    SDL_CloseIO(io);
 }
 
-/* The games friends can be invited to: those that start through FuseBox. */
+/* What a game that isn't in Steam goes by there. */
+static Uint32 other_id(const struct game *g)
+{
+   return fb_crc32(g->id, SDL_strlen(g->id));
+}
+
+/* The games friends can be invited to: those that start through FuseBox. And
+ * those that are here, but not in Steam. */
 static void push_lan(const char *url, SDL_AtomicInt *abort)
 {
    SDL_IOStream *io = SDL_IOFromDynamicMem();
@@ -186,6 +195,22 @@ static void push_lan(const char *url, SDL_AtomicInt *abort)
          json_write_string(io, g->own_name);
          SDL_IOprintf(io, "]");
       }
+   }
+   library_unlock();
+   SDL_IOprintf(io, "],[");
+   library_lock();
+   for (i = n = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+
+      /* Uninstalled ones stay in the library. */
+      if (lan_app(g) || !platform_exists(library_path(g)))
+         continue;
+      SDL_IOprintf(io, "%s[%u,", n++ ? "," : "", (unsigned)other_id(g));
+      json_write_string(io, g->name);
+      SDL_IOprintf(io, ",");
+      json_write_string(io, g->own_name);
+      SDL_IOprintf(io, "]");
    }
    library_unlock();
    SDL_IOprintf(io, "])");
@@ -437,6 +462,81 @@ bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort)
          " : (SteamClient.Apps.RemoveShortcut(%u), 'ok')", (unsigned)appid, (unsigned)appid);
    return find_target(url, sizeof(url), abort)
       && evaluate(url, script, result, sizeof(result), abort);
+}
+
+/* An image as an address that holds it; empty without one, or one that's too
+ * big for that. */
+static void write_image(SDL_IOStream *io, const char *path)
+{
+   static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+   const char *type = NULL;
+   size_t size = 0, i, n = 0;
+   Uint8 *data = path[0] ? SDL_LoadFile(path, &size) : NULL;
+   char out[4096];
+
+   SDL_IOprintf(io, "'");
+   if (data && size > 12 && size <= IMAGE_MAX)
+   {
+      if (SDL_memcmp(data, "\x89PNG", 4) == 0)
+         type = "png";
+      else if (SDL_memcmp(data, "\xFF\xD8\xFF", 3) == 0)
+         type = "jpeg";
+      else if (SDL_memcmp(data, "RIFF", 4) == 0 && SDL_memcmp(data + 8, "WEBP", 4) == 0)
+         type = "webp";
+   }
+   if (type)
+   {
+      SDL_IOprintf(io, "data:image/%s;base64,", type);
+      for (i = 0; i < size; i += 3)
+      {
+         Uint32 v = (Uint32)data[i] << 16 | (i + 1 < size ? (Uint32)data[i + 1] << 8 : 0)
+            | (i + 2 < size ? data[i + 2] : 0);
+
+         out[n++] = digits[v >> 18];
+         out[n++] = digits[v >> 12 & 63];
+         out[n++] = i + 1 < size ? digits[v >> 6 & 63] : '=';
+         out[n++] = i + 2 < size ? digits[v & 63] : '=';
+         if (n == sizeof(out) || i + 3 >= size)
+         {
+            SDL_WriteIO(io, out, n);
+            n = 0;
+         }
+      }
+   }
+   SDL_IOprintf(io, "'");
+   SDL_free(data);
+}
+
+bool steamui_art(Uint32 id, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char url[512], result[64];
+   bool found = false;
+   int i;
+
+   if (!io)
+      return false;
+   library_lock();
+   for (i = 0; i < library_count() && !found; i++)
+   {
+      const struct game *g = library_game(i);
+
+      if (g->steam_appid || other_id(g) != id)
+         continue;
+      found = true;
+      SDL_IOprintf(io, "window.__fusebox && __fusebox.art ? __fusebox.art(%u,", (unsigned)id);
+      write_image(io, g->art[ART_ICON].path);
+      SDL_IOprintf(io, ",");
+      write_image(io, g->art[ART_WIDE].path[0] ? g->art[ART_WIDE].path : g->art[ART_HERO].path);
+      SDL_IOprintf(io, ") : ''");
+      SDL_WriteU8(io, '\0');
+   }
+   library_unlock();
+   found = found && find_target(url, sizeof(url), abort)
+      && evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, sizeof(result), abort);
+   SDL_CloseIO(io);
+   return found;
 }
 
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort)

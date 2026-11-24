@@ -42,8 +42,10 @@
  * Steam knows the invite as one to Spacewar. Which game it's to is in the chat
  * message that comes with it, and the invite is shown as one to that: by its
  * app id, for which the friends' own store of apps' names and pictures answers
- * here. One that came with the message is over when the friend plays nothing
- * any more, not when it isn't Spacewar.
+ * here. One of FuseBox's that isn't in Steam gets a number no app has, and its
+ * pictures from FuseBox, asked for like a click; one that isn't here either its
+ * name, a word on that, and no pictures. One that came with the message is
+ * over when the friend plays nothing any more, not when it isn't Spacewar.
  *
  * Friends' achievements go in the achievements' section, under its link, and
  * leaderboards after it, a section made of Steam's parts: like the button.
@@ -580,6 +582,7 @@
    "   const bare = name => name.toLowerCase().replace(/[^a-z0-9]/g, '') || name.toLowerCase().trim();\n" \
    "   const gameNamed = name => {\n" \
    "      for (const [app, names] of lanGames) if (names.some(n => bare(n) === bare(name))) return app;\n" \
+   "      for (const [id, names] of inLibrary) if (names.some(n => bare(n) === bare(name))) return OTHER + id;\n" \
    "      return 0;\n" \
    "   };\n" \
    "   const marked = invite => !!invite && Object.hasOwn(invite, 'fusebox');\n" \
@@ -589,9 +592,28 @@
    "         .sort((x, y) => off(x) - off(y))[0];\n" \
    "   };\n" \
    "   const fromFusebox = invite => marked(invite) && !!toldOf(invite);\n" \
+   "   /* Games that aren't here, by numbers no app has; those of FuseBox's that\n" \
+   "      aren't in Steam, by others, and their pictures. */\n" \
+   "   const ABSENT = 2 ** 33, absent = [], OTHER = 2 ** 34, inLibrary = new Map(), art = new Map();\n" \
+   "   const otherNames = app => app >= OTHER ? inLibrary.get(app - OTHER) : undefined;\n" \
+   "   const artOf = app => {\n" \
+   "      const id = app - OTHER;\n" \
+   "      const has = art.get(id);\n" \
+   "      /* Again if none came. */\n" \
+   "      if (!has || (has.at && Date.now() - has.at > 60000)) {\n" \
+   "         art.set(id, { at: Date.now() });\n" \
+   "         send('art ' + id);\n" \
+   "      }\n" \
+   "      return art.get(id);\n" \
+   "   };\n" \
+   "   const absentName = app => app >= ABSENT && app < OTHER ? absent[app - ABSENT] : undefined;\n" \
+   "   const absentNamed = name => {\n" \
+   "      if (!absent.includes(name)) absent.push(name);\n" \
+   "      return ABSENT + absent.indexOf(name);\n" \
+   "   };\n" \
    "   const gameOf = invite => {\n" \
    "      const t = toldOf(invite);\n" \
-   "      return t ? gameNamed(t.name) : 0;\n" \
+   "      return t ? gameNamed(t.name) || absentNamed(t.name) : 0;\n" \
    "   };\n" \
    "   /* An invite that was drawn already is drawn again. */\n" \
    "   const again = who => {\n" \
@@ -616,14 +638,19 @@
    "      if (infos.has(app)) return infos.get(app);\n" \
    "      const is = get => ({ get, configurable: true }), o = () => overview(app);\n" \
    "      const icon = () => {\n" \
+   "         if (otherNames(app)) return artOf(app).icon || undefined;\n" \
    "         try { return o() && appStore.GetIconURLForApp(o()) || undefined; } catch (e) { return undefined; }\n" \
    "      };\n" \
+   "      const missing = absentName(app);\n" \
    "      const info = Object.create(like, { appid: is(() => app), icon_url: is(icon), icon_url_no_default: is(icon),\n" \
-   "         name: is(() => o() ? o().display_name : lanGames.has(app) ? lanGames.get(app)[0] : '') });\n" \
+   "         name: is(() => missing !== undefined ? missing + ' (you don\\'t have this game in your library)'\n" \
+   "            : otherNames(app) ? otherNames(app)[0] : o() ? o().display_name\n" \
+   "            : lanGames.has(app) ? lanGames.get(app)[0] : '') });\n" \
    "      infos.set(app, info);\n" \
    "      return info;\n" \
    "   };\n" \
    "   const wide = app => {\n" \
+   "      if (otherNames(app)) return artOf(app).wide || '';\n" \
    "      try {\n" \
    "         const o = overview(app);\n" \
    "         return appStore.GetCustomLandcapeImageURLs(o)[0] || appStore.GetIconURLForApp(o) || '';\n" \
@@ -643,9 +670,11 @@
    "      const invite = props && props.gameInvite, friend = props && props.inviter;\n" \
    "      if (fromFusebox(invite) && friend && ui && friend !== ui.FriendStore.self && friend.persona && friend.persona.is_ingame)\n" \
    "         return [type, { ...props, inviter: hostOf(friend, invite.appID) }];\n" \
-   "      if (props && typeof props.strClassNames === 'string' && lanGames.has(props.appID)) {\n" \
-   "         const src = wide(props.appID);\n" \
+   "      if (props && typeof props.strClassNames === 'string' && (props.appID >= ABSENT || lanGames.has(props.appID))) {\n" \
+   "         const src = props.appID >= ABSENT && !otherNames(props.appID) ? '' : wide(props.appID);\n" \
    "         if (src) return ['img', { src, className: props.strClassNames }];\n" \
+   "         /* Steam has no picture of these numbers. */\n" \
+   "         if (props.appID >= ABSENT) return ['div', { className: props.strClassNames, style: { display: 'none' } }];\n" \
    "      }\n" \
    "      return [type, props];\n" \
    "   };\n" \
@@ -722,7 +751,7 @@
    "         });\n" \
    "         around(ui.AppInfoStore, 'GetAppInfo', function(steams, app) {\n" \
    "            if (app === SPACEWAR && fresh.app && Date.now() < fresh.until) return infoOf(fresh.app, steams(SPACEWAR));\n" \
-   "            return lanGames.has(app) ? infoOf(app, steams(SPACEWAR)) : steams(app);\n" \
+   "            return lanGames.has(app) || app >= ABSENT ? infoOf(app, steams(SPACEWAR)) : steams(app);\n" \
    "         });\n" \
    "      } catch (e) { }\n" \
    "   };\n" \
@@ -748,11 +777,19 @@
    "         redraw();\n" \
    "         return 'ok';\n" \
    "      },\n" \
-   "      lan(apps) {\n" \
+   "      lan(apps, others) {\n" \
    "         lanGames.clear();\n" \
    "         apps.forEach(([app, ...names]) => lanGames.set(app, names));\n" \
+   "         inLibrary.clear();\n" \
+   "         others.forEach(([id, ...names]) => inLibrary.set(id, names));\n" \
    "         lanStart();\n" \
    "         return lanReady ? 'ok' : 'later';\n" \
+   "      },\n" \
+   "      /* The pictures of one that isn't in Steam. */\n" \
+   "      art(id, icon, wide) {\n" \
+   "         art.set(id, { icon, wide });\n" \
+   "         new Set(told.map(t => t.who)).forEach(again);\n" \
+   "         return 'ok';\n" \
    "      },\n" \
    "      /* Says what the invite that follows is to. */\n" \
    "      invited(friend, name) {\n" \

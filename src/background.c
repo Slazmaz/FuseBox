@@ -195,6 +195,7 @@ static int SDLCALL take_clicks(void *user)
       Uint64 since = SDL_GetTicks();
       unsigned long long a, b;
       char what[128];
+      const char *flag;
       int i;
 
       if (steamui_asked(what, sizeof(what), stop))
@@ -214,11 +215,17 @@ static int SDLCALL take_clicks(void *user)
             tell_session(&session, line);
             continue;
          }
-         if (SDL_sscanf(what, "open %llu", &a) != 1 || a > 0xFFFFFFFFu)
+         if (SDL_sscanf(what, "open %llu", &a) == 1)
+            flag = "--open";
+         else if (SDL_sscanf(what, "art %llu", &a) == 1)
+            flag = "--art";
+         else
+            continue;
+         if (a > 0xFFFFFFFFu)
             continue;
          /* A process of its own: it reads the library, which is the other
           * thread's here. */
-         const char *args[] = { NULL, "--open", NULL, NULL };
+         const char *args[] = { NULL, flag, NULL, NULL };
          char exe[1100], id[16];
          SDL_Process *p;
 
@@ -279,6 +286,20 @@ int background_open(const char *data_dir, const char *config_dir, const char *ap
    library_discard();
    library_quit();
    return found && platform_open(exe) ? 0 : 1;
+}
+
+int background_art(const char *data_dir, const char *config_dir, const char *id)
+{
+   bool ok;
+
+   ra_init(config_dir);
+   steam_read_settings(config_dir);
+   if (!steam_menus() || !library_init(data_dir))
+      return 1;
+   ok = steamui_art((Uint32)SDL_strtoul(id, NULL, 10), NULL);
+   library_discard();
+   library_quit();
+   return ok ? 0 : 1;
 }
 
 /* How a game is started, and what Steam is to know of it. */

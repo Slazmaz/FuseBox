@@ -27,4 +27,8 @@ int background_game(const char *data_dir, const char *config_dir, char **argv);
  * shortcut that is (its button in Steam). */
 int background_open(const char *data_dir, const char *config_dir, const char *appid);
 
+/* fusebox --art <id>: the pictures of a game that isn't in Steam, to Steam
+ * (steamui_art). */
+int background_art(const char *data_dir, const char *config_dir, const char *id);
+
 #endif
