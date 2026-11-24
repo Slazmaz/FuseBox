@@ -71,6 +71,7 @@ add_library(fusebox_core STATIC
    src/history.c
    src/lan.c
    src/stream.c
+   src/vlan.c
    src/tunnel.c
    src/steamnet.c
    src/session.c
