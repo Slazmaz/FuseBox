@@ -39,7 +39,8 @@
  * rest: by a shortcut that's there only meanwhile.
  *
  * An accepted invite is a steam:// address this page opens: taken the same way.
- * Only one to Spacewar that FuseBox's message came with: others are Steam's.
+ * Only one to Spacewar that FuseBox's message came with: others are Steam's, and
+ * so is inviting while friends see a game of Steam's.
  * Steam knows the invite as one to Spacewar. Which game it's to is in the chat
  * message that comes with it (not shown here), and the invite is shown as one to that: by its
  * app id, for which the friends' own store of apps' names and pictures answers
@@ -578,6 +579,8 @@
    "      return ids;\n" \
    "   };\n" \
    "   const lanGame = () => running().find(app => lanGames.has(app)) || 0;\n" \
+   "   /* Friends see a game of Steam's: inviting is to that one. */\n" \
+   "   const steamGame = () => ![0, SPACEWAR].includes(ui.FriendStore.self.persona.m_unGamePlayedAppID || 0);\n" \
    "   const take = url => {\n" \
    "      const m = /^steam:\\/\\/joinlobby\\/480\\/(\\d+)\\/(\\d+)/.exec(String(url));\n" \
    "      if (!m || !heard || passed.has(m[1]) || !toLobby(m[1])) return false;\n" \
@@ -767,7 +770,7 @@
    "         });\n" \
    "         Object.defineProperty(proto, 'connect_string', { configurable: true, enumerable: was.enumerable, get() {\n" \
    "            const own = was.get.call(this);\n" \
-   "            return !own && heard && this === fs.self.persona && lanGame() ? FUSEBOX : own;\n" \
+   "            return !own && heard && this === fs.self.persona && !steamGame() && lanGame() ? FUSEBOX : own;\n" \
    "         } });\n" \
    "         undoLan.push(() => Object.defineProperty(proto, 'connect_string', was));\n" \
    "         lanMenu = true;\n" \
