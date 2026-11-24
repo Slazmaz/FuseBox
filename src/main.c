@@ -15,6 +15,7 @@
 #include "ra.h"
 #include "roms.h"
 #include "scan.h"
+#include "session.h"
 #include "sgdb.h"
 #include "steam.h"
 #include "steamui.h"
@@ -3632,6 +3633,16 @@ int main(int argc, char **argv)
       int code;
       SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
       code = base ? background_open(base, config, argv[2]) : 1;
+      SDL_Quit();
+      return code;
+   }
+   if (argc == 2 && SDL_strcmp(argv[1], "--session") == 0)
+   {
+      int code;
+      if (!SDL_Init(0) || !base)
+         return 1;
+      code = session_run(base, config);
+      http_quit();
       SDL_Quit();
       return code;
    }

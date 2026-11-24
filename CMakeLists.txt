@@ -73,6 +73,7 @@ add_library(fusebox_core STATIC
    src/stream.c
    src/tunnel.c
    src/steamnet.c
+   src/session.c
 )
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
