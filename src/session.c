@@ -32,6 +32,8 @@
 #define LEFT_MS (60 * 1000)
 /* Steam's answers come within this (ms). */
 #define ANSWER_MS 30000
+/* An invite follows what's said of it after this (ms). */
+#define SAID_MS 1000
 #define ONE_NAME L"FuseBoxSession"
 
 enum state
@@ -55,10 +57,13 @@ static struct
    /* The FuseBox that runs the game; 0: not seen (yet). */
    Uint32 game;
    bool started;
-   /* The game's path (a guest's). */
-   char path[1024];
-   /* To be invited once there's a lobby. */
-   Uint64 invites[MEMBERS];
+   /* The game's name, and path (a guest's). */
+   char name[256], path[1024];
+   /* To be invited once there's a lobby; told (when, 0 for not yet) first. */
+   struct
+   {
+      Uint64 who, told;
+   } invites[MEMBERS];
    int invite_count;
    Uint64 members[MEMBERS];
    int member_count;
@@ -170,7 +175,7 @@ static void end_session(const char *why)
    ses.appid = ses.game = 0;
    ses.started = ses.had_guests = false;
    ses.invite_count = ses.member_count = ses.port_count = 0;
-   ses.ports_text[0] = ses.path[0] = '\0';
+   ses.ports_text[0] = ses.name[0] = ses.path[0] = '\0';
    set_state(IDLE);
 }
 
@@ -375,6 +380,7 @@ static void describe_game(void)
    {
       steamnet_set(ses.lobby, "id", g->id);
       /* Its own: what the user renamed it to, friends do not have. */
+      SDL_strlcpy(ses.name, g->own_name, sizeof(ses.name));
       steamnet_set(ses.lobby, "name", g->own_name);
       steamnet_set(ses.lobby, "source", g->rom[0] ? g->source : "");
       steamnet_set(ses.lobby, "hash", g->ra_hash);
@@ -440,6 +446,7 @@ static void start_game(void)
       library_quit();
    }
    ses.appid = appid;
+   SDL_strlcpy(ses.name, name, sizeof(ses.name));
    if (ses.path[0] && (ses.game = lan_game(ses.config_dir, appid, ses.path)))
       SDL_Log("%s runs already", name);
    else if (ses.path[0])
@@ -469,21 +476,36 @@ static void invite(Uint32 appid, Uint64 who)
       steamnet_create(MEMBERS);
    }
    if (ses.invite_count < MEMBERS)
-      ses.invites[ses.invite_count++] = who;
+   {
+      ses.invites[ses.invite_count].who = who;
+      ses.invites[ses.invite_count++].told = 0;
+   }
    ses.alone_since = SDL_GetTicks();
 }
 
 /* Sends those that wait. */
 static void send_invites(void)
 {
+   Uint64 now = SDL_GetTicks();
    int i;
 
    if (ses.state != HOSTING && ses.state != JOINED)
       return;
    for (i = 0; i < ses.invite_count; i++)
-      SDL_Log("Inviting %s: %s", steamnet_name(ses.invites[i]),
-            steamnet_invite(ses.lobby, ses.invites[i]) ? "sent" : "refused");
-   ses.invite_count = 0;
+      if (!ses.invites[i].told)
+      {
+         if (ses.name[0])
+            steamui_invited(ses.invites[i].who, ses.name, NULL);
+         ses.invites[i].told = SDL_max(now, 1);
+      }
+      else if (now - ses.invites[i].told >= SAID_MS)
+      {
+         SDL_Log("Inviting %s: %s", steamnet_name(ses.invites[i].who),
+               steamnet_invite(ses.lobby, ses.invites[i].who) ? "sent" : "refused");
+         SDL_memmove(&ses.invites[i], &ses.invites[i + 1],
+               sizeof(ses.invites[0]) * (size_t)(--ses.invite_count - i));
+         i--;
+      }
 }
 
 static void join(Uint64 lobby, Uint64 host)

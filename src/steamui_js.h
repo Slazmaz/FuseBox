@@ -39,6 +39,11 @@
  * rest: by a shortcut that's there only meanwhile.
  *
  * An accepted invite is a steam:// address this page opens: taken the same way.
+ * Steam knows the invite as one to Spacewar. Which game it's to is in the chat
+ * message that comes with it, and the invite is shown as one to that: by its
+ * app id, for which the friends' own store of apps' names and pictures answers
+ * here. One that came with the message is over when the friend plays nothing
+ * any more, not when it isn't Spacewar.
  *
  * Friends' achievements go in the achievements' section, under its link, and
  * leaderboards after it, a section made of Steam's parts: like the button.
@@ -51,7 +56,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 31) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 32) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -516,9 +521,10 @@
    "            const p = numbers.get(parseInt(props.src.substr(props.src.indexOf(MARK) + MARK.length, 8), 16));\n" \
    "            if (p && p.avatar) props = { ...props, src: p.avatar };\n" \
    "         }\n" \
+   "         else [type, props] = invited(type, props);\n" \
    "         /* How many friends play, by the friends to compare to: a link to a page\n" \
    "            of Steam's that isn't there, so only text. */\n" \
-   "         else if (props && typeof props.href === 'string' && props.href.includes('/friendsthatplay/')\n" \
+   "         if (props && typeof props.href === 'string' && props.href.includes('/friendsthatplay/')\n" \
    "               && players.has(Number(props.href.split('/friendsthatplay/')[1])))\n" \
    "            props = { ...props, href: undefined, underline: 'none', style: { ...props.style, pointerEvents: 'none' } };\n" \
    "         return plain.call(this, type, props, ...more);\n" \
@@ -554,7 +560,7 @@
    "      };\n" \
    "   }\n" \
    "   /* Playing with friends. */\n" \
-   "   const FUSEBOX = '+fusebox', SPACEWAR = 480, lanGames = new Set(), passed = new Set();\n" \
+   "   const FUSEBOX = '+fusebox', SPACEWAR = 480, lanGames = new Map(), passed = new Set();\n" \
    "   const ui = window.g_FriendsUIApp, undoLan = [];\n" \
    "   let lanReady = false;\n" \
    "   const lanGame = () => {\n" \
@@ -569,7 +575,81 @@
    "      send('join ' + m[1] + ' ' + m[2]);\n" \
    "      return true;\n" \
    "   };\n" \
-   "   const overview = app => appStore.GetAppOverviewByAppID(app);\n" \
+   "   /* What was said of invites: by whom, when, to which game. */\n" \
+   "   const SAID = /^Invited you to play (.+) with FuseBox$/, told = [];\n" \
+   "   const bare = name => name.toLowerCase().replace(/[^a-z0-9]/g, '') || name.toLowerCase().trim();\n" \
+   "   const gameNamed = name => {\n" \
+   "      for (const [app, names] of lanGames) if (names.some(n => bare(n) === bare(name))) return app;\n" \
+   "      return 0;\n" \
+   "   };\n" \
+   "   const marked = invite => !!invite && Object.hasOwn(invite, 'fusebox');\n" \
+   "   const toldOf = invite => {\n" \
+   "      const off = t => Math.abs(t.time - invite.rtTimestamp);\n" \
+   "      return told.filter(t => t.who === invite.unAccountIDInviter && off(t) <= 120)\n" \
+   "         .sort((x, y) => off(x) - off(y))[0];\n" \
+   "   };\n" \
+   "   const fromFusebox = invite => marked(invite) && !!toldOf(invite);\n" \
+   "   const gameOf = invite => {\n" \
+   "      const t = toldOf(invite);\n" \
+   "      return t ? gameNamed(t.name) : 0;\n" \
+   "   };\n" \
+   "   /* An invite that was drawn already is drawn again. */\n" \
+   "   const again = who => {\n" \
+   "      try {\n" \
+   "         const latest = ui.ChatStore.GameInviteStore.m_mapLatestInvite, invite = latest.get(who);\n" \
+   "         if (fromFusebox(invite)) {\n" \
+   "            latest.delete(who);\n" \
+   "            latest.set(who, invite);\n" \
+   "         }\n" \
+   "      } catch (e) { }\n" \
+   "   };\n" \
+   "   const note = (who, time, text) => {\n" \
+   "      const m = SAID.exec(String(text).trim());\n" \
+   "      if (!m || told.some(t => t.who === who && t.time === time)) return;\n" \
+   "      told.push({ who, time, name: m[1] });\n" \
+   "      if (told.length > 200) told.shift();\n" \
+   "      again(who);\n" \
+   "   };\n" \
+   "   /* A game of FuseBox's as the friends' part knows apps. */\n" \
+   "   const infos = new Map(), overview = app => appStore.GetAppOverviewByAppID(app);\n" \
+   "   const infoOf = (app, like) => {\n" \
+   "      if (infos.has(app)) return infos.get(app);\n" \
+   "      const is = get => ({ get, configurable: true }), o = () => overview(app);\n" \
+   "      const icon = () => {\n" \
+   "         try { return o() && appStore.GetIconURLForApp(o()) || undefined; } catch (e) { return undefined; }\n" \
+   "      };\n" \
+   "      const info = Object.create(like, { appid: is(() => app), icon_url: is(icon), icon_url_no_default: is(icon),\n" \
+   "         name: is(() => o() ? o().display_name : lanGames.has(app) ? lanGames.get(app)[0] : '') });\n" \
+   "      infos.set(app, info);\n" \
+   "      return info;\n" \
+   "   };\n" \
+   "   const wide = app => {\n" \
+   "      try {\n" \
+   "         const o = overview(app);\n" \
+   "         return appStore.GetCustomLandcapeImageURLs(o)[0] || appStore.GetIconURLForApp(o) || '';\n" \
+   "      } catch (e) { return ''; }\n" \
+   "   };\n" \
+   "   /* The friend, as in the game the invite is to. */\n" \
+   "   const hosts = new Map();\n" \
+   "   const hostOf = (friend, app) => {\n" \
+   "      const key = friend.accountid + ' ' + app, is = get => ({ get, configurable: true });\n" \
+   "      if (!hosts.has(key)) hosts.set(key, Object.create(friend, { persona: is(() => Object.create(friend.persona,\n" \
+   "         { m_unGamePlayedAppID: is(() => app) })) }));\n" \
+   "      return hosts.get(key);\n" \
+   "   };\n" \
+   "   /* What's made of them, changed on the way: the invite's friend, and the\n" \
+   "      game's picture. */\n" \
+   "   const invited = (type, props) => {\n" \
+   "      const invite = props && props.gameInvite, friend = props && props.inviter;\n" \
+   "      if (fromFusebox(invite) && friend && ui && friend !== ui.FriendStore.self && friend.persona && friend.persona.is_ingame)\n" \
+   "         return [type, { ...props, inviter: hostOf(friend, invite.appID) }];\n" \
+   "      if (props && typeof props.strClassNames === 'string' && lanGames.has(props.appID)) {\n" \
+   "         const src = wide(props.appID);\n" \
+   "         if (src) return ['img', { src, className: props.strClassNames }];\n" \
+   "      }\n" \
+   "      return [type, props];\n" \
+   "   };\n" \
+   "   let fresh = { app: 0, until: 0 };\n" \
    "   /* A function of Steam's, replaced by one that may leave it to it. */\n" \
    "   const around = (o, name, mine) => {\n" \
    "      const was = Object.getOwnPropertyDescriptor(o, name), f = o[name];\n" \
@@ -613,6 +693,38 @@
    "            try { around(o, name, function(steams, url, ...more) { return take(url) ? undefined : steams(url, ...more); }); }\n" \
    "            catch (e) { }\n" \
    "         });\n" \
+   "      /* An invite's game is the one it was said to be to, where that's here. */\n" \
+   "      try {\n" \
+   "         const invites = ui.ChatStore.GameInviteStore;\n" \
+   "         around(invites, 'RegisterGameInvite', function(steams, who, time, app, ...more) {\n" \
+   "            const invite = steams(who, time, app, ...more), lobby = invite && invite.lobbyID;\n" \
+   "            if (lobby && Number(invite.appID) === SPACEWAR && !marked(invite)) {\n" \
+   "               const url = invite.inviteString;\n" \
+   "               Object.defineProperty(invite, 'fusebox', { value: true });\n" \
+   "               Object.defineProperty(invite, 'inviteString', { configurable: true, get: () => url });\n" \
+   "               Object.defineProperty(invite, 'appID', { configurable: true, get: () => gameOf(invite) || SPACEWAR });\n" \
+   "            }\n" \
+   "            return invite;\n" \
+   "         });\n" \
+   "         around(invites, 'RegisterGameInvitesInMessage', function(steams, who, time, text) {\n" \
+   "            note(who, time, text);\n" \
+   "            const done = steams(who, time, text);\n" \
+   "            /* The toast comes next. */\n" \
+   "            const invite = String(text).includes('lobbyinvite') && this.m_mapLatestInvite.get(who);\n" \
+   "            if (marked(invite)) fresh = { app: gameOf(invite), until: Date.now() + 5000 };\n" \
+   "            return done;\n" \
+   "         });\n" \
+   "         around(invites, 'GetPendingInvite', function(steams, who) {\n" \
+   "            const own = steams(who), invite = own ? null : this.m_mapLatestInvite.get(who);\n" \
+   "            if (!fromFusebox(invite) || invite.bDismissed || invite.bAccepted || invite.bOld) return own;\n" \
+   "            const friend = fs.GetPlayer(who);\n" \
+   "            return friend && friend.persona && friend.persona.is_ingame ? invite : own;\n" \
+   "         });\n" \
+   "         around(ui.AppInfoStore, 'GetAppInfo', function(steams, app) {\n" \
+   "            if (app === SPACEWAR && fresh.app && Date.now() < fresh.until) return infoOf(fresh.app, steams(SPACEWAR));\n" \
+   "            return lanGames.has(app) ? infoOf(app, steams(SPACEWAR)) : steams(app);\n" \
+   "         });\n" \
+   "      } catch (e) { }\n" \
    "   };\n" \
    "   /* Bars drawn before, drawn again. */\n" \
    "   const bars = () => mine && SteamUIStore.WindowStore.SteamUIWindows.forEach(w => {\n" \
@@ -629,7 +741,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 31,\n" \
+   "      version: 32,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -638,9 +750,17 @@
    "      },\n" \
    "      lan(apps) {\n" \
    "         lanGames.clear();\n" \
-   "         apps.forEach(app => lanGames.add(app));\n" \
+   "         apps.forEach(([app, ...names]) => lanGames.set(app, names));\n" \
    "         lanStart();\n" \
    "         return lanReady ? 'ok' : 'later';\n" \
+   "      },\n" \
+   "      /* Says what the invite that follows is to. */\n" \
+   "      invited(friend, name) {\n" \
+   "         if (!ui || !ui.ChatStore) return '';\n" \
+   "         const text = 'Invited you to play ' + name + ' with FuseBox';\n" \
+   "         ui.ChatStore.GetFriendChat(Number(BigInt(friend) & 0xffffffffn)).SendChatMessage(text);\n" \
+   "         note(ui.FriendStore.self.accountid, ui.GetServerRTime32(), text);\n" \
+   "         return 'ok';\n" \
    "      },\n" \
    "      /* Runs a shortcut there is; '' if Steam hasn't it. */\n" \
    "      async run(app) {\n" \
@@ -660,7 +780,7 @@
    "         if (icon) apps.SetShortcutIcon(app, icon);\n" \
    "         if (!overlay) apps.ToggleEnableSteamOverlayForApp(app);\n" \
    "         if (!input) apps.ToggleAllowDesktopConfiguration(app);\n" \
-   "         lanGames.add(app);\n" \
+   "         lanGames.set(app, [name]);\n" \
    "         lanStart();\n" \
    "         if (await window.__fusebox.run(app)) return String(app);\n" \
    "         window.__fusebox.unonce(app);\n" \

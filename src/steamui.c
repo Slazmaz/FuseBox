@@ -179,7 +179,13 @@ static void push_lan(const char *url, SDL_AtomicInt *abort)
       const struct game *g = library_game(i);
 
       if (lan_app(g) && SDL_strcmp(g->source, "Steam") != 0)
-         SDL_IOprintf(io, "%s%u", n++ ? "," : "", (unsigned)lan_app(g));
+      {
+         SDL_IOprintf(io, "%s[%u,", n++ ? "," : "", (unsigned)lan_app(g));
+         json_write_string(io, g->name);
+         SDL_IOprintf(io, ",");
+         json_write_string(io, g->own_name);
+         SDL_IOprintf(io, "]");
+      }
    }
    library_unlock();
    SDL_IOprintf(io, "])");
@@ -358,7 +364,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 31"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 32"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
@@ -431,6 +437,32 @@ bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort)
          " : (SteamClient.Apps.RemoveShortcut(%u), 'ok')", (unsigned)appid, (unsigned)appid);
    return find_target(url, sizeof(url), abort)
       && evaluate(url, script, result, sizeof(result), abort);
+}
+
+void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char url[512], clean[128], result[64];
+   size_t i, n = 0;
+
+   if (!io)
+      return;
+   /* One line, and nothing a chat would take for markup. */
+   for (i = 0; name[i] && n + 1 < sizeof(clean); i++)
+      if ((Uint8)name[i] >= ' ')
+         clean[n++] = name[i] == '[' ? '(' : name[i] == ']' ? ')' : name[i];
+   /* Not in the middle of a letter. */
+   while (name[i] && n && ((Uint8)clean[n - 1] & 0x80))
+      n--;
+   clean[n] = '\0';
+   SDL_IOprintf(io, "window.__fusebox ? __fusebox.invited('%llu',", (unsigned long long)who);
+   json_write_string(io, clean);
+   SDL_IOprintf(io, ") : ''");
+   SDL_WriteU8(io, '\0');
+   if (clean[0] && find_target(url, sizeof(url), abort))
+      evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, sizeof(result), abort);
+   SDL_CloseIO(io);
 }
 
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort)

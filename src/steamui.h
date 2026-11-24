@@ -45,6 +45,8 @@ Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort);
 Uint32 steamui_once(const char *name, const char *exe, const char *options, const char *icon,
       bool overlay, bool input, SDL_AtomicInt *abort);
 bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort);
+/* Sends the friend a chat message: invited to that game. */
+void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort);
 /* Has Steam join a lobby after all that steamui_asked told of. */
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
