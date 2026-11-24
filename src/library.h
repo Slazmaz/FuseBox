@@ -7,7 +7,7 @@
 
 /* The games FuseBox knows and the art picked for each, kept in
  * <data>/library.json with the images in <data>/art/<game>/<type>.<ext>.
- * library.json is what other apps read (see README.md); fusebox-cli adds
+ * library.json is what other apps read; fusebox-cli adds
  * to it too, so saving merges in what another process wrote meanwhile.
  * Games are only ever added: an index stays the same game. Lock around
  * every use of a game from more than one thread. */
