@@ -134,7 +134,7 @@ static bool known(const char *dir)
    for (i = 0; i < library_count() && !seen; i++)
    {
       const struct game *g = library_game(i);
-      if (g->installed && g->start_dir[0] && SDL_strncmp(g->id, "disk:", 5) != 0
+      if (g->scan.installed && g->start_dir[0] && SDL_strncmp(g->id, "disk:", 5) != 0
             && !g->rom[0])
          seen = within(g->start_dir, dir) || within(dir, g->start_dir);
    }
@@ -241,7 +241,7 @@ static void add_game(const char *exe, const char *dir, const char *why)
    SDL_strlcpy(g.exe, exe, sizeof(g.exe));
    SDL_strlcpy(g.game_exe, exe, sizeof(g.game_exe));
    parent_dir(exe, g.start_dir, sizeof(g.start_dir));
-   g.installed = true;
+   g.scan.installed = true;
    /* Steam's own defaults for a new shortcut. */
    g.steam_overlay = g.steam_input = true;
    library_add(&g);
@@ -595,8 +595,9 @@ int disk_add_exe(const char *exe)
    for (index = 0; index < library_count(); index++)
       if (!library_game(index)->rom[0] && SDL_strcasecmp(library_game(index)->exe, exe) == 0)
       {
-         library_game(index)->installed = true;
-         library_game(index)->selected = true;
+         /* Both: a scan under way may be past it. */
+         library_game(index)->installed = library_game(index)->scan.installed = true;
+         library_game(index)->selected = library_game(index)->scan.selected = true;
          library_unlock();
          library_changed();
          return index;
@@ -614,9 +615,9 @@ int disk_add_exe(const char *exe)
    SDL_strlcpy(g.exe, exe, sizeof(g.exe));
    SDL_strlcpy(g.game_exe, exe, sizeof(g.game_exe));
    parent_dir(exe, g.start_dir, sizeof(g.start_dir));
-   g.installed = true;
+   g.installed = g.scan.installed = true;
    /* Picked on purpose: meant for Steam. */
-   g.selected = true;
+   g.selected = g.scan.selected = true;
    g.steam_overlay = g.steam_input = true;
    return library_add(&g);
 }
@@ -641,7 +642,7 @@ void disk_keep_added(void)
    {
       struct game *g = library_game(i);
       if (SDL_strncmp(g->id, "added:", 6) == 0 && platform_exists(g->exe))
-         g->installed = true;
+         g->scan.installed = true;
    }
    library_unlock();
 }

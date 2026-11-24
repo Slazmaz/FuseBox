@@ -182,7 +182,7 @@ static int shortcut_game(Uint32 appid, const struct vdf *s)
          if (SDL_strcmp(g->source, "Steam") == 0 || !g->exe[0]
                || (known ? g->shortcut_id : game_appid(g)) != appid)
             continue;
-         if (g->installed)
+         if (g->scan.installed)
             return i;
          if (old < 0)
             old = i;
@@ -191,7 +191,7 @@ static int shortcut_game(Uint32 appid, const struct vdf *s)
    {
       if (!starts_rom(options, library_game(i)))
          continue;
-      if (library_game(i)->installed)
+      if (library_game(i)->scan.installed)
          return i;
       if (old < 0)
          old = i;
@@ -235,7 +235,7 @@ int steam_read_shortcuts(void)
          struct game *lg = library_game(i);
          bool moved = false;
 
-         lg->steam_appid = lg->shortcut_id = appid;
+         lg->scan.steam_appid = lg->shortcut_id = appid;
          read_settings(lg, s);
          if (lg->rom[0])
          {
@@ -244,15 +244,15 @@ int steam_read_shortcuts(void)
             moved = SDL_strcmp(lg->sc_exe, lg->exe) != 0;
          }
          /* Ticked from the start: only what Steam already has. */
-         lg->selected = true;
+         lg->scan.selected = true;
          /* Its launcher knows best: uninstalling often leaves the folder
           * (settings, addons) behind. A ROM whose shortcut is for another
           * emulator is only updated. */
          /* Gone: kept until ticked for removal. */
-         if ((!present && !moved) || !lg->installed)
+         if ((!present && !moved) || !lg->scan.installed)
          {
-            lg->gone = true;
-            lg->selected = false;
+            lg->scan.gone = true;
+            lg->scan.selected = false;
          }
          matched = true;
       }
@@ -269,13 +269,13 @@ int steam_read_shortcuts(void)
       if (SDL_strlen(g.exe) > 4 && SDL_strcasecmp(g.exe + SDL_strlen(g.exe) - 4, ".exe") == 0)
          SDL_strlcpy(g.game_exe, g.exe, sizeof(g.game_exe));
       unquote(vdf_str(s, "StartDir"), g.start_dir, sizeof(g.start_dir));
-      g.steam_appid = appid;
+      g.scan.steam_appid = appid;
       read_settings(&g, s);
       /* First seen: its settings are what Steam has. */
       g.steam_overlay = g.sc_overlay;
       g.steam_input = g.sc_input;
-      g.installed = present;
-      g.gone = !present;
+      g.scan.installed = present;
+      g.scan.gone = !present;
       library_add(&g);
    }
    vdf_free(root);

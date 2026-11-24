@@ -36,10 +36,12 @@ static void scan(void)
    Uint64 start = SDL_GetTicks();
    int launchers, disks, roms, i;
 
+   library_scan_begin();
    launchers = scan_launchers();
    disk_keep_added();
    disks = scan_disks(1);
    roms = scan_roms();
+   library_scan_end(false);
    library_lock();
    printf("emulators: %s\n", roms_emulators()[0] ? roms_emulators() : "none");
    for (i = 0; i < roms_folder_count(); i++)

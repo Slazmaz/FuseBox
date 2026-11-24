@@ -102,6 +102,14 @@ struct game
    bool installed;
    bool gone;
    bool selected;
+   /* Those, and steam_appid, as the scan under way has found them: they
+    * become the above all at once when it's done (library_scan_end), so
+    * nobody sees, or saves, half a scan. */
+   struct
+   {
+      bool installed, gone, selected;
+      Uint32 steam_appid;
+   } scan;
    unsigned art_version;
    /* A ROM nothing here can start (exe is empty, or what it last was). */
    bool no_emulator;
@@ -125,6 +133,11 @@ int library_match(const char *name_or_id);
 /* Adds the game, or updates the one with its id (keeping its art and
  * match); returns its index. */
 int library_add(const struct game *game);
+
+/* Around a scan: what's found goes in each game's scan, and from there into
+ * the game. keep_ticks: ticks the user changed (during it too) stay. */
+void library_scan_begin(void);
+void library_scan_end(bool keep_ticks);
 
 /* The user's name for the game; empty for its own again. */
 void library_rename(int index, const char *name);

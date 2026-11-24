@@ -28,7 +28,7 @@ static void add(const char *id, const char *name, const char *source, const char
    /* What proves it installed is its own exe, when it's one: its icon. */
    if (SDL_strlen(installed) > 4 && SDL_strcasecmp(installed + SDL_strlen(installed) - 4, ".exe") == 0)
       SDL_strlcpy(g.game_exe, installed, sizeof(g.game_exe));
-   g.installed = true;
+   g.scan.installed = true;
    /* Steam's own defaults for a new shortcut. */
    g.steam_overlay = g.steam_input = true;
    library_add(&g);

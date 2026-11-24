@@ -1558,7 +1558,7 @@ static void add_games(struct scan *sc)
          SDL_strlcpy(g->name, names[i], sizeof(g->name));
          SDL_strlcpy(g->source, systems[r->system].name, sizeof(g->source));
          SDL_strlcpy(g->rom, r->path, sizeof(g->rom));
-         g->installed = true;
+         g->scan.installed = true;
          /* Steam's own defaults for a new shortcut. */
          g->steam_overlay = g->steam_input = true;
          library_lock();

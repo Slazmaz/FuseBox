@@ -193,25 +193,11 @@ static GLuint make_texture(const Uint8 *pixels, int w, int h)
 static void job_scan(void *data)
 {
    struct msg *m = new_msg(MSG_SCANNED);
-   /* What each game's changed tick is (1 off, 2 on), 0 if it's as Steam has it. */
-   Uint8 *ticks = NULL;
-   int steam_n, found, i, count;
+   int steam_n, found;
 
    /* What's installed and what Steam has is found again each time: the
     * launchers first, then Steam's shortcuts matched to their games. */
-   library_lock();
-   count = library_count();
-   if (data)
-      ticks = SDL_calloc((size_t)SDL_max(1, count), 1);
-   for (i = 0; i < count; i++)
-   {
-      struct game *g = library_game(i);
-      if (ticks && (g->gone ? g->selected : g->installed && g->selected != (g->steam_appid != 0)))
-         ticks[i] = g->selected ? 2 : 1;
-      g->installed = g->gone = g->selected = false;
-      g->steam_appid = 0;
-   }
-   library_unlock();
+   library_scan_begin();
    found = scan_launchers();
    disk_keep_added();
    /* Then what no launcher knows: Windows' record of games, folders that
@@ -220,15 +206,7 @@ static void job_scan(void *data)
    /* ROMs last: what their emulators' folders hold is for the others. */
    found += scan_roms();
    steam_n = steam_read_shortcuts();
-   if (ticks)
-   {
-      library_lock();
-      for (i = 0; i < count; i++)
-         if (ticks[i] && (library_game(i)->installed || library_game(i)->gone))
-            library_game(i)->selected = ticks[i] == 2;
-      library_unlock();
-      SDL_free(ticks);
-   }
+   library_scan_end(data != NULL);
    SDL_free(data);
 
    library_save();

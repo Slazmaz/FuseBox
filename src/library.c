@@ -175,21 +175,58 @@ int library_add(const struct game *game)
          g->ra_size = g->ra_time = 0;
       SDL_strlcpy(g->rom, game->rom, sizeof(g->rom));
       g->no_emulator = game->no_emulator;
-      if (game->steam_appid)
-         g->steam_appid = game->steam_appid;
       g->installed |= game->installed;
-      g->sc_overlay = game->sc_overlay;
-      g->sc_input = game->sc_input;
-      SDL_strlcpy(g->sc_options, game->sc_options, sizeof(g->sc_options));
-      SDL_strlcpy(g->sc_through, game->sc_through, sizeof(g->sc_through));
-      SDL_strlcpy(g->sc_exe, game->sc_exe, sizeof(g->sc_exe));
-      SDL_strlcpy(g->sc_name, game->sc_name, sizeof(g->sc_name));
-      g->gone |= game->gone;
       g->selected |= game->selected;
+      g->scan.installed |= game->scan.installed;
+      g->scan.gone |= game->scan.gone;
+      g->scan.selected |= game->scan.selected;
+      /* Only Steam's shortcuts say what Steam has. */
+      if (game->scan.steam_appid)
+      {
+         g->scan.steam_appid = game->scan.steam_appid;
+         g->sc_overlay = game->sc_overlay;
+         g->sc_input = game->sc_input;
+         SDL_strlcpy(g->sc_options, game->sc_options, sizeof(g->sc_options));
+         SDL_strlcpy(g->sc_through, game->sc_through, sizeof(g->sc_through));
+         SDL_strlcpy(g->sc_exe, game->sc_exe, sizeof(g->sc_exe));
+         SDL_strlcpy(g->sc_name, game->sc_name, sizeof(g->sc_name));
+      }
    }
    lib.dirty = true;
    library_unlock();
    return i;
+}
+
+void library_scan_begin(void)
+{
+   int i;
+
+   library_lock();
+   for (i = 0; i < lib.count; i++)
+      SDL_zero(lib.games[i].scan);
+   library_unlock();
+}
+
+void library_scan_end(bool keep_ticks)
+{
+   int i;
+
+   library_lock();
+   for (i = 0; i < lib.count; i++)
+   {
+      struct game *g = &lib.games[i];
+      bool changed = g->gone ? g->selected
+         : g->installed && g->selected != (g->steam_appid != 0);
+
+      if (!keep_ticks || !changed || !(g->scan.installed || g->scan.gone))
+         g->selected = g->scan.selected;
+      g->installed = g->scan.installed;
+      g->gone = g->scan.gone;
+      if (g->steam_appid != g->scan.steam_appid)
+         lib.dirty = true;
+      g->steam_appid = g->scan.steam_appid;
+   }
+   library_unlock();
 }
 
 void library_rename(int index, const char *name)
