@@ -4006,6 +4006,7 @@ int main(int argc, char **argv)
          | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
    if (!app.window || !(app.gl = SDL_GL_CreateContext(app.window)) || !gl_load())
    {
+      SDL_LogError(SDL_LOG_CATEGORY_VIDEO, "No window with OpenGL 3.3: %s", SDL_GetError());
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", "OpenGL 3.3 isn't available", NULL);
       return 1;
    }
