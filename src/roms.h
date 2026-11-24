@@ -61,6 +61,9 @@ void roms_choose(struct game *g, const struct rom_option *option);
  * now on: an emulator FuseBox knows, or any other (given just the ROM).
  * False if it's RetroArch without a core for the system. */
 bool roms_add_emulator(struct game *g, const char *exe);
+/* An emulator's name by its exe: the one FuseBox knows it by, else the
+ * file's. */
+void roms_emulator_name(const char *exe, char *dst, size_t size);
 /* The emulators the last scan found, "Dolphin, PCSX2". */
 const char *roms_emulators(void);
 

@@ -20,4 +20,8 @@ int background_run(const char *data_dir, const char *config_dir);
  * with its exit code. argv: main's. */
 int background_game(const char *config_dir, char **argv);
 
+/* fusebox --open <app id>: opens the emulator or launcher of the game whose
+ * shortcut that is (its button in Steam). */
+int background_open(const char *data_dir, const char *appid);
+
 #endif

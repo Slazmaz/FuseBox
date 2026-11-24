@@ -660,6 +660,16 @@ static int emulator_by_exe(const char *name, int *rank)
    return -1;
 }
 
+void roms_emulator_name(const char *exe, char *dst, size_t size)
+{
+   int rank, e = emulator_by_exe(base_name(exe), &rank);
+   char *dot;
+
+   SDL_strlcpy(dst, e >= 0 ? emulators[e].name : base_name(exe), size);
+   if (e < 0 && (dot = SDL_strrchr(dst, '.')) && dot > dst)
+      *dot = '\0';
+}
+
 static void add_emulator(struct scan *sc, const char *dir, const char *name)
 {
    struct found_emulator *f;

@@ -56,6 +56,9 @@ void platform_tray_start(void);
 void platform_tray_stop(void);
 /* Waits that long, or until quitting is asked for there: true then. */
 bool platform_tray_wait(int ms);
+/* A program's window to the front, or the program started; in front, though
+ * the caller isn't. False if it can't be. */
+bool platform_open(const char *exe);
 /* Runs a game and waits for it; its exit code. argv: its exe and arguments
  * (Windows: taken as they were typed, from after --run). */
 int platform_run_game(char **argv);

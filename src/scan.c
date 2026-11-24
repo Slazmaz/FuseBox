@@ -3,6 +3,7 @@
 #include "json.h"
 #include "library.h"
 #include "platform.h"
+#include "roms.h"
 
 #include <SDL3/SDL.h>
 
@@ -543,6 +544,43 @@ static void scan_heroic(void)
    SDL_snprintf(base, sizeof(base), "%s/.var/app/com.heroicgameslauncher.hgl/config/heroic", home);
    scan_heroic_dir(base);
 #endif
+}
+
+bool scan_program(const struct game *g, char *exe, size_t size, char *name, size_t name_size)
+{
+   exe[0] = '\0';
+   if (g->rom[0])
+   {
+      SDL_strlcpy(exe, g->exe, size);
+      roms_emulator_name(exe, name, name_size);
+   }
+   else if (SDL_strcmp(g->source, "Battle.net") == 0 || SDL_strcmp(g->source, "Epic") == 0)
+   {
+      /* Their games start through them. */
+      SDL_strlcpy(exe, g->exe, size);
+      SDL_strlcpy(name, g->source[0] == 'E' ? "Epic Games" : g->source, name_size);
+   }
+#ifdef _WIN32
+   else if (SDL_strcmp(g->source, "GOG") == 0)
+   {
+      /* Not needed for the game, so perhaps not there. */
+      char dir[1024];
+      if (platform_reg_string("HKLM", "SOFTWARE\\WOW6432Node\\GOG.com\\GalaxyClient\\paths", "client",
+               dir, sizeof(dir)))
+         SDL_snprintf(exe, size, "%s\\GalaxyClient.exe", dir);
+      SDL_strlcpy(name, "GOG Galaxy", name_size);
+   }
+   else if (SDL_strcmp(g->source, "Heroic") == 0)
+   {
+      /* As its URL handler names it: "C:\...\Heroic.exe" "%1" */
+      char command[1100], *end;
+      if (platform_reg_string("HKCU", "Software\\Classes\\heroic\\shell\\open\\command", NULL, command,
+               sizeof(command)) && command[0] == '"' && (end = SDL_strchr(command + 1, '"')))
+         SDL_strlcpy(exe, command + 1, SDL_min(size, (size_t)(end - command)));
+      SDL_strlcpy(name, "Heroic", name_size);
+   }
+#endif
+   return exe[0] && platform_exists(exe);
 }
 
 int scan_launchers(void)

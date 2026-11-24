@@ -509,6 +509,7 @@ static struct
 struct find_window
 {
    const WCHAR *exe;
+   /* NULL: any a program shows as its own. */
    const WCHAR *title;
    HWND found;
 };
@@ -521,7 +522,8 @@ static BOOL CALLBACK on_window(HWND hwnd, LPARAM user)
    HANDLE process;
 
    if (!IsWindowVisible(hwnd) || !GetWindowTextW(hwnd, text, SDL_arraysize(text))
-         || wcscmp(text, f->title) != 0)
+         || (f->title ? wcscmp(text, f->title) != 0 : GetWindow(hwnd, GW_OWNER)
+            || (GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW)))
       return TRUE;
    /* A folder in Explorer can be called that too. */
    GetWindowThreadProcessId(hwnd, &pid);
@@ -544,6 +546,51 @@ static bool to_front(const WCHAR *exe, const WCHAR *title)
       ShowWindowAsync(f.found, SW_RESTORE);
    SetForegroundWindow(f.found);
    return true;
+}
+
+bool platform_open(const char *exe)
+{
+   WCHAR *path = wide(exe), dir[1024], command[1100], *slash;
+   INPUT none;
+   STARTUPINFOW si;
+   PROCESS_INFORMATION pi;
+   bool ok = false;
+
+   if (!path || wcslen(path) >= SDL_arraysize(dir))
+   {
+      SDL_free(path);
+      return false;
+   }
+   /* Windows lets only who had the last input put a window in front: a mouse
+    * move of nothing, which is enough. */
+   SDL_zero(none);
+   none.type = INPUT_MOUSE;
+   SendInput(1, &none, sizeof(none));
+   if (to_front(path, NULL))
+   {
+      SDL_free(path);
+      return true;
+   }
+   /* From its own folder: some look there for their files. */
+   wcscpy(dir, path);
+   if ((slash = wcsrchr(dir, '\\')))
+      *slash = 0;
+   _snwprintf(command, SDL_arraysize(command), L"\"%ls\"", path);
+   command[SDL_arraysize(command) - 1] = 0;
+   SDL_zero(si);
+   si.cb = sizeof(si);
+   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, slash ? dir : NULL, &si, &pi))
+   {
+      AllowSetForegroundWindow(pi.dwProcessId);
+      CloseHandle(pi.hThread);
+      CloseHandle(pi.hProcess);
+      ok = true;
+   }
+   /* One that asks to run as administrator. */
+   else
+      ok = (INT_PTR)ShellExecuteW(NULL, NULL, path, NULL, slash ? dir : NULL, SW_SHOWNORMAL) > 32;
+   SDL_free(path);
+   return ok;
 }
 
 /* FuseBox's window to the front, or a new one. */
@@ -855,6 +902,16 @@ void platform_start_background(bool by_game)
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+bool platform_open(const char *exe)
+{
+   const char *args[] = { exe, NULL };
+   SDL_Process *p = SDL_CreateProcess(args, false);
+
+   if (p)
+      SDL_DestroyProcess(p);
+   return p != NULL;
 }
 
 void platform_tray_start(void)

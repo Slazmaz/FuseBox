@@ -2,6 +2,7 @@
 #include "library.h"
 #include "platform.h"
 #include "ra.h"
+#include "scan.h"
 #include "steam.h"
 #include "steamui.h"
 
@@ -143,6 +144,25 @@ int background_run(const char *data_dir, const char *config_dir)
    look_after_steam(data_dir, config_dir);
    platform_tray_stop();
    return 0;
+}
+
+int background_open(const char *data_dir, const char *appid)
+{
+   Uint32 id = (Uint32)SDL_strtoul(appid, NULL, 10);
+   char exe[1024], name[96];
+   bool found = false;
+   int i;
+
+   if (!id || !library_init(data_dir))
+      return 1;
+   library_lock();
+   for (i = 0; i < library_count() && !found; i++)
+      found = library_game(i)->steam_appid == id
+         && scan_program(library_game(i), exe, sizeof(exe), name, sizeof(name));
+   library_unlock();
+   library_discard();
+   library_quit();
+   return found && platform_open(exe) ? 0 : 1;
 }
 
 int background_game(const char *config_dir, char **argv)
