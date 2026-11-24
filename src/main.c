@@ -1835,7 +1835,7 @@ static void draw_sidebar(float w)
 
    /* Search, and beside it + to add a game by its exe. */
    text_field(x, S(80), lw - S(52), S(42), FIELD_FILTER, app.filter, "Search games", false, false,
-         S(26));
+         S(30));
    {
       float px = x + lw - S(42);
       bool over = hover(px, S(80), S(42), S(42));
@@ -1847,7 +1847,7 @@ static void draw_sidebar(float w)
       if (clicked_in(px, S(80), S(42), S(42), false))
          pick_exe();
    }
-   draw_icon(ICON_SEARCH, x + S(19), S(101), 16, C_DIM, 1);
+   draw_icon(ICON_SEARCH, x + S(23), S(101), 26, C_DIM, 1);
 
    /* How many, and select all. */
    library_lock();
