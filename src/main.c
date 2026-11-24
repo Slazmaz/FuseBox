@@ -2436,6 +2436,11 @@ static void open_list_modal(enum modal modal, int what)
    app.modal_scroll = 0;
 }
 
+static const char *scan_label(bool scanning)
+{
+   return scanning ? "Scanning..." : "Scan";
+}
+
 /* The ROM folders, each with an x to leave it out. Returns the card's
  * height. */
 static float draw_rom_folders(float x, float y, float w)
@@ -2476,6 +2481,10 @@ static float draw_rom_folders(float x, float y, float w)
    }
    if (button(x + S(24), cy + S(6), button_w("Add folder"), S(40), "Add folder", false, true, false))
       SDL_ShowOpenFolderDialog(on_rom_folder, NULL, app.window, NULL, false);
+   if (button(x + S(24) + button_w("Add folder") + S(8), cy + S(6),
+            button_w(scan_label(!app.scanned)), S(40), scan_label(!app.scanned), false,
+            app.scanned && !app.busy, false))
+      rescan(true);
    if (removed >= 0)
    {
       library_lock();
