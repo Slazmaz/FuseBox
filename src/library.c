@@ -58,6 +58,65 @@ void library_launch_options(const struct game *g, char *dst, size_t size)
          g->launch_options);
 }
 
+const char *library_path(const struct game *g)
+{
+   if (g->rom[0])
+      return g->rom;
+   if (g->game_exe[0])
+      return g->game_exe;
+   /* exe is the launcher, the same for all its games. */
+   if (g->start_dir[0] && (SDL_strcmp(g->source, "Battle.net") == 0
+            || SDL_strcmp(g->source, "Epic") == 0 || SDL_strcmp(g->source, "Heroic") == 0))
+      return g->start_dir;
+   return g->exe;
+}
+
+static bool is_sep(char c)
+{
+   return c == '/' || (PATH_SEP[0] == '\\' && c == '\\');
+}
+
+/* But for separators at the end. */
+static bool same_path(const char *a, const char *b)
+{
+   for (; *a && *b; a++, b++)
+   {
+#ifdef _WIN32
+      if (is_sep(*a) && is_sep(*b))
+         continue;
+      if (SDL_tolower((unsigned char)*a) != SDL_tolower((unsigned char)*b))
+         return false;
+#else
+      if (*a != *b)
+         return false;
+#endif
+   }
+   while (is_sep(*a))
+      a++;
+   while (is_sep(*b))
+      b++;
+   return !*a && !*b;
+}
+
+int library_by_path(const char *path, Uint32 appid)
+{
+   int i, best = -1;
+
+   for (i = 0; i < lib.count; i++)
+   {
+      const struct game *g = &lib.games[i];
+
+      /* Steam's own shortcuts don't start through FuseBox. */
+      if (SDL_strcmp(g->source, "Steam") == 0 || !same_path(library_path(g), path))
+         continue;
+      if (appid && g->shortcut_id == appid)
+         return i;
+      if (best < 0 || (g->shortcut_id && !lib.games[best].shortcut_id))
+         best = i;
+   }
+   return best;
+}
+
 void library_normalize(const char *name, char *dst, size_t size)
 {
    size_t n = 0;

@@ -161,8 +161,14 @@ bool library_save(void);
  * found anything. Cheap when nothing changed. */
 bool library_refresh(void);
 
-/* What its shortcut's launch options should be: the launcher's own (args),
- * then the user's (launch_options). */
+/* The path that's the game's, whatever starts it (a ROM, its own exe, else
+ * its folder), as its Steam shortcut and others give it to fusebox. */
+const char *library_path(const struct game *g);
+/* The game with that path, -1 if none; where several have it, the one whose
+ * shortcut's app id that is (0: not known), else one in Steam. Under the lock. */
+int library_by_path(const char *path, Uint32 appid);
+/* What it's started with: the launcher's own (args), then the user's
+ * (launch_options). */
 void library_launch_options(const struct game *g, char *dst, size_t size);
 
 /* Lower case letters and digits only: "The Witcher 3: Wild Hunt" ->
