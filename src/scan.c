@@ -456,7 +456,12 @@ static void heroic_add(const char *runner, const char *app, const char *title,
 #endif
 
    SDL_snprintf(id, sizeof(id), "heroic-%s:%s", runner, app);
+#ifdef _WIN32
    SDL_snprintf(args, sizeof(args), "heroic://launch?appName=%s&runner=%s", app, runner);
+#else
+   /* Not for the shell to take apart. */
+   SDL_snprintf(args, sizeof(args), "\"heroic://launch?appName=%s&runner=%s\"", app, runner);
+#endif
    add(id, title, "Heroic", exe, install, args, install);
 }
 
