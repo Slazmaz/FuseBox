@@ -817,7 +817,7 @@ static void job_steam(void *data)
       post_status("Updating Steam...");
       if (m)
       {
-         m->count = !steam_sync_live(m->text, sizeof(m->text), jobs_abort());
+         m->count = !steam_sync_live(jobs_abort());
          post(m);
       }
       library_save();
@@ -2054,7 +2054,7 @@ static void draw_sidebar(float w)
       return;
    ui_ring(x, card_y, lw, ch, S(16), S(1), 1, 1, 1, 0.12f);
    ui_text(UI_BOLD, S(16), x + S(18), card_y + S(26), UI_LEFT, 0, C_TEXT, 1, "Steam");
-   /* What's waiting first; else what the last update said. */
+   /* What's waiting first; else why the last update failed. */
    if (!steam_install())
       SDL_strlcpy(line, "Not found", sizeof(line));
    else if (app.busy)

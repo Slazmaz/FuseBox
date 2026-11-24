@@ -64,10 +64,11 @@ Sint64 steam_art_time(Uint32 appid);
 /* Makes Steam match the library: a shortcut (with its art) for each
  * installed game ticked in_steam, and none for the rest (only ever
  * removing shortcuts FuseBox made). Steam must not be running (it would
- * write its own copy over ours on exit). msg gets what happened. */
+ * write its own copy over ours on exit). msg: why not, if it can't; else
+ * empty. */
 bool steam_sync(char *msg, size_t size);
 /* The same in the Steam that runs, through its port (steamui.h). False when
  * that can't be (all of it) done: steam_sync does what's left. Blocking. */
-bool steam_sync_live(char *msg, size_t size, SDL_AtomicInt *abort);
+bool steam_sync_live(SDL_AtomicInt *abort);
 
 #endif

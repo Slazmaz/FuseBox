@@ -916,12 +916,11 @@ bool steam_sync(char *msg, size_t size)
    }
    library_unlock();
    library_changed();
-   if (ok)
-      SDL_snprintf(msg, size, "Steam shortcuts: %d added, %d updated, %d removed", added,
-            updated + art_only, removed);
-   else
+   msg[0] = '\0';
+   if (!ok)
       SDL_snprintf(msg, size, "Can't write %s", path);
-   SDL_Log("%s (%s)", msg, path);
+   SDL_Log("Steam shortcuts: %d added, %d updated, %d removed (%s)", added, updated + art_only,
+         removed, ok ? path : msg);
    return ok;
 }
 
@@ -1113,7 +1112,7 @@ static bool put_art(struct change *c, SDL_AtomicInt *abort)
    return true;
 }
 
-bool steam_sync_live(char *msg, size_t size, SDL_AtomicInt *abort)
+bool steam_sync_live(SDL_AtomicInt *abort)
 {
    struct change *list;
    int i, k, count, added = 0, updated = 0, removed = 0;
@@ -1171,8 +1170,7 @@ bool steam_sync_live(char *msg, size_t size, SDL_AtomicInt *abort)
    library_unlock();
    library_changed();
    SDL_free(list);
-   SDL_snprintf(msg, size, "Steam shortcuts: %d added, %d updated, %d removed", added, updated,
-         removed);
-   SDL_Log("%s (%s)", msg, ok ? "while Steam runs" : "not all of it: Steam has to restart");
+   SDL_Log("Steam shortcuts: %d added, %d updated, %d removed (%s)", added, updated, removed,
+         ok ? "while Steam runs" : "not all of it: Steam has to restart");
    return ok;
 }
