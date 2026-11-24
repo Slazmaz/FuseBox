@@ -2137,9 +2137,8 @@ static void draw_game(float x, float y, float w, float h)
    char name[256], own_name[256], source[32], sgdb_name[256], emulator[96], line[300], achievements[48];
    const struct rom_option *chosen_emulator;
    struct choice *coming;
-   float top = y, cx, sr = 0, sg = 0, sb = 0;
+   float top = y, cx;
    float tw, th, tx, content_h, ty, grid_top, grid_h;
-   const char *state;
    unsigned chosen;
    bool removing, gone, chosen_own, no_emulator;
    GLuint icon;
@@ -2178,8 +2177,6 @@ static void draw_game(float x, float y, float w, float h)
             g->ra_total);
    fill_open(app.selected, g);
    icon = detail_for(ART_ICON, g);
-   /* The list says so already. */
-   state = adding(g) ? NULL : steam_state(g, &sr, &sg, &sb);
    library_unlock();
 
    /* The icon, the name, where it's from and its match, the buttons:
@@ -2251,8 +2248,8 @@ static void draw_game(float x, float y, float w, float h)
       }
       else
       {
-         /* Its tags: where it's from, its emulator, its achievements, what
-          * Steam has of it.
+         /* Its tags: where it's from, its emulator, its achievements. What
+          * Steam has of it, the list says.
           * A long name is cut short for them, to half at most. */
          const struct
          {
@@ -2263,7 +2260,6 @@ static void draw_game(float x, float y, float w, float h)
             { emulator, C_TEXT },
             { no_emulator ? "No emulator" : "", C_RED },
             { achievements, C_GREEN },
-            { state ? state : "", sr, sg, sb },
          };
          float room = bx - cx - S(16), tags_w = 0, max_w, nw, chip_x;
 
