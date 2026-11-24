@@ -16,7 +16,14 @@
  * on RetroAchievements have none, so they get numbers no account has, and
  * Steam's friend store answers for those with people made here. What these
  * need may be missing after an update: achievements do without. It isn't
- * ready yet when the account is: they're given once it is. Modules are
+ * ready yet when the account is: they're given once it is.
+ *
+ * The button that opens a game's emulator or launcher goes first among those
+ * right of Play. The bar they're in can't be changed itself (MobX fixes each
+ * one's render), so React's own jsxs, which makes it, adds the button. Clicks
+ * wait here for the background FuseBox (asked), which knows the programs: the
+ * page has only their names. Nobody asking, no button.
+ * Modules are
  * found by what's in them: their numbers change with every Steam update. */
 #define STEAMUI_JS \
    "(() => {\n" \
@@ -25,11 +32,11 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 13) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 17) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
-   "   let react, hover, steamCard, css, strips;\n" \
+   "   let react, hover, steamCard, css, strips, bar, jsx;\n" \
    "   webpackChunksteamui.push([[Symbol('fusebox')], {}, r => { req = r; }]);\n" \
    "   if (!req || !req.m) return 'unsupported';\n" \
    "   const pick = (id, test) => {\n" \
@@ -62,6 +69,14 @@
    "         if (!strips && src.includes('PlaytimeSection:') && src.includes('PlaytimeContent:')) {\n" \
    "            const x = req(id);\n" \
    "            strips = x.PlaytimeSection ? x : pick(id, y => y.PlaytimeSection);\n" \
+   "         }\n" \
+   "         if (!bar && src.includes('AppButtonsContainer:') && src.includes('MenuButton:')) {\n" \
+   "            const x = req(id);\n" \
+   "            bar = x.AppButtonsContainer ? x : pick(id, y => y.AppButtonsContainer);\n" \
+   "         }\n" \
+   "         if (!jsx && /\\.jsxs=/.test(src)) {\n" \
+   "            const x = req(id);\n" \
+   "            if (x.jsx && x.jsxs) jsx = x;\n" \
    "         }\n" \
    "         if (!react && src.includes('cloneElement') && src.includes('useSyncExternalStore')) {\n" \
    "            const x = req(id);\n" \
@@ -245,9 +260,72 @@
    "            || (key[2] === 'user_achievements' && key[3] === me))\n" \
    "         setTimeout(() => games.has(key[1]) && put(key[1], games.get(key[1])), 0);\n" \
    "   });\n" \
+   "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
+   "   const opens = new Map(), buttons = new Set(), clicks = [];\n" \
+   "   let heard = false, deaf, wake, jsxs, mine, clicked = 0;\n" \
+   "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
+   "   const open = app => {\n" \
+   "      if (Date.now() - clicked < 1500) return;\n" \
+   "      clicked = Date.now();\n" \
+   "      if (wake) wake(String(app));\n" \
+   "      else clicks.push(app);\n" \
+   "   };\n" \
+   "   if (react && bar && jsx && bar.MenuButton) {\n" \
+   "      const Open = class extends react.Component {\n" \
+   "         componentDidMount() { buttons.add(this); }\n" \
+   "         componentWillUnmount() { buttons.delete(this); }\n" \
+   "         render() {\n" \
+   "            const app = this.props.app, name = heard && opens.get(app);\n" \
+   "            if (!name) return null;\n" \
+   "            return react.createElement('div', { className: bar.MenuButton, role: 'button', tabIndex: 0,\n" \
+   "               onClick: () => open(app), onKeyDown: e => { if (e.key === 'Enter') open(app); },\n" \
+   "               style: { width: 'auto', padding: '0 12px', marginRight: '10px', fontSize: '14px',\n" \
+   "                  whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' } }, 'Open ' + name);\n" \
+   "         }\n" \
+   "      };\n" \
+   "      jsxs = jsx.jsxs;\n" \
+   "      mine = jsx.jsxs = function(type, props, ...more) {\n" \
+   "         if (type === 'div' && props && props.className === bar.AppButtonsContainer && Array.isArray(props.children)) {\n" \
+   "            const of = props.children.find(c => c && c.props && c.props.overview);\n" \
+   "            if (of) props = { ...props, children: [\n" \
+   "               react.createElement(Open, { key: 'fusebox', app: of.props.overview.appid }), ...props.children] };\n" \
+   "         }\n" \
+   "         return jsxs.call(this, type, props, ...more);\n" \
+   "      };\n" \
+   "   }\n" \
+   "   /* Bars drawn before, drawn again. */\n" \
+   "   const bars = () => mine && SteamUIStore.WindowStore.SteamUIWindows.forEach(w => {\n" \
+   "      try {\n" \
+   "         w.BrowserWindow.document.querySelectorAll('.' + CSS.escape(bar.AppButtonsContainer)).forEach(el => {\n" \
+   "            let f = el[Object.keys(el).find(k => k.startsWith('__reactFiber'))];\n" \
+   "            while (f && !(f.stateNode && f.stateNode.forceUpdate)) f = f.return;\n" \
+   "            if (f) f.stateNode.forceUpdate();\n" \
+   "         });\n" \
+   "      } catch (e) { }\n" \
+   "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 13,\n" \
+   "      version: 17,\n" \
+   "      opens(list) {\n" \
+   "         opens.clear();\n" \
+   "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
+   "         redraw();\n" \
+   "         return 'ok';\n" \
+   "      },\n" \
+   "      /* The next click's game, '' for none in that time. */\n" \
+   "      asked(ms) {\n" \
+   "         const was = heard;\n" \
+   "         heard = true;\n" \
+   "         clearTimeout(deaf);\n" \
+   "         deaf = setTimeout(() => { heard = false; redraw(); }, ms + 15000);\n" \
+   "         if (!was) redraw();\n" \
+   "         if (wake) wake('');\n" \
+   "         if (clicks.length) return Promise.resolve(String(clicks.shift()));\n" \
+   "         return new Promise(done => {\n" \
+   "            const late = setTimeout(() => wake(''), ms);\n" \
+   "            wake = app => { clearTimeout(late); wake = null; done(app); };\n" \
+   "         });\n" \
+   "      },\n" \
    "      friends(app, game, list, tries = 0) {\n" \
    "         clearTimeout(later.get(app));\n" \
    "         if (!ready()) {\n" \
@@ -302,12 +380,18 @@
    "         stop();\n" \
    "         later.forEach(clearTimeout);\n" \
    "         undoFriends();\n" \
+   "         clearTimeout(deaf);\n" \
+   "         opens.clear();\n" \
+   "         redraw();\n" \
+   "         if (wake) wake('');\n" \
+   "         if (mine && jsx.jsxs === mine) jsx.jsxs = jsxs;\n" \
    "         [...games.keys()].forEach(drop);\n" \
    "         page.prototype.GetSections = original;\n" \
    "         delete window.__fusebox;\n" \
    "         return 'ok';\n" \
    "      }\n" \
    "   };\n" \
+   "   bars();\n" \
    "   return 'ready';\n" \
    "})()"
 

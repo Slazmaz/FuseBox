@@ -3,6 +3,7 @@
 #include "json.h"
 #include "library.h"
 #include "ra.h"
+#include "scan.h"
 #include "steamui_js.h"
 
 #include <SDL3/SDL.h>
@@ -75,7 +76,7 @@ static bool evaluate(const char *url, const char *script, char *result, size_t s
    if (!io)
       return false;
    SDL_IOprintf(io, "{\"id\":1,\"method\":\"Runtime.evaluate\",\"params\":{\"returnByValue\":true,"
-         "\"expression\":");
+         "\"awaitPromise\":true,\"expression\":");
    json_write_string(io, script);
    SDL_IOprintf(io, "}}");
    SDL_WriteU8(io, '\0');
@@ -127,6 +128,34 @@ static struct shown *collect(int *count)
    return games;
 }
 
+/* Gives Steam the names of the programs its games' buttons open. */
+static void push_opens(const char *url, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char exe[1024], name[96], result[64];
+   int i, n = 0;
+
+   if (!io)
+      return;
+   SDL_IOprintf(io, "__fusebox.opens({");
+   library_lock();
+   for (i = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+
+      if (!g->steam_appid || !scan_program(g, exe, sizeof(exe), name, sizeof(name)))
+         continue;
+      SDL_IOprintf(io, "%s\"%u\":", n++ ? "," : "", (unsigned)g->steam_appid);
+      json_write_string(io, name);
+   }
+   library_unlock();
+   SDL_IOprintf(io, "})");
+   SDL_WriteU8(io, '\0');
+   evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(io),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, sizeof(result), abort);
+   SDL_CloseIO(io);
+}
+
 enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
 {
    char url[512], result[64];
@@ -142,6 +171,7 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
       return STEAMUI_WAIT;
    if (SDL_strcmp(result, "ready") != 0)
       return STEAMUI_UNSUPPORTED;
+   push_opens(url, abort);
    if (!(list = collect(&count)) || !(keep = SDL_IOFromDynamicMem()))
    {
       SDL_free(list);
@@ -189,10 +219,23 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 13"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 17"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
+}
+
+bool steamui_asked(Uint32 *appid, SDL_AtomicInt *abort)
+{
+   char url[512], result[64];
+
+   /* Less long than an answer may take. */
+   if (!find_target(url, sizeof(url), abort)
+         || !evaluate(url, "window.__fusebox && __fusebox.asked ? __fusebox.asked(10000) : ''", result,
+            sizeof(result), abort))
+      return false;
+   *appid = (Uint32)SDL_strtoul(result, NULL, 10);
+   return *appid != 0;
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

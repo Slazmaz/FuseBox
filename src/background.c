@@ -132,8 +132,46 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
    }
 }
 
+/* Clicks on the buttons in Steam, taken by a thread of their own: the other
+ * is busy with the network. */
+static int SDLCALL take_clicks(void *user)
+{
+   SDL_AtomicInt *stop = user;
+
+   while (!SDL_GetAtomicInt(stop))
+   {
+      Uint64 since = SDL_GetTicks();
+      Uint32 appid;
+      int i;
+
+      if (steamui_asked(&appid, stop))
+      {
+         /* A process of its own: it reads the library, which is the other
+          * thread's here. */
+         const char *args[] = { NULL, "--open", NULL, NULL };
+         char exe[1100], id[16];
+         SDL_Process *p;
+
+         SDL_snprintf(exe, sizeof(exe), "%sfusebox%s", SDL_GetBasePath(), PATH_SEP[0] == '\\' ? ".exe" : "");
+         SDL_snprintf(id, sizeof(id), "%u", (unsigned)appid);
+         args[0] = exe;
+         args[2] = id;
+         if ((p = SDL_CreateProcess(args, false)))
+            SDL_DestroyProcess(p);
+      }
+      /* No Steam, or none with buttons. */
+      else if (SDL_GetTicks() - since < 2000)
+         for (i = 0; i < LOOK_MS / 100 && !SDL_GetAtomicInt(stop); i++)
+            SDL_Delay(100);
+   }
+   return 0;
+}
+
 int background_run(const char *data_dir, const char *config_dir)
 {
+   SDL_Thread *clicks;
+   SDL_AtomicInt stop;
+
    if (!platform_only_background())
       return 0;
    /* No icon just to take it away again. */
@@ -141,7 +179,11 @@ int background_run(const char *data_dir, const char *config_dir)
    if (!ra_active())
       return 0;
    platform_tray_start();
+   SDL_SetAtomicInt(&stop, 0);
+   clicks = SDL_CreateThread(take_clicks, "clicks", &stop);
    look_after_steam(data_dir, config_dir);
+   SDL_SetAtomicInt(&stop, 1);
+   SDL_WaitThread(clicks, NULL);
    platform_tray_stop();
    return 0;
 }

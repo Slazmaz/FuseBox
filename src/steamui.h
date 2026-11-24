@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <SDL3/SDL_atomic.h>
+#include <SDL3/SDL_stdinc.h>
 #include "platform.h"
 
 /* RetroAchievements in Steam's own library: its interface is a web page,
@@ -32,6 +33,10 @@ void steamui_start(const struct steam_install *steam);
  * takes back those of games that left); only_friends: the friends again,
  * who may have started playing. Blocking. *games: how many have them. */
 enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
+/* Waits some seconds for a click on a game's button that opens its emulator
+ * or launcher: true with the game's app id. False at once when Steam has no
+ * port or no buttons; they're there only while this is called. */
+bool steamui_asked(Uint32 *appid, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);
 
