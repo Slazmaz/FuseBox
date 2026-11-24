@@ -83,11 +83,13 @@ add_library(fusebox_core STATIC
    src/inject_linux.c
    src/tunnel.c
    src/steamnet.c
+   src/steamlib.c
+   src/steamlib_linux.c
    src/session.c
    src/update.c
 )
 target_include_directories(fusebox_core PUBLIC src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
+target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared ${CMAKE_DL_LIBS})
 if(WIN32)
    # More sockets to wait on than Windows' 64.
    target_compile_definitions(fusebox_core PRIVATE FD_SETSIZE=1024 WIN32_LEAN_AND_MEAN)

@@ -6,11 +6,11 @@
 #include <SDL3/SDL_stdinc.h>
 #include "tunnel.h"
 
-/* Steam's lobbies and network, through the steamclient64.dll of the Steam that
+/* Steam's lobbies and network, through the client library of the Steam that
  * runs, as a process Steam doesn't count as playing the app it opens with. A
  * Steam where that can't be done shows that app, so this is for a process
  * that's only there for that (session.h). Both need an app id Steam
- * knows; those of non-Steam games are refused. One thread. Windows. */
+ * knows; those of non-Steam games are refused. One thread. */
 
 enum steamnet_kind
 {

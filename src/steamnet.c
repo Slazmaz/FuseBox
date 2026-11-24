@@ -1,9 +1,7 @@
 #include "steamnet.h"
+#include "steamlib.h"
 #include "vlan.h"
 
-#ifdef _WIN32
-
-#include <windows.h>
 #include <SDL3/SDL.h>
 
 /* A function of an interface by its place in it: those of the versions asked
@@ -32,7 +30,12 @@ enum
    CB_SESSION_REQUEST = 1251
 };
 
+/* As Steam has them on each. */
+#ifdef _WIN32
 #pragma pack(push, 8)
+#else
+#pragma pack(push, 4)
+#endif
 struct callback
 {
    int32_t user, id;
@@ -99,7 +102,7 @@ struct message
 
 static struct
 {
-   HMODULE dll;
+   void *lib;
    bool (*get_callback)(int32_t, struct callback *);
    void (*free_callback)(int32_t);
    bool (*call_result)(int32_t, Uint64, void *, int, int, bool *);
@@ -109,6 +112,19 @@ static struct
    char name[128];
    bool counted;
 } net;
+
+/* A Steam id that's returned: Windows' C++ has it put where it's told to. */
+static Uint64 user_id(void *user)
+{
+#ifdef _WIN32
+   Uint64 id = 0;
+
+   ((Uint64 *(*)(void *, Uint64 *))SLOT(user, 2))(user, &id);
+   return id;
+#else
+   return ((Uint64 (*)(void *))SLOT(user, 2))(user);
+#endif
+}
 
 static void identify(struct identity *id, Uint64 steam_id)
 {
@@ -140,120 +156,22 @@ static bool fail(const char *why, char *error, size_t size)
  * shows friends the one that came last: not the game that's played. Its own
  * programs say which app they're for with a function that can leave that out.
  * It isn't of a public interface: its place changes, its names don't. */
-#define UTILS_CLASS ".?AVIClientUtilsMap@@"
+#define UTILS_CLASS "IClientUtilsMap"
 #define SET_APP "SetAppIDForCurrentPipe"
-/* So many of its functions are looked through. */
-#define MAP_SLOTS 200
-
-struct part
-{
-   const Uint8 *start, *end;
-};
-
-static struct part part_of(HMODULE dll, const char *name)
-{
-   const Uint8 *base = (const Uint8 *)dll;
-   const IMAGE_NT_HEADERS *nt = (const void *)(base + ((const IMAGE_DOS_HEADER *)base)->e_lfanew);
-   const IMAGE_SECTION_HEADER *h = IMAGE_FIRST_SECTION(nt);
-   struct part part = { NULL, NULL };
-   int i;
-
-   for (i = 0; i < nt->FileHeader.NumberOfSections; i++)
-      if (SDL_strncmp((const char *)h[i].Name, name, sizeof(h[i].Name)) == 0)
-      {
-         part.start = base + h[i].VirtualAddress;
-         part.end = part.start + h[i].Misc.VirtualSize;
-         break;
-      }
-   return part;
-}
-
-/* The functions of the class of that name, by what C++ keeps of it. */
-static void **class_functions(HMODULE dll, const char *name)
-{
-   struct part data = part_of(dll, ".data"), consts = part_of(dll, ".rdata");
-   const Uint8 *base = (const Uint8 *)dll, *p, *q;
-   size_t len = SDL_strlen(name) + 1;
-
-   for (p = data.start; p && p + len <= data.end && SDL_memcmp(p, name, len) != 0; p++)
-      ;
-   if (!p || p + len > data.end || !consts.start)
-      return NULL;
-   /* The name's record starts two pointers before it; a class's has where that
-    * and itself are, and its functions follow a pointer to it. */
-   {
-      Uint32 record = (Uint32)(p - base) - 16;
-
-      for (p = consts.start; p + 24 <= consts.end; p += 4)
-      {
-         const Uint32 *at = (const Uint32 *)p;
-
-         if (at[0] != 1 || at[1] != 0 || at[3] != record || at[5] != (Uint32)(p - base))
-            continue;
-         for (q = consts.start; q + 16 <= consts.end; q += 8)
-            if (*(const Uint8 *const *)q == p)
-               return (void **)(q + 8);
-      }
-   }
-   return NULL;
-}
-
-/* The place of the function that has its own name in it; -1 for none. */
-static int named_function(HMODULE dll, void **functions, const char *name)
-{
-   struct part code = part_of(dll, ".text"), consts = part_of(dll, ".rdata");
-   size_t len = SDL_strlen(name) + 1;
-   int i;
-
-   for (i = 0; code.start && consts.start && i < MAP_SLOTS; i++)
-   {
-      const Uint8 *f = functions[i], *end;
-      const RUNTIME_FUNCTION *entry;
-      DWORD64 base;
-
-      if (f < code.start || f >= code.end)
-         break;
-      /* Where it ends: another's name isn't its own. */
-      if (!(entry = RtlLookupFunctionEntry((DWORD64)f, &base, NULL)))
-         continue;
-      for (end = (const Uint8 *)base + entry->EndAddress; f + 7 <= end; f++)
-      {
-         Sint32 off;
-         const Uint8 *text;
-
-         /* lea of something in the DLL. */
-         if ((f[0] & 0xFB) != 0x48 || f[1] != 0x8D || (f[2] & 0xC7) != 0x05)
-            continue;
-         SDL_memcpy(&off, f + 3, sizeof(off));
-         text = f + 7 + off;
-         if (text >= consts.start && text + len <= consts.end && SDL_memcmp(text, name, len) == 0)
-            return i;
-      }
-   }
-   return -1;
-}
-
-static bool readable(const void *p)
-{
-   MEMORY_BASIC_INFORMATION m;
-
-   return VirtualQuery(p, &m, sizeof(m)) && m.State == MEM_COMMIT
-      && !(m.Protect & (PAGE_NOACCESS | PAGE_GUARD | PAGE_EXECUTE));
-}
 
 /* The app for what's opened next, without Steam taking this for a game. */
 static bool set_quiet_app(Uint32 app)
 {
-   void **functions = class_functions(net.dll, UTILS_CLASS), **fields;
-   int i, slot = functions ? named_function(net.dll, functions, SET_APP) : -1;
+   void **functions = steamlib_class(net.lib, UTILS_CLASS), **fields;
+   int i, slot = functions ? steamlib_named(net.lib, functions, SET_APP) : -1;
 
    if (slot < 0)
       return false;
    fields = ((void *(*)(void *, int32_t, const char *))SLOT(net.client, 9))(net.client, net.pipe,
          "SteamUtils010");
    /* The public interface has the one it's made of. */
-   for (i = 0; fields && i < 8 && readable(fields + i); i++)
-      if (fields[i] && ((uintptr_t)fields[i] & 7) == 0 && readable(fields[i])
+   for (i = 0; fields && i < 8 && steamlib_readable(fields + i); i++)
+      if (fields[i] && ((uintptr_t)fields[i] & 7) == 0 && steamlib_readable(fields[i])
             && *(void ***)fields[i] == functions)
       {
          ((Uint32 (*)(void *, Uint32, bool))functions[slot])(fields[i], app, false);
@@ -262,28 +180,20 @@ static bool set_quiet_app(Uint32 app)
    return false;
 }
 
-/* As a game's process, for a Steam where that can't be done. */
-static void be_game(Uint32 app)
-{
-   char text[32];
-
-   SDL_snprintf(text, sizeof(text), "%u", (unsigned)app);
-   SetEnvironmentVariableA("SteamAppId", text);
-   SetEnvironmentVariableA("SteamGameId", text);
-   SetEnvironmentVariableA("SteamOverlayGameId", text);
-}
-
 /* Steam's client, and connected to it. */
-static const char *load_steam(const WCHAR *dll)
+static const char *load_steam(void)
 {
    void *(*create)(const char *, int *);
+   const char *why;
 
-   if (!(net.dll = LoadLibraryExW(dll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH)))
-      return "Steam's client can't be loaded";
-   create = (void *)GetProcAddress(net.dll, "CreateInterface");
-   net.get_callback = (void *)GetProcAddress(net.dll, "Steam_BGetCallback");
-   net.free_callback = (void *)GetProcAddress(net.dll, "Steam_FreeLastCallback");
-   net.call_result = (void *)GetProcAddress(net.dll, "Steam_GetAPICallResult");
+   if (!(net.lib = steamlib_open(&why)))
+      return why;
+   create = (void *(*)(const char *, int *))steamlib_symbol(net.lib, "CreateInterface");
+   net.get_callback = (bool (*)(int32_t, struct callback *))steamlib_symbol(net.lib,
+         "Steam_BGetCallback");
+   net.free_callback = (void (*)(int32_t))steamlib_symbol(net.lib, "Steam_FreeLastCallback");
+   net.call_result = (bool (*)(int32_t, Uint64, void *, int, int, bool *))steamlib_symbol(net.lib,
+         "Steam_GetAPICallResult");
    if (!create || !net.get_callback || !net.free_callback || !net.call_result
          || !(net.client = create("SteamClient020", NULL)))
       return "This Steam isn't supported";
@@ -293,19 +203,11 @@ static const char *load_steam(const WCHAR *dll)
    return net.user ? NULL : "Steam isn't running or logged in";
 }
 
-static bool find_steam(WCHAR *dll, DWORD bytes)
-{
-   return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Valve\\Steam\\ActiveProcess", L"SteamClientDll64",
-         RRF_RT_REG_SZ, NULL, dll, &bytes) == ERROR_SUCCESS;
-}
-
 bool steamnet_count(Uint32 app)
 {
-   WCHAR dll[1024];
-
    SDL_zero(net);
-   be_game(app);
-   return find_steam(dll, sizeof(dll)) && !load_steam(dll);
+   steamlib_be_game(app);
+   return !load_steam();
 }
 
 bool steamnet_counted(void)
@@ -313,30 +215,37 @@ bool steamnet_counted(void)
    return net.counted;
 }
 
+/* As a game's process, for a Steam where not being one can't be done: that's read
+ * when the library is loaded. */
+static const char *load_counted(Uint32 app)
+{
+   net.counted = true;
+#ifdef _WIN32
+   void *was = net.lib;
+
+   disconnect_steam();
+   steamlib_close(was);
+   steamlib_be_game(app);
+   return load_steam();
+#else
+   if (steamlib_is_game(app))
+      return NULL;
+   disconnect_steam();
+   /* Doesn't come back, if it can be done. */
+   steamlib_again(app);
+   return "This Steam isn't supported";
+#endif
+}
+
 bool steamnet_open(Uint32 app, char *error, size_t size)
 {
    void *(*get)(void *, int32_t, int32_t, const char *);
    const char *why;
    void *user;
-   WCHAR dll[1024];
 
    SDL_zero(net);
-   if (!find_steam(dll, sizeof(dll)))
-      return fail("Steam wasn't found", error, size);
-   if ((why = load_steam(dll)))
+   if ((why = load_steam()) || (!set_quiet_app(app) && (why = load_counted(app))))
       return fail(why, error, size);
-   if (!set_quiet_app(app))
-   {
-      /* It's read when the library is loaded. */
-      HMODULE was = net.dll;
-
-      disconnect_steam();
-      FreeLibrary(was);
-      be_game(app);
-      if ((why = load_steam(dll)))
-         return fail(why, error, size);
-      net.counted = true;
-   }
    SDL_Log("Steam shows %s", net.counted ? "Spacewar (this Steam can't do without)" : "the game");
    get = (void *(*)(void *, int32_t, int32_t, const char *))SLOT(net.client, 12);
    user = get(net.client, net.user, net.pipe, "SteamUser021");
@@ -346,7 +255,7 @@ bool steamnet_open(Uint32 app, char *error, size_t size)
    net.utils = get(net.client, net.user, net.pipe, "SteamNetworkingUtils004");
    if (!user || !net.friends || !net.matchmaking || !net.messages)
       return fail("This Steam isn't supported", error, size);
-   ((Uint64 *(*)(void *, Uint64 *))SLOT(user, 2))(user, &net.me);
+   net.me = user_id(user);
    /* Its relays are looked for now, not once they're needed. */
    if (net.utils)
       ((bool (*)(void *, float))SLOT(net.utils, 7))(net.utils, 1e10f);
@@ -487,9 +396,14 @@ int steamnet_members(Uint64 lobby, Uint64 *ids, int max)
 
    for (i = 0; i < n && got < max; i++)
    {
+#ifdef _WIN32
       Uint64 id = 0;
       ((Uint64 *(*)(void *, Uint64 *, Uint64, int))SLOT(net.matchmaking, 18))(net.matchmaking, &id,
             lobby, i);
+#else
+      Uint64 id = ((Uint64 (*)(void *, Uint64, int))SLOT(net.matchmaking, 18))(net.matchmaking, lobby,
+            i);
+#endif
       if (id)
          ids[got++] = id;
    }
@@ -498,10 +412,14 @@ int steamnet_members(Uint64 lobby, Uint64 *ids, int max)
 
 Uint64 steamnet_owner(Uint64 lobby)
 {
+#ifdef _WIN32
    Uint64 id = 0;
 
    ((Uint64 *(*)(void *, Uint64 *, Uint64))SLOT(net.matchmaking, 35))(net.matchmaking, &id, lobby);
    return id;
+#else
+   return ((Uint64 (*)(void *, Uint64))SLOT(net.matchmaking, 35))(net.matchmaking, lobby);
+#endif
 }
 
 const char *steamnet_get(Uint64 lobby, const char *key)
@@ -586,5 +504,3 @@ void steamnet_receive(void (*take)(Uint64 from, int channel, const void *data, i
          }
       } while (n == (int)SDL_arraysize(list));
 }
-
-#endif
