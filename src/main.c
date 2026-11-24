@@ -46,7 +46,8 @@ enum msg_kind
    MSG_EMULATORS_FOUND,
    MSG_LOGIN,
    MSG_ACHIEVEMENTS,
-   MSG_UPDATE_CHECKED
+   MSG_UPDATE_CHECKED,
+   MSG_UPDATED
 };
 
 struct msg
@@ -737,6 +738,20 @@ static void job_update_check(void *data)
    }
 }
 
+/* Cancelling the download, and how far it is (http_download). */
+static SDL_AtomicInt update_stop, update_percent;
+
+static void job_update(void *data)
+{
+   struct msg *m = new_msg(MSG_UPDATED);
+
+   if (m)
+   {
+      m->count = update_install(&update_stop, &update_percent, m->text, sizeof(m->text));
+      post(m);
+   }
+}
+
 struct login_job
 {
    char user[128], password[256];
@@ -944,9 +959,13 @@ static struct
    char ra_user[128], ra_password[256];
    bool ra_busy;
    char ra_error[128], menus_note[128];
-   /* Asking GitHub for a newer FuseBox; what came of it. */
-   bool update_checking;
-   char update_note[128];
+   /* Asking GitHub for a newer FuseBox, or installing it; what came of each. */
+   bool update_checking, update_busy;
+   char update_note[128], update_error[128];
+   /* How much is downloaded, as it was drawn. */
+   int update_shown;
+   /* To start FuseBox again once this one ended. */
+   bool restart;
    /* MODAL_STEAM: only to restart it. */
    bool only_restart;
    /* The game Play was clicked for, and until when that shows. */
@@ -2048,9 +2067,31 @@ static void check_update(void)
    jobs_add(job_update_check, NULL, JOB_NOW, false);
 }
 
+static void install_update(void)
+{
+   if (app.update_busy)
+      return;
+   app.update_busy = true;
+   app.update_error[0] = '\0';
+   SDL_SetAtomicInt(&update_stop, 0);
+   SDL_SetAtomicInt(&update_percent, -1);
+   jobs_add(job_update, NULL, JOB_NOW, true);
+}
+
 static void open_update(void)
 {
+   app.update_error[0] = '\0';
    app.modal = MODAL_UPDATE;
+}
+
+static void update_progress(char *dst, size_t size)
+{
+   int percent = app.update_shown = SDL_GetAtomicInt(&update_percent);
+
+   if (percent >= 0 && percent < 100)
+      SDL_snprintf(dst, size, "Downloading... %d%%", percent);
+   else
+      SDL_strlcpy(dst, percent < 0 ? "Downloading..." : "Installing...", size);
 }
 
 /* ---- Top bar ----------------------------------------------------------- */
@@ -3033,6 +3074,8 @@ static void close_modal(void)
       app.modal = MODAL_GAME;
       return;
    }
+   if (app.modal == MODAL_UPDATE)
+      SDL_SetAtomicInt(&update_stop, 1);
    /* The launch options are kept as they were typed. */
    if (app.modal == MODAL_GAME)
    {
@@ -3270,23 +3313,41 @@ static void draw_update_modal(void)
 {
    float x, y, w = S(520), h = S(196), bx, bw;
    char version[32], line[160];
-   const char *go = "Open GitHub";
+   bool here = update_can_install();
+   const char *go = here ? "Update" : "Open GitHub";
 
    update_newer(version, sizeof(version));
    modal_box(w, h, &x, &y, "Update FuseBox");
-   SDL_snprintf(line, sizeof(line), "FuseBox %s is out, this is %s. It's on GitHub.", version,
-         FUSEBOX_VERSION);
-   ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_DIM, 1, line);
+   if (app.update_busy)
+      update_progress(line, sizeof(line));
+   else if (app.update_error[0])
+      SDL_strlcpy(line, app.update_error, sizeof(line));
+   else
+      SDL_snprintf(line, sizeof(line), here ? "FuseBox %s is out, this is %s. FuseBox will restart."
+            : "FuseBox %s is out, this is %s. It's on GitHub.", version, FUSEBOX_VERSION);
+   if (app.update_error[0] && !app.update_busy)
+      ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_RED, 1, line);
+   else
+      ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_DIM, 1, line);
+   /* Not while Steam's files are being written. */
    bw = button_w(go);
    bx = x + w - S(28) - bw;
-   if (button(bx, y + h - S(66), bw, S(42), go, true, true, true))
+   if (button(bx, y + h - S(66), bw, S(42), go, true, !app.update_busy && !(here && app.busy), true))
    {
-      SDL_OpenURL(UPDATE_PAGE);
-      close_modal();
+      if (here)
+         install_update();
+      else
+      {
+         SDL_OpenURL(UPDATE_PAGE);
+         close_modal();
+      }
    }
    bx -= S(8) + S(110);
    if (button(bx, y + h - S(66), S(110), S(42), "Cancel", false, true, true))
       close_modal();
+   if (here && button(x + S(28), y + h - S(66), button_w("What's new"), S(42), "What's new", false,
+            true, true))
+      SDL_OpenURL(UPDATE_PAGE);
 }
 
 static void draw_modal(void)
@@ -3512,6 +3573,24 @@ static void handle_msg(struct msg *m)
       case MSG_UPDATE_CHECKED:
          app.update_checking = false;
          SDL_strlcpy(app.update_note, m->text, sizeof(app.update_note));
+         break;
+      case MSG_UPDATED:
+         app.update_busy = false;
+         /* This one's files are the old ones' already. */
+         if (m->count)
+         {
+            SDL_Event e;
+            app.restart = true;
+            SDL_zero(e);
+            e.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&e);
+         }
+         else if (!SDL_GetAtomicInt(&update_stop))
+         {
+            SDL_strlcpy(app.update_error, m->text, sizeof(app.update_error));
+            /* The release may be another by now. */
+            check_update();
+         }
          break;
       case MSG_STEAM_DONE:
          app.busy = false;
@@ -3871,7 +3950,7 @@ int main(int argc, char **argv)
       return code;
    }
    background_apply();
-   update_init(config);
+   update_init(base, config);
    msg_lock = SDL_CreateMutex();
    wake_event = SDL_RegisterEvents(1);
 
@@ -3920,6 +3999,13 @@ int main(int argc, char **argv)
       /* Or the next frame of animated art in view. */
       if (app.anim_at && !(SDL_GetWindowFlags(app.window) & SDL_WINDOW_MINIMIZED))
          wait = app.anim_at > now ? (int)SDL_min((Uint64)wait, app.anim_at - now) : 0;
+      /* Or an update's progress. */
+      if (app.update_busy)
+      {
+         wait = SDL_min(wait, 100);
+         app.redraw |= app.modal == MODAL_UPDATE
+            && app.update_shown != SDL_GetAtomicInt(&update_percent);
+      }
       got = app.redraw ? SDL_PollEvent(&e) : SDL_WaitEventTimeout(&e, wait);
       app.redraw |= app.anim_at && SDL_GetTicks() >= app.anim_at
          && !(SDL_GetWindowFlags(app.window) & SDL_WINDOW_MINIMIZED);
@@ -4013,6 +4099,7 @@ int main(int argc, char **argv)
       save_name();
    for (i = 0; i < CHOICES; i++)
       SDL_SetAtomicInt(&choices[i].stop, 1);
+   SDL_SetAtomicInt(&update_stop, 1);
    jobs_quit();
    while ((m = take_msg()))
       handle_msg(m);
@@ -4028,6 +4115,13 @@ int main(int argc, char **argv)
    SDL_DestroyWindow(app.window);
    if (log_file)
       SDL_CloseIO(log_file);
+   /* Updated: the new one. */
+   if (app.restart)
+   {
+      char exe[1100];
+      SDL_snprintf(exe, sizeof(exe), "%sfusebox%s", app.data_dir, PATH_SEP[0] == '\\' ? ".exe" : "");
+      platform_open(exe);
+   }
    SDL_Quit();
    return 0;
 }
