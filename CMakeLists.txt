@@ -92,7 +92,7 @@ set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
 add_executable(fusebox-cli src/cli.c)
 target_link_libraries(fusebox-cli PRIVATE fusebox_core)
 
-# In games that are played with friends (Windows): MinHook (BSD).
+# In games that are played with friends (Windows): MinHook (BSD) and FuseBox's own.
 if(WIN32)
    add_library(minhook STATIC
       third_party/minhook/src/buffer.c
@@ -100,6 +100,12 @@ if(WIN32)
       third_party/minhook/src/trampoline.c
       third_party/minhook/src/hde/hde64.c)
    target_include_directories(minhook PUBLIC third_party/minhook/include)
+   add_library(fuseboxlan SHARED src/lanhook.c)
+   set_target_properties(fuseboxlan PROPERTIES PREFIX "")
+   target_compile_definitions(fuseboxlan PRIVATE WIN32_LEAN_AND_MEAN)
+   target_link_options(fuseboxlan PRIVATE -static-libgcc)
+   target_link_libraries(fuseboxlan PRIVATE minhook ws2_32 iphlpapi)
+   add_dependencies(fusebox fuseboxlan)
 endif()
 
 # The app icon, in both exes.
@@ -110,7 +116,11 @@ if(WIN32)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-   foreach(t fusebox fusebox-cli fusebox_core)
+   set(OWN fusebox fusebox-cli fusebox_core)
+   if(WIN32)
+      list(APPEND OWN fuseboxlan)
+   endif()
+   foreach(t ${OWN})
       target_compile_options(${t} PRIVATE -Wall -Wextra -Wno-unused-parameter)
    endforeach()
 endif()
