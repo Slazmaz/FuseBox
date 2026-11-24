@@ -389,7 +389,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 33"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 34"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
@@ -573,6 +573,18 @@ void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort)
          (unsigned long long)lobby, (unsigned long long)host);
    if (find_target(url, sizeof(url), abort))
       evaluate(url, script, result, sizeof(result), abort);
+}
+
+void steamui_state(char *dst, size_t size, SDL_AtomicInt *abort)
+{
+   char url[512];
+
+   if (!find_target(url, sizeof(url), abort))
+      SDL_strlcpy(dst, "Steam's port: not open", size);
+   else if (!evaluate(url, "!window.__fusebox ? 'Steam\\'s page: without FuseBox\\'s script' : __fusebox.state"
+            " ? __fusebox.state() : 'Steam\\'s page: another version\\'s script, ' + __fusebox.version",
+            dst, size, abort) || !dst[0])
+      SDL_strlcpy(dst, "Steam's page: no answer", size);
 }
 
 void steamui_clear(SDL_AtomicInt *abort)

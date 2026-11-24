@@ -9,13 +9,19 @@
  *   fusebox-cli key <api key>  saves the SteamGridDB API key
  *   fusebox-cli version        FuseBox's version
  *   fusebox-cli scan           which games a scan finds and why (saves nothing)
+ *   fusebox-cli steam          whether and why Steam offers to invite friends
  */
 #include "disk.h"
 #include "http.h"
+#include "lan.h"
 #include "library.h"
+#include "platform.h"
+#include "ra.h"
 #include "roms.h"
 #include "scan.h"
 #include "sgdb.h"
+#include "steam.h"
+#include "steamui.h"
 #include "version.h"
 
 #include <SDL3/SDL.h>
@@ -30,7 +36,8 @@ static void usage(void)
          "       fusebox-cli library\n"
          "       fusebox-cli key <SteamGridDB API key>\n"
          "       fusebox-cli version\n"
-         "       fusebox-cli scan\n");
+         "       fusebox-cli scan\n"
+         "       fusebox-cli steam\n");
 }
 
 /* A dry run of the window's scan, to see what it finds and why. */
@@ -66,6 +73,40 @@ static void scan(void)
    printf("%d from launchers, %d on disk, %d ROMs, in %llu ms\n", launchers, disks, roms,
          (unsigned long long)(SDL_GetTicks() - start));
    library_discard();
+}
+
+/* For a computer that can't be looked at. While a game runs. */
+static void steam(const char *config)
+{
+   static char text[16384];
+   char dir[1024];
+   int i;
+
+   ra_init(config);
+   steam_read_settings(config);
+   steam_init();
+   steam_config(dir, sizeof(dir));
+   printf("FuseBox %s\n", FUSEBOX_VERSION);
+   printf("Steam: %s, %s\n", dir[0] ? dir : "not found",
+         steam_install() && platform_steam_running(steam_install()) ? "runs" : "doesn't run");
+   printf("content in Steam's menus: %s, auto start: %s\n", steam_menus() ? "on" : "off",
+         steam_autostart() ? "on" : "off");
+   platform_fuseboxes(text, sizeof(text));
+   printf("running FuseBoxes:\n%s", text[0] ? text : "none\n");
+   printf("a game runs: %s\n", lan_any(config) ? "yes" : "no");
+   lan_read_once(config);
+   library_lock();
+   for (i = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+
+      if (lan_app(g) && SDL_strcmp(g->source, "Steam") != 0)
+         printf("%u: %s (the library says %u)\n", (unsigned)lan_app(g), g->name,
+               (unsigned)g->steam_appid);
+   }
+   library_unlock();
+   steamui_state(text, sizeof(text), NULL);
+   printf("%s\n", text);
 }
 
 static int art(const char *name, const char *type_name, bool fetch)
@@ -171,6 +212,11 @@ int main(int argc, char **argv)
       sgdb_set_key(argv[2]);
    else if (argc == 2 && SDL_strcmp(argv[1], "scan") == 0)
       scan();
+   else if (argc == 2 && SDL_strcmp(argv[1], "steam") == 0)
+   {
+      steam(config);
+      library_discard();
+   }
    else
    {
       usage();

@@ -58,7 +58,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 33) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 34) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -779,7 +779,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 33,\n" \
+   "      version: 34,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -795,6 +795,17 @@
    "         others.forEach(([id, ...names]) => inLibrary.set(id, names));\n" \
    "         lanStart();\n" \
    "         return lanReady ? 'ok' : 'later';\n" \
+   "      },\n" \
+   "      /* Why there's an Invite to Play or not. */\n" \
+   "      state() {\n" \
+   "         let shown = false;\n" \
+   "         try { shown = !!ui.FriendStore.self.persona.connect_string; } catch (e) { }\n" \
+   "         return 'friends list: ' + (lanReady ? 'found' : ui ? 'not ready' : 'not found')\n" \
+   "            + '\\nmenu item: ' + (lanMenu ? 'added' : 'not added')\n" \
+   "            + '\\nbackground FuseBox: ' + (heard ? 'listens' : 'not heard of')\n" \
+   "            + '\\nrunning: ' + (running().map(app => app + (lanGames.has(app) ? '' : ' (not FuseBox\\'s)')).join(', ') || 'nothing')\n" \
+   "            + '\\ngames: ' + lanGames.size + ', of them only meanwhile: ' + ([...onces.keys()].join(', ') || 'none')\n" \
+   "            + '\\nInvite to Play: ' + (shown ? 'shown' : 'not shown');\n" \
    "      },\n" \
    "      /* The pictures of one that isn't in Steam. */\n" \
    "      art(id, icon, wide) {\n" \

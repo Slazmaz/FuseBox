@@ -48,6 +48,9 @@ bool platform_exe_icon(const char *exe, const char *png_path);
  * elsewhere). */
 void platform_window_shadow(void *sdl_window);
 
+/* The paths of the FuseBoxes that run, one a line. Windows; none elsewhere. */
+void platform_fuseboxes(char *dst, size_t size);
+
 /* fusebox --background (background.h) at login, or no more. */
 void platform_autostart(bool on);
 /* Starts it now, unless it runs. by_game: from a game Steam started, so
