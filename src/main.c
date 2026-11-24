@@ -1824,11 +1824,14 @@ static void settings_icon(float cx, float cy, float size, float r, float g, floa
 static void draw_sidebar(float w)
 {
    float x = S(16), lw = w - S(32), row = S(44), ch = S(124);
+   bool steam = steam_shortcuts();
+   /* Where the rows' pictures start: after the ticks. */
+   float px = x + S(steam ? 38 : 10);
    float card_y = app.height - S(20) - ch;
-   float list_top = S(176), list_h = card_y - S(12) - list_top, content, first_y;
+   float list_top = S(176), list_h = (steam ? card_y - S(12) : app.height - S(20)) - list_top, content, first_y;
    bool all = true, any = false, on;
    char line[64];
-   int i, n = steam_changes();
+   int i, n = steam ? steam_changes() : 0;
 
    ui_rect(0, 0, w, (float)app.height, 0, C_SIDE, 1);
 
@@ -1841,14 +1844,14 @@ static void draw_sidebar(float w)
    text_field(x, S(80), lw - S(52), S(42), FIELD_FILTER, app.filter, "Search games", false, false,
          S(30));
    {
-      float px = x + lw - S(42);
-      bool over = hover(px, S(80), S(42), S(42));
-      ui_rect(px, S(80), S(42), S(42), S(12), 1, 1, 1, over ? 0.12f : 0.06f);
-      ui_rect(px + S(21) - S(7), S(101) - S(0.75f), S(14), S(1.5f), 0, C_TEXT, 0.9f);
-      ui_rect(px + S(21) - S(0.75f), S(101) - S(7), S(1.5f), S(14), 0, C_TEXT, 0.9f);
+      float bx = x + lw - S(42);
+      bool over = hover(bx, S(80), S(42), S(42));
+      ui_rect(bx, S(80), S(42), S(42), S(12), 1, 1, 1, over ? 0.12f : 0.06f);
+      ui_rect(bx + S(21) - S(7), S(101) - S(0.75f), S(14), S(1.5f), 0, C_TEXT, 0.9f);
+      ui_rect(bx + S(21) - S(0.75f), S(101) - S(7), S(1.5f), S(14), 0, C_TEXT, 0.9f);
       if (over)
-         tooltip(px + S(21), S(80) + S(42) + S(8), "Add game");
-      if (clicked_in(px, S(80), S(42), S(42), false))
+         tooltip(bx + S(21), S(80) + S(42) + S(8), "Add game");
+      if (clicked_in(bx, S(80), S(42), S(42), false))
          pick_exe();
    }
    draw_icon(ICON_SEARCH, x + S(23), S(101), 26, C_DIM, 1);
@@ -1858,7 +1861,7 @@ static void draw_sidebar(float w)
    for (i = 0; i < app.view_count; i++)
    {
       const struct game *g = library_game(app.view[i]);
-      if (g && tickable(g))
+      if (steam && g && tickable(g))
       {
          any = true;
          all &= g->selected;
@@ -1916,7 +1919,7 @@ static void draw_sidebar(float w)
       else if (i % 2 == 0)
          ui_rect(x, ry + S(1), lw, row - S(2), S(10), 1, 1, 1, 0.03f);
 
-      if (tickable(g))
+      if (steam && tickable(g))
       {
          draw_tick(x + S(10), ry + row / 2, g->selected, g->gone);
          if (in_list && clicked_in(x, ry, S(38), row, false))
@@ -1926,14 +1929,14 @@ static void draw_sidebar(float w)
       fill_row(index, g);
       pic = list_art(index, g);
       if (pic)
-         draw_cover(pic->tex, pic->w, pic->h, x + S(38), ry + S(8), S(28), S(28), 0, 1);
+         draw_cover(pic->tex, pic->w, pic->h, px, ry + S(8), S(28), S(28), 0, 1);
       else
-         ui_rect(x + S(38), ry + S(8), S(28), S(28), S(7), C_CARD, 1);
+         ui_rect(px, ry + S(8), S(28), S(28), S(7), C_CARD, 1);
 
       /* The name, and under it what Steam has of it (centred alone when
        * there's nothing to say). Where it's from shows on its page. */
-      tx = x + S(78);
-      state = steam_state(g, &sr, &sg, &sb);
+      tx = px + S(40);
+      state = steam ? steam_state(g, &sr, &sg, &sb) : NULL;
       ui_text(UI_BOLD, S(14), tx, ry + (state ? S(15) : row / 2), UI_LEFT, x + lw - tx - S(10),
             C_TEXT, g->gone ? 0.55f : 1.0f, g->name);
       if (state)
@@ -1951,6 +1954,8 @@ static void draw_sidebar(float w)
             : "No games found");
 
    /* Steam: what an update would change. */
+   if (!steam)
+      return;
    ui_ring(x, card_y, lw, ch, S(16), S(1), 1, 1, 1, 0.12f);
    ui_text(UI_BOLD, S(16), x + S(18), card_y + S(26), UI_LEFT, 0, C_TEXT, 1, "Steam");
    /* What's waiting first; else what the last update said. */
@@ -2079,7 +2084,7 @@ static void build_view(void)
       /* Uninstalled games and lookups stay in library.json (other apps
        * may still want their art) but aren't listed, unless Steam still
        * has a shortcut for them: then they're listed to be taken out. */
-      if (!library_game(i)->installed && !library_game(i)->gone)
+      if (!library_game(i)->installed && !(library_game(i)->gone && steam_shortcuts()))
          continue;
       library_normalize(library_game(i)->name, have, sizeof(have));
       if (!want[0] || SDL_strstr(have, want))
@@ -2641,29 +2646,41 @@ static void draw_login(float x, float y, float w, bool in, const char *user)
       ui_text(UI_MEDIUM, S(13), x, y + S(60), UI_LEFT, w, C_DIM, 1, "Logging in...");
 }
 
-/* Steam: where it is, and what's added to its menus. Returns the card's
- * height. */
+/* Steam: where it is, its shortcuts, and what's added to its menus. Returns
+ * the card's height. */
 static float draw_steam_card(float x, float y, float w)
 {
+   static const char shortcuts[] = "Tick games in the list to add them as Steam shortcuts.";
    static const char menus[] = "Activity, achievements and buttons on games' pages in your library."
       " This opens a debugging port to access Steam.";
    static const char autostart[] = "FuseBox needs to be running to add content to Steam menus. If"
       " toggled off FuseBox will not open until manually opened or starting a game added to Steam"
       " with FuseBox.";
    char user[128];
-   bool on = steam_menus(), in = ra_user(user, sizeof(user)), running;
+   bool add = steam_shortcuts(), on = steam_menus(), in = ra_user(user, sizeof(user)), running;
    const char *shown = in ? "On ROMs' pages in your library, with friends who play them and"
       " leaderboards." : "On ROMs' pages in your library, with friends who play them and leaderboards."
       " Log in to retroachievements.org; the password isn't kept.";
-   float mh = setting_h(w, menus), ah = setting_h(w, autostart);
+   float uh = setting_h(w, shortcuts), mh = setting_h(w, menus), ah = setting_h(w, autostart);
    float sh = setting_h(w, shown), lh = login_h(in), cy, bw, fw, rx = x + w - S(24);
-   float h = S(58) + S(28) + mh + S(12) + sh + lh + S(12) + ah + S(22)
+   float h = S(58) + S(28) + uh + S(12) + mh + S(12) + sh + lh + S(12) + ah + S(22)
       + (on ? S(52) : app.menus_note[0] ? S(26) : 0);
 
    cy = settings_card(x, y, w, h, "Steam");
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
          steam_install() ? steam_install()->config : "Not found");
    cy += S(28);
+   if (setting_row(x, cy, w, "Steam shortcuts", shortcuts, 0, add, true))
+   {
+      steam_set_shortcuts(!add);
+      /* Uninstalled games are listed only to leave Steam. */
+      app.view_built_for = -1;
+      library_lock();
+      if (add && library_game(app.selected) && library_game(app.selected)->gone)
+         app.selected = -1;
+      library_unlock();
+   }
+   cy += uh + S(12);
    if (setting_row(x, cy, w, "Add content to Steam menus", menus, 0, on, true))
    {
       steam_set_menus(!on);

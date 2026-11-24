@@ -16,6 +16,10 @@ const struct steam_install *steam_install(void);
 /* The settings, in <config>/steam.json. After ra_init (older FuseBoxes kept
  * them with the achievements'). Again to read them again. */
 void steam_read_settings(const char *config_dir);
+/* Whether the window has games to add to Steam (and take out). On until turned
+ * off. */
+bool steam_shortcuts(void);
+void steam_set_shortcuts(bool on);
 /* Whether content is added to Steam's menus (steamui.h). Off until turned
  * on: the port it needs is open to every program on the computer. */
 bool steam_menus(void);

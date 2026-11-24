@@ -17,7 +17,7 @@ static struct
    char config[1024];
    /* Under lock. */
    SDL_Mutex *lock;
-   bool menus, autostart, made_file;
+   bool shortcuts, menus, autostart, made_file;
    int port;
 } set;
 
@@ -34,8 +34,9 @@ static void save_settings(void)
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
       return;
    }
-   SDL_IOprintf(io, "{\n  \"menus\": %s,\n  \"autostart\": %s,\n  \"made_file\": %s,\n"
-         "  \"port\": %d\n}\n", set.menus ? "true" : "false", set.autostart ? "true" : "false",
+   SDL_IOprintf(io, "{\n  \"shortcuts\": %s,\n  \"menus\": %s,\n  \"autostart\": %s,\n"
+         "  \"made_file\": %s,\n  \"port\": %d\n}\n", set.shortcuts ? "true" : "false",
+         set.menus ? "true" : "false", set.autostart ? "true" : "false",
          set.made_file ? "true" : "false", set.port);
    SDL_CloseIO(io);
 }
@@ -59,6 +60,7 @@ void steam_read_settings(const char *config_dir)
    /* One being written just now can't be read: as they were. */
    if (root || old)
    {
+      set.shortcuts = old || json_bool(root, "shortcuts", true);
       set.menus = old ? ra_active() : json_bool(root, "menus", false);
       set.autostart = !root || json_bool(root, "autostart", true);
       set.made_file = root && json_bool(root, "made_file", false);
@@ -88,6 +90,16 @@ static void change_setting(bool *value, bool on)
    *value = on;
    save_settings();
    SDL_UnlockMutex(set.lock);
+}
+
+bool steam_shortcuts(void)
+{
+   return get_setting(&set.shortcuts);
+}
+
+void steam_set_shortcuts(bool on)
+{
+   change_setting(&set.shortcuts, on);
 }
 
 bool steam_menus(void)
