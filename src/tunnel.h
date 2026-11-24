@@ -8,7 +8,7 @@
  * a game finds a friend's server as if it ran here. The host has the server:
  * its ports on 127.0.0.1 are shared. A guest has the same ports open on
  * 127.0.0.1, and what connects or sends there goes to the host's. Only those
- * ports, and only members' messages. One thread. Windows. */
+ * ports, and only members' messages. One thread. */
 
 #define TUNNEL_PORTS 32
 /* The channels messages are sent on. */
@@ -21,7 +21,6 @@ struct tunnel_port
    bool udp;
 };
 
-#ifdef _WIN32
 #include "stream.h"
 
 struct tunnel;
@@ -40,6 +39,5 @@ void tunnel_receive(struct tunnel *t, Uint64 from, int channel, const void *data
 void tunnel_run(struct tunnel *t, int wait_ms);
 /* Connections and senders going through it now. */
 int tunnel_active(const struct tunnel *t);
-#endif
 
 #endif

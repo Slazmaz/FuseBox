@@ -76,6 +76,7 @@ add_library(fusebox_core STATIC
    src/background.c
    src/history.c
    src/lan.c
+   src/sockets.c
    src/stream.c
    src/vlan.c
    src/inject.c

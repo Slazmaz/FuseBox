@@ -1,5 +1,3 @@
-#ifdef _WIN32
-
 #include "vlan.h"
 #include <SDL3/SDL.h>
 
@@ -70,11 +68,10 @@ struct vlan *vlan_create(Uint32 net, int me, send_message send, void *send_user,
       bool (*owns)(void *user, Uint16 port, bool udp), void *user)
 {
    struct vlan *v = SDL_calloc(1, sizeof(*v));
-   WSADATA wsa;
 
    if (!v)
       return NULL;
-   if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0 || !(v->lock = SDL_CreateMutex()))
+   if (!sockets_start() || !(v->lock = SDL_CreateMutex()))
    {
       SDL_free(v);
       return NULL;
@@ -107,7 +104,7 @@ void vlan_destroy(struct vlan *v)
       end_place(&v->places[i]);
    SDL_DestroyMutex(v->lock);
    SDL_free(v);
-   WSACleanup();
+   sockets_stop();
 }
 
 void vlan_set_players(struct vlan *v, const Uint64 ids[LANHOOK_PLAYERS])
@@ -189,24 +186,20 @@ void vlan_receive(struct vlan *v, Uint64 from, int channel, const void *data, in
 
 void vlan_run(struct vlan *v, int wait_ms)
 {
-   struct timeval tv = { 0, wait_ms * 1000 };
-   fd_set set;
+   struct socket_set set;
    Uint64 now;
    int i, n;
 
    if (wait_ms)
    {
       SDL_LockMutex(v->lock);
-      FD_ZERO(&set);
+      set.count = 0;
       for (i = 0; i < PORTS; i++)
          if (v->places[i].live)
-            FD_SET(v->places[i].s, &set);
+            socket_set_add(&set, v->places[i].s);
       streams_wait(&v->streams, &set);
       SDL_UnlockMutex(v->lock);
-      if (set.fd_count)
-         select(0, &set, NULL, NULL, &tv);
-      else
-         SDL_Delay((Uint32)wait_ms);
+      socket_set_wait(&set, wait_ms);
    }
    SDL_LockMutex(v->lock);
    now = SDL_GetTicks();
@@ -214,7 +207,7 @@ void vlan_run(struct vlan *v, int wait_ms)
    {
       struct place *p = &v->places[i];
       struct sockaddr_in from;
-      int len = sizeof(from);
+      socklen_t len = sizeof(from);
       SOCKET s;
 
       if (!p->live)
@@ -237,5 +230,3 @@ void vlan_run(struct vlan *v, int wait_ms)
    streams_run(&v->streams);
    SDL_UnlockMutex(v->lock);
 }
-
-#endif

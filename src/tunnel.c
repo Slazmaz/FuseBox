@@ -1,7 +1,4 @@
 #include "tunnel.h"
-
-#ifdef _WIN32
-
 #include "stream.h"
 #include <SDL3/SDL.h>
 
@@ -162,7 +159,7 @@ static void packet_message(struct tunnel *t, Uint64 from, const char *data, int 
       }
    }
    f->heard = SDL_GetTicks();
-   send(f->s, data + PACKET_HEAD, size - PACKET_HEAD, 0);
+   send(f->s, data + PACKET_HEAD, size - PACKET_HEAD, SEND_FLAGS);
 }
 
 static void send_packet(struct tunnel *t, struct flow *f, int n)
@@ -177,7 +174,8 @@ static void send_packet(struct tunnel *t, struct flow *f, int n)
 static void take_packets(struct tunnel *t, int i)
 {
    struct sockaddr_in from;
-   int len = sizeof(from), n, k;
+   socklen_t len = sizeof(from);
+   int n, k;
 
    while ((n = recvfrom(t->open[i], t->buf + PACKET_HEAD, PACKET, 0, (struct sockaddr *)&from,
                &len)) > 0)
@@ -201,12 +199,11 @@ static void take_packets(struct tunnel *t, int i)
 struct tunnel *tunnel_create(Uint64 peer, send_message send, void *user)
 {
    struct tunnel *t = SDL_calloc(1, sizeof(*t));
-   WSADATA wsa;
    int i;
 
    if (!t)
       return NULL;
-   if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+   if (!sockets_start())
    {
       SDL_free(t);
       return NULL;
@@ -236,7 +233,7 @@ void tunnel_destroy(struct tunnel *t)
       if (t->open[i] != INVALID_SOCKET)
          closesocket(t->open[i]);
    SDL_free(t);
-   WSACleanup();
+   sockets_stop();
 }
 
 int tunnel_set_ports(struct tunnel *t, const struct tunnel_port *ports, int count)
@@ -303,24 +300,21 @@ void tunnel_receive(struct tunnel *t, Uint64 from, int channel, const void *data
 
 void tunnel_run(struct tunnel *t, int wait_ms)
 {
-   struct timeval tv = { 0, wait_ms * 1000 };
+   struct socket_set set;
    Uint64 now;
-   fd_set set;
    SOCKET s;
    int i, n;
 
-   FD_ZERO(&set);
+   set.count = 0;
    for (i = 0; i < t->port_count; i++)
       if (t->open[i] != INVALID_SOCKET)
-         FD_SET(t->open[i], &set);
+         socket_set_add(&set, t->open[i]);
    streams_wait(&t->streams, &set);
    for (i = 0; i < FLOWS; i++)
       if (t->flows[i].live && t->flows[i].s != INVALID_SOCKET)
-         FD_SET(t->flows[i].s, &set);
-   if (wait_ms && set.fd_count)
-      select(0, &set, NULL, NULL, &tv);
-   else if (wait_ms)
-      SDL_Delay((Uint32)wait_ms);
+         socket_set_add(&set, t->flows[i].s);
+   if (wait_ms)
+      socket_set_wait(&set, wait_ms);
 
    for (i = 0; i < t->port_count; i++)
       if (t->open[i] == INVALID_SOCKET)
@@ -354,5 +348,3 @@ int tunnel_active(const struct tunnel *t)
       n += t->flows[i].live;
    return n;
 }
-
-#endif

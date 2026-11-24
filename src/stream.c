@@ -1,11 +1,5 @@
-#ifdef _WIN32
-
 #include "stream.h"
 #include <SDL3/SDL.h>
-
-#ifndef SIO_UDP_CONNRESET
-#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
-#endif
 
 /* A server that's just starting is tried this long, this often (ms). */
 #define CONNECT_MS 20000
@@ -34,74 +28,6 @@ void put16(void *p, Uint16 v)
 
    b[0] = (Uint8)(v >> 8);
    b[1] = (Uint8)v;
-}
-
-void socket_address(struct sockaddr_in *a, Uint32 address, Uint16 port)
-{
-   SDL_zerop(a);
-   a->sin_family = AF_INET;
-   a->sin_addr.s_addr = htonl(address);
-   a->sin_port = htons(port);
-}
-
-void socket_ready(SOCKET s)
-{
-   u_long on = 1;
-   BOOL nodelay = TRUE;
-
-   ioctlsocket(s, FIONBIO, &on);
-   /* Fails for UDP, which never waits. */
-   setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
-}
-
-static SOCKET tcp_socket(void)
-{
-   SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-   if (s != INVALID_SOCKET)
-      socket_ready(s);
-   return s;
-}
-
-SOCKET udp_socket(Uint32 address, Uint16 port)
-{
-   struct sockaddr_in a;
-   BOOL report = FALSE, only = TRUE;
-   DWORD bytes;
-   SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-
-   if (s == INVALID_SOCKET)
-      return s;
-   setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&only, sizeof(only));
-   socket_address(&a, address, port);
-   if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0)
-   {
-      closesocket(s);
-      return INVALID_SOCKET;
-   }
-   socket_ready(s);
-   /* A port nobody listens on (yet) must not break it. */
-   WSAIoctl(s, SIO_UDP_CONNRESET, &report, sizeof(report), NULL, 0, &bytes, NULL, NULL);
-   return s;
-}
-
-SOCKET tcp_listener(Uint32 address, Uint16 port)
-{
-   struct sockaddr_in a;
-   BOOL only = TRUE;
-   SOCKET s = tcp_socket();
-
-   if (s == INVALID_SOCKET)
-      return s;
-   /* Nobody else's port, and nobody's after it. */
-   setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&only, sizeof(only));
-   socket_address(&a, address, port);
-   if (bind(s, (struct sockaddr *)&a, sizeof(a)) != 0 || listen(s, SOMAXCONN) != 0)
-   {
-      closesocket(s);
-      return INVALID_SOCKET;
-   }
-   return s;
 }
 
 static enum sent send_stream(struct streams *t, const struct stream *st, char what, char *msg, int len)
@@ -172,7 +98,7 @@ static void connect_stream(struct streams *t, struct stream *st)
    st->connecting = true;
    if ((from.sin_family == AF_INET && bind(st->s, (struct sockaddr *)&from, sizeof(from)) != 0)
          || (connect(st->s, (struct sockaddr *)&to, sizeof(to)) != 0
-            && WSAGetLastError() != WSAEWOULDBLOCK))
+            && !socket_waits()))
    {
       closesocket(st->s);
       st->s = INVALID_SOCKET;
@@ -181,18 +107,13 @@ static void connect_stream(struct streams *t, struct stream *st)
 
 static void check_connect(struct streams *t, struct stream *st, Uint64 now)
 {
-   fd_set w, e;
-   struct timeval tv = { 0, 0 };
-
    if (st->s != INVALID_SOCKET)
    {
-      FD_ZERO(&w);
-      FD_ZERO(&e);
-      FD_SET(st->s, &w);
-      FD_SET(st->s, &e);
-      if (select(0, NULL, &w, &e, &tv) <= 0)
+      int connected = socket_connected(st->s);
+
+      if (!connected)
          return;
-      if (FD_ISSET(st->s, &w) && !FD_ISSET(st->s, &e))
+      if (connected > 0)
       {
          st->connecting = false;
          return;
@@ -333,13 +254,13 @@ static void move_stream(struct streams *t, struct stream *st)
 
    while (st->out_len)
    {
-      n = send(st->s, st->out, (int)SDL_min(st->out_len, 1 << 20), 0);
+      n = send(st->s, st->out, (int)SDL_min(st->out_len, 1 << 20), SEND_FLAGS);
       if (n <= 0)
          break;
       SDL_memmove(st->out, st->out + n, st->out_len - (size_t)n);
       st->out_len -= (size_t)n;
    }
-   if (st->out_len && WSAGetLastError() != WSAEWOULDBLOCK)
+   if (st->out_len && !socket_waits())
    {
       end_stream(t, st, true);
       return;
@@ -373,7 +294,7 @@ static void move_stream(struct streams *t, struct stream *st)
          return;
       }
    }
-   if (n == 0 || WSAGetLastError() != WSAEWOULDBLOCK)
+   if (n == 0 || !socket_waits())
       end_stream(t, st, true);
 }
 
@@ -386,7 +307,7 @@ void streams_keep(struct streams *t, bool (*keep)(void *user, Uint16 port), void
          end_stream(t, &t->list[i], true);
 }
 
-void streams_wait(const struct streams *t, fd_set *set)
+void streams_wait(const struct streams *t, struct socket_set *set)
 {
    int i;
 
@@ -394,7 +315,7 @@ void streams_wait(const struct streams *t, fd_set *set)
       /* One that can't send isn't worth waking up for. */
       if (t->list[i].live && t->list[i].s != INVALID_SOCKET && !t->list[i].connecting
             && !t->list[i].held_len && !t->list[i].closing)
-         FD_SET(t->list[i].s, set);
+         socket_set_add(set, t->list[i].s);
 }
 
 void streams_run(struct streams *t)
@@ -430,5 +351,3 @@ int streams_active(const struct streams *t)
       n += t->list[i].live;
    return n;
 }
-
-#endif

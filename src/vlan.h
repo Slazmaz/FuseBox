@@ -1,8 +1,6 @@
 #ifndef FUSEBOX_VLAN_H
 #define FUSEBOX_VLAN_H
 
-#ifdef _WIN32
-
 #include "stream.h"
 #include "lanhook.h"
 
@@ -10,7 +8,7 @@
  * them). On each computer a player is an address of its own, net + number, where
  * this stands in for the others: what the game sends to one of their ports goes to
  * that player's computer, and comes to the game there from the sender's address
- * and port, so it's answered the same way. Only to the game's own ports. Windows. */
+ * and port, so it's answered the same way. Only to the game's own ports. */
 
 #define VLAN_STREAMS 2
 #define VLAN_PACKETS 3
@@ -28,5 +26,4 @@ bool vlan_open(struct vlan *v, int player, Uint16 port, bool udp);
 void vlan_receive(struct vlan *v, Uint64 from, int channel, const void *data, int size);
 void vlan_run(struct vlan *v, int wait_ms);
 
-#endif
 #endif

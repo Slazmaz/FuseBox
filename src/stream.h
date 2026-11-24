@@ -1,16 +1,13 @@
 #ifndef FUSEBOX_STREAM_H
 #define FUSEBOX_STREAM_H
 
-#ifdef _WIN32
+#include "sockets.h"
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <windows.h>
 #include <stdbool.h>
 #include <SDL3/SDL_stdinc.h>
 
 /* TCP connections carried over messages that arrive in order: for tunnel.c and
- * vlan.c. Either side opens them. One thread. Windows. */
+ * vlan.c. Either side opens them. One thread. */
 
 /* At once; a piece of one's data. */
 #define STREAMS 128
@@ -76,17 +73,11 @@ void streams_receive(struct streams *t, Uint64 from, const char *data, int size)
 /* Those on a port for which this is false end. */
 void streams_keep(struct streams *t, bool (*keep)(void *user, Uint16 port), void *user);
 /* Those worth waiting for. */
-void streams_wait(const struct streams *t, fd_set *set);
+void streams_wait(const struct streams *t, struct socket_set *set);
 void streams_run(struct streams *t);
 int streams_active(const struct streams *t);
 
-/* On that address; they don't wait. */
-void socket_address(struct sockaddr_in *a, Uint32 address, Uint16 port);
-SOCKET udp_socket(Uint32 address, Uint16 port);
-SOCKET tcp_listener(Uint32 address, Uint16 port);
-void socket_ready(SOCKET s);
 Uint16 get16(const void *p);
 void put16(void *p, Uint16 v);
 
-#endif
 #endif
