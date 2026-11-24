@@ -55,4 +55,12 @@ char *ra_list(unsigned id, unsigned total, unsigned unlocked, SDL_AtomicInt *abo
  * on a failure. */
 char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort);
 
+/* Who unlocked a game's achievements when, as a JSON list of [achievement,
+ * friend's name (empty: the user), seconds since 1970]; SDL_free it. Friends'
+ * are all of them, the user's those from when FuseBox first looked on, and
+ * before that those lately enough to be among an achievement's last winners:
+ * RetroAchievements doesn't tell this login more. Only some are looked up a
+ * call, the rest in later ones. list: ra_list's. Blocking; NULL on a failure. */
+char *ra_activity(unsigned id, const char *list, SDL_AtomicInt *abort);
+
 #endif

@@ -29,6 +29,15 @@
 #define COMMON 3
 /* Seen playing a game this long ago (seconds), a friend still is. */
 #define NOW_S (5 * 60)
+/* An achievement's winners: so many are looked through for the user, so many
+ * achievements a call, with a pause before each (RetroAchievements refuses
+ * bursts). Friends' are looked up again after a day when one has
+ * played since, else after a week (seconds). */
+#define WINNERS 500
+#define WON_ASKS 25
+#define WON_PAUSE_MS 300
+#define WON_AGE_S (24 * 3600)
+#define WON_OLD_S (7 * 24 * 3600)
 
 static struct
 {
@@ -752,6 +761,315 @@ static struct json *who_played(unsigned id, const char *list, const char *user,
    }
    SDL_CloseIO(io);
    return root;
+}
+
+/* --- Who unlocked what when ---------------------------------------------- */
+
+/* Where an achievement of the user's stands. */
+enum
+{
+   /* Not seen unlocked yet; unlocked before FuseBox looked, and not looked
+    * up yet. Else when, 0 if that can't be known. */
+   MINE_NEW = -2,
+   MINE_OLD = -1
+};
+
+struct won
+{
+   unsigned id;
+   bool unlocked;
+   Sint64 mine;
+   /* When friends' was looked up. */
+   Sint64 asked;
+};
+
+struct win
+{
+   unsigned id;
+   Sint64 time;
+   char who[64];
+};
+
+static void activity_path(unsigned id, char *dst, size_t size)
+{
+   SDL_snprintf(dst, size, "%sachievements" PATH_SEP "%u-activity.json", library_dir(), id);
+}
+
+/* The file, if it's the user's; NULL. */
+static struct json *saved_activity(unsigned id, const char *user)
+{
+   char path[1100], *text;
+   struct json *root;
+
+   activity_path(id, path, sizeof(path));
+   if (!platform_exists(path) || !(text = SDL_LoadFile(path, NULL)))
+      return NULL;
+   root = json_parse(text);
+   SDL_free(text);
+   if (root && SDL_strcmp(json_str(root, "user", ""), user) != 0)
+   {
+      json_free(root);
+      root = NULL;
+   }
+   return root;
+}
+
+static struct won *won_of(struct won *won, int count, const struct json *pair)
+{
+   int i;
+
+   for (i = 0; pair->child && pair->child->next && i < count; i++)
+      if (won[i].id == (unsigned)pair->child->num)
+         return &won[i];
+   return NULL;
+}
+
+/* An achievement's winners, the last first; friends: only those. */
+static struct json *winners(unsigned id, bool friends, SDL_AtomicInt *abort)
+{
+   char request[96];
+
+   SDL_Delay(WON_PAUSE_MS);
+   SDL_snprintf(request, sizeof(request), "achievementwondata&a=%u&f=%d&o=0&c=%d", id, friends,
+         friends ? 100 : WINNERS);
+   return ask(request, abort);
+}
+
+static const struct json *first_winner(const struct json *root)
+{
+   const struct json *list = json_get(json_get(root, "Response"), "RecentWinner");
+   return list ? list->child : NULL;
+}
+
+/* The user's, of those that have none yet. False when RetroAchievements
+ * couldn't be asked. */
+static bool find_mine(struct won *won, int count, const char *user, int *asks, SDL_AtomicInt *abort)
+{
+   int pass, i;
+
+   /* The new ones first: they're the last winners now. */
+   for (pass = MINE_NEW; pass <= MINE_OLD; pass++)
+      for (i = 0; i < count && *asks < WON_ASKS; i++)
+      {
+         const struct json *o;
+         struct json *root;
+         SDL_Time now = 0;
+         Sint64 time = 0;
+
+         if (!won[i].unlocked || won[i].mine != pass)
+            continue;
+         ++*asks;
+         if (!(root = winners(won[i].id, false, abort)))
+            return false;
+         for (o = first_winner(root); o && !time; o = o->next)
+            if (SDL_strcasecmp(json_str(o, "User", ""), user) == 0)
+               time = (Sint64)number(o, "DateAwarded", 0);
+         json_free(root);
+         SDL_GetCurrentTime(&now);
+         won[i].mine = time || pass == MINE_OLD ? time : now / SDL_NS_PER_SECOND;
+      }
+   return true;
+}
+
+static void add_win(struct win **wins, int *count, unsigned id, const char *who, Sint64 time)
+{
+   struct win *grown;
+
+   if (!who[0] || time <= 0)
+      return;
+   if ((*count & (*count - 1)) == 0)
+   {
+      if (!(grown = SDL_realloc(*wins, sizeof(*grown) * (size_t)(*count ? *count * 2 : 1))))
+         return;
+      *wins = grown;
+   }
+   (*wins)[*count].id = id;
+   (*wins)[*count].time = time;
+   SDL_strlcpy((*wins)[(*count)++].who, who, sizeof((*wins)->who));
+}
+
+static void drop_wins(struct win *wins, int *count, unsigned id)
+{
+   int i, n = 0;
+
+   for (i = 0; i < *count; i++)
+      if (wins[i].id != id)
+         wins[n++] = wins[i];
+   *count = n;
+}
+
+/* Whether any friend played the game, and when one last did. */
+static bool friends_play(unsigned id, const char *list, const char *user, Sint64 *last,
+      SDL_AtomicInt *abort)
+{
+   struct json *friends, *played, *o;
+   bool any = false;
+
+   *last = 0;
+   SDL_LockMutex(ra.friends_lock);
+   friends = friend_list(user, abort);
+   for (o = friends ? friends->child : NULL; o; o = o->next)
+      if ((unsigned)number(o, "LastGameId", 0) == id)
+      {
+         *last = SDL_max(*last, (Sint64)number(o, "LastSeenTime", 0));
+         any = true;
+      }
+   if (friends && friends->child && !any && (played = who_played(id, list, user, abort)))
+   {
+      o = json_get(played, "names");
+      any = o && o->child;
+      json_free(played);
+   }
+   SDL_UnlockMutex(ra.friends_lock);
+   return any;
+}
+
+static void save_activity(unsigned id, const char *user, const struct won *won, int count,
+      const struct win *wins, int win_count)
+{
+   char path[1100], tmp[1120];
+   SDL_IOStream *io;
+   bool first = true;
+   int i;
+
+   SDL_snprintf(path, sizeof(path), "%sachievements", library_dir());
+   SDL_CreateDirectory(path);
+   activity_path(id, path, sizeof(path));
+   SDL_snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+   if (!(io = SDL_IOFromFile(tmp, "wb")))
+      return;
+   SDL_IOprintf(io, "{\"user\": ");
+   json_write_string(io, user);
+   SDL_IOprintf(io, ", \"mine\": [");
+   for (i = 0; i < count; i++)
+      if (won[i].mine != MINE_NEW)
+      {
+         SDL_IOprintf(io, "%s[%u,%lld]", first ? "" : ",", won[i].id, (long long)won[i].mine);
+         first = false;
+      }
+   SDL_IOprintf(io, "],\n\"asked\": [");
+   for (i = 0, first = true; i < count; i++)
+      if (won[i].asked)
+      {
+         SDL_IOprintf(io, "%s[%u,%lld]", first ? "" : ",", won[i].id, (long long)won[i].asked);
+         first = false;
+      }
+   SDL_IOprintf(io, "],\n\"friends\": [");
+   for (i = 0; i < win_count; i++)
+   {
+      SDL_IOprintf(io, "%s[%u,", i ? "," : "", wins[i].id);
+      json_write_string(io, wins[i].who);
+      SDL_IOprintf(io, ",%lld]", (long long)wins[i].time);
+   }
+   SDL_IOprintf(io, "]}\n");
+   if (SDL_CloseIO(io))
+      SDL_RenamePath(tmp, path);
+}
+
+char *ra_activity(unsigned id, const char *list, SDL_AtomicInt *abort)
+{
+   struct json *root = json_parse(list), *saved, *o;
+   struct won *won = NULL, *w;
+   struct win *wins = NULL;
+   char user[128], *out = NULL;
+   int i, count = 0, win_count = 0, asks = 0;
+   SDL_IOStream *io;
+   SDL_Time now = 0;
+   Sint64 played;
+   bool first = true, ok;
+
+   for (o = root ? root->child : NULL; o; o = o->next)
+      count++;
+   if (!ra_user(user, sizeof(user)) || !count || !(won = SDL_calloc((size_t)count, sizeof(*won))))
+   {
+      json_free(root);
+      return NULL;
+   }
+   for (o = root->child, i = 0; o; o = o->next, i++)
+   {
+      const struct json *v = o->child;
+      int k;
+
+      won[i].id = v ? (unsigned)v->num : 0;
+      for (k = 0; v && k < 5; k++)
+         v = v->next;
+      won[i].unlocked = v && v->num != 0;
+      won[i].mine = MINE_NEW;
+   }
+   json_free(root);
+
+   if ((saved = saved_activity(id, user)))
+   {
+      o = json_get(saved, "mine");
+      for (o = o ? o->child : NULL; o; o = o->next)
+         if ((w = won_of(won, count, o)))
+            w->mine = (Sint64)o->child->next->num;
+      o = json_get(saved, "asked");
+      for (o = o ? o->child : NULL; o; o = o->next)
+         if ((w = won_of(won, count, o)))
+            w->asked = (Sint64)o->child->next->num;
+      o = json_get(saved, "friends");
+      for (o = o ? o->child : NULL; o; o = o->next)
+         if (won_of(won, count, o) && o->child->next->type == JSON_STRING && o->child->next->next)
+            add_win(&wins, &win_count, (unsigned)o->child->num, o->child->next->str,
+                  (Sint64)o->child->next->next->num);
+   }
+   else
+      for (i = 0; i < count; i++)
+         if (won[i].unlocked)
+            won[i].mine = MINE_OLD;
+
+   ok = find_mine(won, count, user, &asks, abort);
+   SDL_GetCurrentTime(&now);
+   now /= SDL_NS_PER_SECOND;
+   if (ok && friends_play(id, list, user, &played, abort))
+      for (i = 0; i < count && asks < WON_ASKS; i++)
+      {
+         Sint64 age = now - won[i].asked;
+         const struct json *f;
+
+         if (!won[i].id || (won[i].asked && age < WON_OLD_S
+                  && (age < WON_AGE_S || played <= won[i].asked)))
+            continue;
+         asks++;
+         if (!(root = winners(won[i].id, true, abort)))
+            break;
+         drop_wins(wins, &win_count, won[i].id);
+         for (f = first_winner(root); f; f = f->next)
+            add_win(&wins, &win_count, won[i].id, json_str(f, "User", ""),
+                  (Sint64)number(f, "DateAwarded", 0));
+         json_free(root);
+         won[i].asked = now;
+      }
+   if (asks || !saved)
+      save_activity(id, user, won, count, wins, win_count);
+   json_free(saved);
+
+   if ((io = SDL_IOFromDynamicMem()))
+   {
+      SDL_WriteU8(io, '[');
+      for (i = 0; i < count; i++)
+         if (won[i].unlocked && won[i].mine > 0)
+         {
+            SDL_IOprintf(io, "%s[%u,\"\",%lld]", first ? "" : ",", won[i].id, (long long)won[i].mine);
+            first = false;
+         }
+      for (i = 0; i < win_count; i++)
+      {
+         SDL_IOprintf(io, "%s[%u,", first ? "" : ",", wins[i].id);
+         json_write_string(io, wins[i].who);
+         SDL_IOprintf(io, ",%lld]", (long long)wins[i].time);
+         first = false;
+      }
+      SDL_WriteU8(io, ']');
+      SDL_WriteU8(io, '\0');
+      out = SDL_strdup(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, "[]"));
+      SDL_CloseIO(io);
+   }
+   SDL_free(won);
+   SDL_free(wins);
+   return out;
 }
 
 char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
