@@ -4,6 +4,7 @@
 
 #include <windows.h>
 
+#include "inject.h"
 #include "lan.h"
 #include "library.h"
 #include "platform.h"
@@ -12,6 +13,7 @@
 #include "steamnet.h"
 #include "steamui.h"
 #include "tunnel.h"
+#include "vlan.h"
 
 #include <SDL3/SDL.h>
 
@@ -23,6 +25,8 @@
 #define MEMBERS 8
 /* How often the game, the ports and the members are looked at (ms). */
 #define LOOK_MS 1000
+/* A game's processes are looked for this often (ms): the DLL is to be in early. */
+#define GAME_MS 250
 /* A host nobody comes to, or whose guests left, ends after this (ms). */
 #define ALONE_MS (10 * 60 * 1000)
 #define LEFT_MS (60 * 1000)
@@ -64,6 +68,16 @@ static struct
    int port_count;
    char ports_text[512];
    struct tunnel *tunnel;
+   /* The LAN, for games that look for each other: players by their numbers. */
+   struct vlan *lan;
+   int me;
+   Uint64 players[LANHOOK_PLAYERS];
+   char players_text[512];
+   Uint64 game_at;
+   /* Processes the DLL is in, and those it can't be. */
+   int in_game;
+   Uint32 refused[32];
+   int refused_count;
 } ses;
 
 /* Lines from the background FuseBox. */
@@ -142,6 +156,12 @@ static void end_session(const char *why)
    SDL_Log("Session over: %s", why);
    tunnel_destroy(ses.tunnel);
    ses.tunnel = NULL;
+   inject_lan(NULL, 0, 0, 0);
+   vlan_destroy(ses.lan);
+   ses.lan = NULL;
+   SDL_zeroa(ses.players);
+   ses.players_text[0] = '\0';
+   ses.me = ses.in_game = ses.refused_count = 0;
    for (i = 0; i < ses.member_count; i++)
       steamnet_hang_up(ses.members[i]);
    if (ses.lobby && ses.state != ASKING)
@@ -156,8 +176,136 @@ static void end_session(const char *why)
 
 static void take(Uint64 from, int channel, const void *data, int size)
 {
-   if (ses.tunnel)
+   if (channel == VLAN_STREAMS || channel == VLAN_PACKETS)
+   {
+      if (ses.lan)
+         vlan_receive(ses.lan, from, channel, data, size);
+   }
+   else if (ses.tunnel)
       tunnel_receive(ses.tunnel, from, channel, data, size);
+}
+
+/* ---- The LAN ------------------------------------------------------------- */
+
+static bool is_games(void *user, Uint16 port, bool udp)
+{
+   return lan_owns(ses.game, port, udp);
+}
+
+/* The players as they are now. */
+static void update_lan(void)
+{
+   Uint64 others[LANHOOK_PLAYERS];
+   Uint32 bits = 0;
+   int i;
+
+   if (!ses.me)
+      return;
+   if (!ses.lan && !(ses.lan = vlan_create(LANHOOK_NET, ses.me, steamnet_send, NULL, is_games, NULL)))
+      return;
+   SDL_memcpy(others, ses.players, sizeof(others));
+   others[ses.me] = 0;
+   for (i = 1; i < LANHOOK_PLAYERS; i++)
+      if (others[i])
+         bits |= 1u << i;
+   vlan_set_players(ses.lan, others);
+   inject_lan(ses.lan, LANHOOK_NET, ses.me, bits);
+   SDL_Log("On the LAN: this is %d, %s", ses.me, bits ? "with others" : "alone");
+}
+
+/* The host numbers the players: itself first, and each keeps theirs. */
+static void number_players(void)
+{
+   char text[512], one[40];
+   int i, k;
+
+   ses.me = 1;
+   ses.players[1] = steamnet_me();
+   for (i = 2; i < LANHOOK_PLAYERS; i++)
+   {
+      for (k = 0; k < ses.member_count && ses.members[k] != ses.players[i]; k++)
+         ;
+      if (k == ses.member_count)
+         ses.players[i] = 0;
+   }
+   for (k = 0; k < ses.member_count; k++)
+   {
+      int spare = 0;
+
+      for (i = 2; i < LANHOOK_PLAYERS && ses.players[i] != ses.members[k]; i++)
+         if (!ses.players[i] && !spare)
+            spare = i;
+      if (i == LANHOOK_PLAYERS && spare)
+         ses.players[spare] = ses.members[k];
+   }
+   text[0] = '\0';
+   for (i = 1; i < LANHOOK_PLAYERS; i++)
+      if (ses.players[i])
+      {
+         SDL_snprintf(one, sizeof(one), "%s%d=%llu", text[0] ? " " : "", i,
+               (unsigned long long)ses.players[i]);
+         SDL_strlcat(text, one, sizeof(text));
+      }
+   if (SDL_strcmp(text, ses.players_text) == 0)
+      return;
+   SDL_strlcpy(ses.players_text, text, sizeof(ses.players_text));
+   steamnet_set(ses.lobby, "players", text);
+   update_lan();
+}
+
+/* A guest: as the host has them. */
+static void read_players(void)
+{
+   const char *text = steamnet_get(ses.lobby, "players"), *p;
+
+   if (SDL_strcmp(text, ses.players_text) == 0)
+      return;
+   SDL_strlcpy(ses.players_text, text, sizeof(ses.players_text));
+   SDL_zeroa(ses.players);
+   ses.me = 0;
+   for (p = ses.players_text; *p;)
+   {
+      char *end;
+      int n = (int)SDL_strtol(p, &end, 10);
+      Uint64 id = *end == '=' ? SDL_strtoull(end + 1, &end, 10) : 0;
+
+      if (end == p)
+         break;
+      if (n > 0 && n < LANHOOK_PLAYERS && id)
+      {
+         ses.players[n] = id;
+         if (id == steamnet_me())
+            ses.me = n;
+      }
+      for (p = end; *p == ' '; p++)
+         ;
+   }
+   update_lan();
+}
+
+/* The DLL into what runs of the game. */
+static void look_at_game(void)
+{
+   Uint32 pids[64];
+   int i, k, n;
+
+   if (!ses.lan || !ses.game)
+      return;
+   n = lan_processes(ses.game, pids, SDL_arraysize(pids));
+   for (i = ses.in_game = 0; i < n; i++)
+   {
+      for (k = 0; k < ses.refused_count && ses.refused[k] != pids[i]; k++)
+         ;
+      if (k < ses.refused_count)
+         continue;
+      if (inject_into(pids[i]))
+         ses.in_game++;
+      else if (ses.refused_count < (int)SDL_arraysize(ses.refused))
+      {
+         ses.refused[ses.refused_count++] = pids[i];
+         SDL_Log("A process of the game can't be put on the LAN");
+      }
+   }
 }
 
 /* Who else is in the lobby now. */
@@ -518,13 +666,17 @@ static bool look(void)
          if (!ses.game)
             ses.game = lan_game(ses.config_dir, ses.appid, "");
          look_at_members();
+         number_players();
          if (now - ses.alone_since > (ses.had_guests ? LEFT_MS : ALONE_MS))
          {
             end_session("nobody's here");
             return true;
          }
+         /* First: its own ports aren't shared then. */
+         look_at_game();
          if (ses.game)
-            ses.port_count = lan_ports(ses.game, ses.ports, ses.port_count, TUNNEL_PORTS);
+            ses.port_count = lan_ports(ses.game, !ses.in_game, ses.ports, ses.port_count,
+                  TUNNEL_PORTS);
          lan_write_ports(ses.ports, ses.port_count, text, sizeof(text));
          if (SDL_strcmp(text, ses.ports_text) != 0)
          {
@@ -542,6 +694,7 @@ static bool look(void)
             return true;
          }
          look_at_members();
+         read_players();
          read_host_ports();
          if (!ses.started)
             start_game();
@@ -623,12 +776,22 @@ int session_run(const char *data_dir, const char *config_dir)
          going &= look();
          next = SDL_GetTicks() + LOOK_MS;
       }
+      if (SDL_GetTicks() >= ses.game_at)
+      {
+         if ((ses.state == HOSTING || ses.state == JOINED) && !ses.game)
+            ses.game = lan_game(ses.config_dir, ses.appid, ses.path);
+         look_at_game();
+         ses.game_at = SDL_GetTicks() + GAME_MS;
+      }
+      if (ses.lan)
+         vlan_run(ses.lan, 0);
       if (ses.tunnel)
          tunnel_run(ses.tunnel, 1);
       else
          SDL_Delay(20);
    }
    end_session("the end");
+   inject_end();
    steamnet_close();
    SDL_CloseIO(log_file);
    log_file = NULL;

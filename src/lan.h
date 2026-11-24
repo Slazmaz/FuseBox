@@ -31,9 +31,14 @@ Uint32 lan_once_left(const char *config_dir);
 
 /* The ports a game's friends need, going by what runs now: those on this
  * computer that the game (what that process started) is connected to, the
- * others of the servers there, and its own. Added to the count ports there are;
- * returns how many there are then. Windows; none elsewhere. */
-int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max);
+ * others of the servers there, and with own its own (where it's not on a LAN:
+ * vlan.h). Added to the count ports there are; returns how many there are then.
+ * Windows; none elsewhere. */
+int lan_ports(Uint32 pid, bool own, struct tunnel_port *ports, int count, int max);
+/* The game's processes: what that one started. How many. Windows. */
+int lan_processes(Uint32 pid, Uint32 *pids, int max);
+/* Whether one of them has that port open. Windows. */
+bool lan_owns(Uint32 pid, Uint16 port, bool udp);
 /* Whether a friend's port may be opened here: not one of the system's, or
  * where FuseBox looks for Steam. */
 bool lan_port_allowed(Uint16 port);

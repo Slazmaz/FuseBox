@@ -12,7 +12,7 @@
  *
  * The host's lobby says which game it is and which ports (lan.h) of servers are
  * shared; a guest has them on 127.0.0.1 (tunnel.h), and its own copy of the game
- * is started. Over with the game, the lobby, or the background FuseBox. */
+ * is started. The games are on a LAN (vlan.h, lanhook.c). Over with the game, the lobby, or the background FuseBox. */
 
 /* Until it's over. Windows; nothing elsewhere. */
 int session_run(const char *data_dir, const char *config_dir);

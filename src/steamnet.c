@@ -1,4 +1,5 @@
 #include "steamnet.h"
+#include "vlan.h"
 
 #ifdef _WIN32
 
@@ -358,14 +359,15 @@ enum sent steamnet_send(void *user, Uint64 to, int channel, const void *data, in
    identify(&id, to);
    result = ((int (*)(void *, const struct identity *, const void *, Uint32, int, int))
          SLOT(net.messages, 0))(net.messages, &id, data, (Uint32)size,
-            channel == TUNNEL_STREAMS ? SEND_STREAM : SEND_PACKET, channel);
+            channel == TUNNEL_STREAMS || channel == VLAN_STREAMS ? SEND_STREAM : SEND_PACKET, channel);
    return result == RESULT_OK ? SENT_OK
       : result == RESULT_LIMIT_EXCEEDED ? SENT_FULL : SENT_FAILED;
 }
 
 void steamnet_receive(void (*take)(Uint64 from, int channel, const void *data, int size))
 {
-   static const int channels[] = { TUNNEL_STREAMS, TUNNEL_PACKETS };
+   static const int channels[] = { TUNNEL_STREAMS, TUNNEL_PACKETS, VLAN_STREAMS,
+      VLAN_PACKETS };
    struct message *list[32];
    size_t c;
    int i, n;

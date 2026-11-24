@@ -379,7 +379,87 @@ static int add_port(struct tunnel_port *ports, int count, int max, Uint16 port, 
    return count;
 }
 
-int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max)
+int lan_processes(Uint32 pid, Uint32 *pids, int max)
+{
+   struct pids p = { .count = 0 };
+   int i;
+
+   descendants(pid, &p);
+   for (i = 0; i < p.count && i < max; i++)
+      pids[i] = p.list[i];
+   return i;
+}
+
+/* What the game has open, as last looked at (ms). */
+static struct
+{
+   Uint32 pid;
+   Uint64 at;
+   struct tunnel_port ports[512];
+   int count;
+} owned;
+
+static void own_port(Uint16 port, bool udp)
+{
+   if (owned.count < (int)SDL_arraysize(owned.ports))
+   {
+      owned.ports[owned.count].port = port;
+      owned.ports[owned.count++].udp = udp;
+   }
+}
+
+static void look_at_owned(Uint32 pid)
+{
+   MIB_TCPTABLE_OWNER_PID *tcp = table(get_tcp, AF_INET, TCP_TABLE_OWNER_PID_LISTENER);
+   MIB_TCP6TABLE_OWNER_PID *tcp6 = table(get_tcp, AF_INET6, TCP_TABLE_OWNER_PID_LISTENER);
+   MIB_UDPTABLE_OWNER_PID *udp = table(get_udp, AF_INET, UDP_TABLE_OWNER_PID);
+   MIB_UDP6TABLE_OWNER_PID *udp6 = table(get_udp, AF_INET6, UDP_TABLE_OWNER_PID);
+   struct pids game = { .count = 0 };
+   DWORD i;
+
+   descendants(pid, &game);
+   owned.pid = pid;
+   owned.at = SDL_GetTicks();
+   owned.count = 0;
+   for (i = 0; tcp && i < tcp->dwNumEntries; i++)
+      if (has(&game, tcp->table[i].dwOwningPid))
+         own_port(ntohs((u_short)tcp->table[i].dwLocalPort), false);
+   for (i = 0; tcp6 && i < tcp6->dwNumEntries; i++)
+      if (has(&game, tcp6->table[i].dwOwningPid))
+         own_port(ntohs((u_short)tcp6->table[i].dwLocalPort), false);
+   for (i = 0; udp && i < udp->dwNumEntries; i++)
+      if (has(&game, udp->table[i].dwOwningPid))
+         own_port(ntohs((u_short)udp->table[i].dwLocalPort), true);
+   for (i = 0; udp6 && i < udp6->dwNumEntries; i++)
+      if (has(&game, udp6->table[i].dwOwningPid))
+         own_port(ntohs((u_short)udp6->table[i].dwLocalPort), true);
+   SDL_free(tcp);
+   SDL_free(tcp6);
+   SDL_free(udp);
+   SDL_free(udp6);
+}
+
+bool lan_owns(Uint32 pid, Uint16 port, bool udp)
+{
+   int i, again;
+
+   if (!pid)
+      return false;
+   for (again = 0; again < 2; again++)
+   {
+      Uint64 age = SDL_GetTicks() - owned.at;
+
+      /* One that isn't there may be new. */
+      if (owned.pid != pid || !owned.at || age > (again ? 100 : 1000))
+         look_at_owned(pid);
+      for (i = 0; i < owned.count; i++)
+         if (owned.ports[i].port == port && owned.ports[i].udp == udp)
+            return true;
+   }
+   return false;
+}
+
+int lan_ports(Uint32 pid, bool own, struct tunnel_port *ports, int count, int max)
 {
    MIB_TCPTABLE_OWNER_PID *tcp = table(get_tcp, AF_INET, TCP_TABLE_OWNER_PID_ALL);
    MIB_TCP6TABLE_OWNER_PID *tcp6 = table(get_tcp, AF_INET6, TCP_TABLE_OWNER_PID_LISTENER);
@@ -390,6 +470,8 @@ int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max)
 
    descendants(pid, &game);
    servers = game;
+   if (!own)
+      servers.count = 0;
    /* Connected to a server here: on 127.0.0.1, or by this computer's own
     * address. */
    for (i = 0; tcp && i < tcp->dwNumEntries; i++)
@@ -407,7 +489,7 @@ int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max)
       for (k = 0; tcp6 && k < tcp6->dwNumEntries && !owner; k++)
          if ((Uint16)tcp6->table[k].dwLocalPort == (Uint16)c->dwRemotePort)
             owner = tcp6->table[k].dwOwningPid;
-      if (!owner || (!has(&game, owner) && no_server(owner)))
+      if (!owner || (has(&game, owner) ? !own : no_server(owner)))
          continue;
       count = add_port(ports, count, max, ntohs((u_short)c->dwRemotePort), false);
       add_pid(&servers, owner);
@@ -433,7 +515,17 @@ int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max)
 
 #else
 
-int lan_ports(Uint32 pid, struct tunnel_port *ports, int count, int max)
+int lan_processes(Uint32 pid, Uint32 *pids, int max)
+{
+   return 0;
+}
+
+bool lan_owns(Uint32 pid, Uint16 port, bool udp)
+{
+   return false;
+}
+
+int lan_ports(Uint32 pid, bool own, struct tunnel_port *ports, int count, int max)
 {
    return count;
 }
