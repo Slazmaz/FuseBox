@@ -1,5 +1,5 @@
 #ifndef _WIN32
-/* realpath and kill under -std=c11. */
+/* realpath under -std=c11. */
 #define _DEFAULT_SOURCE
 #endif
 
@@ -21,8 +21,6 @@
 #include <wchar.h>
 #else
 #include <fcntl.h>
-#include <limits.h>
-#include <signal.h>
 #include <stdlib.h>
 #include <sys/file.h>
 #include <sys/types.h>
@@ -305,29 +303,46 @@ bool platform_find_steam(struct steam_install *steam)
    return true;
 }
 
+static SDL_EnumerationResult SDLCALL on_process(void *user, const char *dir, const char *name)
+{
+   unsigned *found = user, pid = (unsigned)SDL_strtoul(name, NULL, 10);
+
+   if (!platform_steam_is(pid))
+      return SDL_ENUM_CONTINUE;
+   *found = pid;
+   return SDL_ENUM_SUCCESS;
+}
+
+/* Not by its steam.pid: one that crashed leaves that there, and Flatpak's has
+ * the number it goes by in its sandbox. */
 unsigned platform_steam_pid(const struct steam_install *steam)
 {
-   char home[1024], path[1024], *text;
-   long pid;
+   /* Settings asks each time it's drawn. */
+   static SDL_AtomicInt last;
+   unsigned pid = (unsigned)SDL_GetAtomicInt(&last);
 
-   platform_home(home, sizeof(home));
-   SDL_snprintf(path, sizeof(path), "%s/.steam/steam.pid", home);
-   if (!(text = SDL_LoadFile(path, NULL)))
-   {
-      SDL_snprintf(path, sizeof(path),
-            "%s/.var/app/com.valvesoftware.Steam/.steam/steam.pid", home);
-      if (!(text = SDL_LoadFile(path, NULL)))
-         return 0;
-   }
-   pid = SDL_strtol(text, NULL, 10);
-   SDL_free(text);
-   return pid > 0 && platform_steam_is((unsigned)pid) ? (unsigned)pid : 0;
+   if (platform_steam_is(pid))
+      return pid;
+   pid = 0;
+   SDL_EnumerateDirectory("/proc", on_process, &pid);
+   SDL_SetAtomicInt(&last, (int)pid);
+   return pid;
 }
 
 bool platform_steam_is(unsigned pid)
 {
-   /* 0 would be this process's own group. */
-   return pid && kill((pid_t)pid, 0) == 0;
+   char path[64], exe[1024], *name;
+   ssize_t n;
+
+   SDL_snprintf(path, sizeof(path), "/proc/%u/exe", pid);
+   /* Can't be read of other users' processes, nor of one that ended. */
+   if (!pid || (n = readlink(path, exe, sizeof(exe) - 1)) <= 0)
+      return false;
+   exe[n] = '\0';
+   name = SDL_strrchr(exe, '/');
+   /* The second: while Steam puts an update of its own in place. The scripts that
+    * start it are the shell's. */
+   return name && (SDL_strcmp(name, "/steam") == 0 || SDL_strcmp(name, "/steam (deleted)") == 0);
 }
 
 #endif
