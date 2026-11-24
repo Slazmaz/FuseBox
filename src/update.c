@@ -584,6 +584,16 @@ bool update_install(SDL_AtomicInt *abort, SDL_AtomicInt *percent, char *error, s
    {
       if (status < 0)
          SDL_strlcpy(error, "The download failed", size);
+      else if (status == 404)
+      {
+         /* Taken back: asked again at once, for the one there is now. */
+         SDL_LockMutex(up.lock);
+         up.version[0] = up.url[0] = up.digest[0] = '\0';
+         up.size = up.asked = 0;
+         save();
+         SDL_UnlockMutex(up.lock);
+         SDL_strlcpy(error, "That version isn't there any more", size);
+      }
       else
          SDL_snprintf(error, size, "The download failed (%d)", status);
    }

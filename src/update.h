@@ -25,7 +25,8 @@ bool update_newer(char *version, size_t size);
 /* Whether it can be installed from here: else it's in UPDATE_PAGE only. */
 bool update_can_install(void);
 /* Downloads it and puts it in this one's place; this one is to end then. *percent:
- * see http_download. False with why in error, all as it was. */
+ * see http_download. False with why in error, all as it was; one that's gone from
+ * GitHub is no newer version any more. */
 bool update_install(SDL_AtomicInt *abort, SDL_AtomicInt *percent, char *error, size_t size);
 
 #endif

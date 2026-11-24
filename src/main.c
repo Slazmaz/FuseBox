@@ -968,7 +968,7 @@ static struct
    bool ra_busy;
    char ra_error[128], menus_note[128];
    /* Asking GitHub for a newer FuseBox, or installing it; what came of each. */
-   bool update_checking, update_busy;
+   bool update_checking, update_busy, update_gone;
    char update_note[128], update_error[128];
    /* How much is downloaded, as it was drawn. */
    int update_shown;
@@ -3437,6 +3437,8 @@ static void draw_modal(void)
 
 static void handle_msg(struct msg *m)
 {
+   char version[32];
+
    switch (m->kind)
    {
       case MSG_SCANNED:
@@ -3582,6 +3584,10 @@ static void handle_msg(struct msg *m)
       case MSG_UPDATE_CHECKED:
          app.update_checking = false;
          SDL_strlcpy(app.update_note, m->text, sizeof(app.update_note));
+         /* Another one instead. */
+         if (app.update_gone && update_newer(version, sizeof(version)))
+            app.update_error[0] = '\0';
+         app.update_gone = false;
          break;
       case MSG_UPDATED:
          app.update_busy = false;
@@ -3597,6 +3603,7 @@ static void handle_msg(struct msg *m)
          else if (!SDL_GetAtomicInt(&update_stop))
          {
             SDL_strlcpy(app.update_error, m->text, sizeof(app.update_error));
+            app.update_gone = !update_newer(version, sizeof(version));
             /* The release may be another by now. */
             check_update();
          }
