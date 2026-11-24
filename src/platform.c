@@ -276,14 +276,16 @@ bool platform_steam_is(unsigned pid)
 
 static bool find_root(struct steam_install *steam, const char *home, const char *rel, bool flatpak)
 {
-   char path[1024], real[1024];
+   char path[1024], *real;
+   bool fits;
 
    SDL_snprintf(path, sizeof(path), "%s/%s", home, rel);
-   if (!realpath(path, real))
+   if (!(real = realpath(path, NULL)))
       return false;
-   SDL_strlcpy(steam->root, real, sizeof(steam->root));
+   fits = SDL_strlcpy(steam->root, real, sizeof(steam->root)) < sizeof(steam->root);
+   free(real);
    steam->flatpak = flatpak;
-   return pick_user(steam, 0);
+   return fits && pick_user(steam, 0);
 }
 
 bool platform_find_steam(struct steam_install *steam)
