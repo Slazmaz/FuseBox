@@ -363,6 +363,9 @@ static void job_cover(void *data)
    SDL_free(j);
 }
 
+#define KEY_WHERE "Free at steamgriddb.com/profile/preferences/api"
+static const char key_refused[] = "SteamGridDB refused the API key";
+
 struct list_job
 {
    int gen, index;
@@ -410,7 +413,7 @@ static void job_list(void *data)
       else
       {
          m->count = n < 0 ? -1 : 0;
-         SDL_strlcpy(m->text, status == 401 || status == 403 ? "SteamGridDB refused the API key"
+         SDL_strlcpy(m->text, status == 401 || status == 403 ? key_refused
                : n < 0 ? "Can't reach SteamGridDB" : "Not found on SteamGridDB", sizeof(m->text));
          post(m);
          SDL_free(j);
@@ -1380,13 +1383,8 @@ static void picker_open(void)
    app.want_list = false;
    if (app.selected < 0)
       return;
-   if (!sgdb_has_key())
-   {
-      SDL_strlcpy(app.pick_msg, "Add a SteamGridDB API key in Settings to pick art",
-            sizeof(app.pick_msg));
-      return;
-   }
-   if (!(j = SDL_calloc(1, sizeof(*j))))
+   /* Asked for instead (draw_key). */
+   if (!sgdb_has_key() || !(j = SDL_calloc(1, sizeof(*j))))
       return;
    j->gen = SDL_GetAtomicInt(&picker_gen);
    j->index = app.selected;
@@ -2133,6 +2131,30 @@ static void build_view(void)
 
 static void open_game_settings(void);
 
+static void save_key(void)
+{
+   if (!app.key[0])
+      return;
+   sgdb_set_key(app.key);
+   SDL_memset(app.key, 0, sizeof(app.key));
+   app.field = FIELD_NONE;
+   SDL_StopTextInput(app.window);
+   app.want_list = true;
+   start_fill();
+}
+
+/* Asks for the SteamGridDB key where its art would be. */
+static void draw_key(float x, float y, float w)
+{
+   float bw = S(108), fw = SDL_min(w, S(720)) - bw - S(12);
+
+   ui_text(UI_MEDIUM, S(16), x, y + S(20), UI_LEFT, w, C_DIM, 1, app.pick_msg[0] ? app.pick_msg
+         : "Add a SteamGridDB API key to pick art. " KEY_WHERE);
+   text_field(x, y + S(44), fw, S(44), FIELD_KEY, app.key, "Paste the key", true, false, 0);
+   if (button(x + fw + S(12), y + S(44), bw, S(44), "Save", true, app.key[0] != '\0', false))
+      save_key();
+}
+
 struct play_job
 {
    char path[1024];
@@ -2472,7 +2494,10 @@ static void draw_game(float x, float y, float w, float h)
    glEnable(GL_SCISSOR_TEST);
    glScissor(0, app.height - (int)(grid_top + grid_h), app.width, (int)grid_h);
    y = grid_top + S(6) - app.game_scroll;
-   if (app.pick_loading || !app.item_count)
+   if (!sgdb_has_key() || (!app.pick_loading && !app.item_count
+            && SDL_strcmp(app.pick_msg, key_refused) == 0))
+      draw_key(x, y, w);
+   else if (app.pick_loading || !app.item_count)
       ui_text(UI_MEDIUM, S(16), x, y + S(20), UI_LEFT, w, C_DIM, 1,
             app.pick_loading ? "Loading..." : app.pick_msg);
    for (i = 0; i < app.item_count; i++)
@@ -2519,18 +2544,6 @@ static void draw_game(float x, float y, float w, float h)
 }
 
 /* ---- Settings page ----------------------------------------------------- */
-
-static void save_key(void)
-{
-   if (!app.key[0])
-      return;
-   sgdb_set_key(app.key);
-   SDL_memset(app.key, 0, sizeof(app.key));
-   app.field = FIELD_NONE;
-   SDL_StopTextInput(app.window);
-   app.want_list = true;
-   start_fill();
-}
 
 static void log_in(void)
 {
@@ -2824,7 +2837,7 @@ static float draw_key_card(float x, float y, float w)
 
    /* A saved key shows as one, until there's something to paste over it. */
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
-         has_key ? "Your key is saved." : "Free at steamgriddb.com/profile/preferences/api");
+         has_key ? "Your key is saved." : KEY_WHERE);
    text_field(x + S(24), cy + S(30), w - S(48) - S(120), S(44), FIELD_KEY, app.key,
          !has_key ? "Paste the key" : app.field == FIELD_KEY ? "Paste a new key to replace it"
          : "********************************", true, false, 0);
@@ -3227,7 +3240,8 @@ static void handle_msg(struct msg *m)
             app.scan_again = false;
             rescan(true);
          }
-         if (!sgdb_has_key())
+         /* With games, it's asked for on their pages. */
+         if (!sgdb_has_key() && !library_count())
          {
             app.page = PAGE_SETTINGS;
             app.field = FIELD_KEY;
