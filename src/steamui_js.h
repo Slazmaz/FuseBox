@@ -40,7 +40,7 @@
  *
  * An accepted invite is a steam:// address this page opens: taken the same way.
  * Steam knows the invite as one to Spacewar. Which game it's to is in the chat
- * message that comes with it, and the invite is shown as one to that: by its
+ * message that comes with it (not shown here), and the invite is shown as one to that: by its
  * app id, for which the friends' own store of apps' names and pictures answers
  * here. One of FuseBox's that isn't in Steam gets a number no app has, and its
  * pictures from FuseBox, asked for like a click; one that isn't here either its
@@ -58,7 +58,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 34) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 35) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -638,6 +638,32 @@
    "      if (told.length > 200) told.shift();\n" \
    "      again(who);\n" \
    "   };\n" \
+   "   /* The message is for friends without FuseBox: not drawn or told of here. */\n" \
+   "   const quieted = new WeakSet();\n" \
+   "   const quietChat = chat => {\n" \
+   "      if (!chat || quieted.has(chat)) return;\n" \
+   "      quieted.add(chat);\n" \
+   "      const list = chat.m_ChatMessageBlockList, said = m => SAID.test(String(m && m.strMessage).trim());\n" \
+   "      try {\n" \
+   "         around(chat, 'AddNewChatMsgAndNotify', function(steams, who, time, at, text, ...more) {\n" \
+   "            if (!SAID.test(String(text).trim())) return steams(who, time, at, text, ...more);\n" \
+   "            note(who, time, text);\n" \
+   "            this.AppendChatMsg(who, time, at, text);\n" \
+   "         });\n" \
+   "         around(list, 'AppendNewMessage', function(steams, m) { return said(m) ? undefined : steams(m); });\n" \
+   "         around(list, 'BuildMessageBlocks', function(steams, all, ...more) {\n" \
+   "            return steams(all.filter(m => !said(m)), ...more);\n" \
+   "         });\n" \
+   "         const again = () => {\n" \
+   "            if (chat.m_rgChatMessages.some(said)) list.BuildMessageBlocks(chat.m_rgChatMessages);\n" \
+   "         };\n" \
+   "         again();\n" \
+   "         undoLan.unshift(again);\n" \
+   "      } catch (e) { }\n" \
+   "   };\n" \
+   "   const quietChats = () => {\n" \
+   "      try { ui.ChatStore.FriendChatStore.m_rgFriendChats.forEach(quietChat); } catch (e) { }\n" \
+   "   };\n" \
    "   /* A game of FuseBox's as the friends' part knows apps. */\n" \
    "   const infos = new Map(), overview = app => appStore.GetAppOverviewByAppID(app);\n" \
    "   const infoOf = (app, like) => {\n" \
@@ -731,6 +757,14 @@
    "            try { around(o, name, function(steams, url, ...more) { return take(url) ? undefined : steams(url, ...more); }); }\n" \
    "            catch (e) { }\n" \
    "         });\n" \
+   "      try {\n" \
+   "         around(ui.ChatStore.FriendChatStore, 'GetFriendChat', function(steams, ...args) {\n" \
+   "            const chat = steams(...args);\n" \
+   "            quietChat(chat);\n" \
+   "            return chat;\n" \
+   "         });\n" \
+   "      } catch (e) { }\n" \
+   "      quietChats();\n" \
    "      /* An invite's game is the one it was said to be to, where that's here. */\n" \
    "      try {\n" \
    "         const invites = ui.ChatStore.GameInviteStore;\n" \
@@ -779,7 +813,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 34,\n" \
+   "      version: 35,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
