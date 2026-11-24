@@ -3,6 +3,7 @@
 #include "library.h"
 #include "platform.h"
 #include "ra.h"
+#include "roms.h"
 #include "scan.h"
 #include "steam.h"
 #include "steamui.h"
@@ -214,29 +215,45 @@ struct start
    char exe[1024], args[1600], dir[1024];
 };
 
-/* By the library. False with why in error. */
-static bool find_start(const char *data_dir, const char *path, struct start *s, char *error,
-      size_t size)
+static bool is_program(const char *path)
 {
-   bool found = false, rom = false;
+   size_t n = SDL_strlen(path);
+
+   return n > 4 && SDL_strcasecmp(path + n - 4, ".exe") == 0;
+}
+
+/* By the library; what that has no emulator for is looked for again. False
+ * with why in error. */
+static bool find_start(const char *data_dir, const char *config_dir, const char *path,
+      struct start *s, char *error, size_t size)
+{
+   bool found = false, rom = false, scanned = false;
    const struct game *g;
    char *slash;
 
    SDL_zerop(s);
    if (library_init(data_dir))
    {
-      library_lock();
-      g = library_game(library_by_path(path, history_appid()));
-      rom = g && g->rom[0];
-      found = g && g->exe[0] && !(rom && (g->no_emulator || !platform_exists(g->exe)));
-      if (found)
+      for (;;)
       {
-         SDL_strlcpy(s->exe, g->exe, sizeof(s->exe));
-         library_launch_options(g, s->args, sizeof(s->args));
-         if (platform_exists(g->start_dir))
-            SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+         library_lock();
+         g = library_game(library_by_path(path, history_appid()));
+         rom = g && g->rom[0];
+         found = g && g->exe[0] && !(rom && (g->no_emulator || !platform_exists(g->exe)));
+         if (found)
+         {
+            SDL_strlcpy(s->exe, g->exe, sizeof(s->exe));
+            library_launch_options(g, s->args, sizeof(s->args));
+            if (platform_exists(g->start_dir))
+               SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+         }
+         library_unlock();
+         if (found || scanned || (g && !rom) || is_program(path) || !platform_exists(path))
+            break;
+         roms_init(config_dir);
+         scan_roms();
+         scanned = true;
       }
-      library_unlock();
       /* The window's to write. */
       library_discard();
       library_quit();
@@ -276,7 +293,7 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
       SDL_zero(s);
       SDL_strlcpy(s.exe, argv[2], sizeof(s.exe));
    }
-   else if (!find_start(data_dir, argv[1], &s, error, sizeof(error)))
+   else if (!find_start(data_dir, config_dir, argv[1], &s, error, sizeof(error)))
    {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
       return 1;
