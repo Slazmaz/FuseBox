@@ -58,7 +58,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 35) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 36) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -702,6 +702,10 @@
    "      const invite = props && props.gameInvite, friend = props && props.inviter;\n" \
    "      if (fromFusebox(invite) && friend && ui && friend !== ui.FriendStore.self && friend.persona && friend.persona.is_ingame)\n" \
    "         return [type, { ...props, inviter: hostOf(friend, invite.appID) }];\n" \
+   "      /* The game's name on it, and what it's with, small. */\n" \
+   "      if (type === 'div' && props && props.className === 'productName' && titles.has(props.children))\n" \
+   "         return [type, { ...props, children: react.createElement(react.Fragment, null, props.children,\n" \
+   "            react.createElement('span', { style: { marginLeft: '8px', fontSize: '11px', opacity: 0.5 } }, 'FuseBox')) }];\n" \
    "      if (props && typeof props.strClassNames === 'string' && (props.appID >= ABSENT || lanGames.has(props.appID))) {\n" \
    "         const src = props.appID >= ABSENT && !otherNames(props.appID) ? '' : wide(props.appID);\n" \
    "         if (src) return ['img', { src, className: props.strClassNames }];\n" \
@@ -711,6 +715,8 @@
    "      return [type, props];\n" \
    "   };\n" \
    "   let fresh = { app: 0, until: 0 };\n" \
+   "   /* Names of games invites were to. */\n" \
+   "   const titles = new Set();\n" \
    "   /* A function of Steam's, replaced by one that may leave it to it. */\n" \
    "   const around = (o, name, mine) => {\n" \
    "      const was = Object.getOwnPropertyDescriptor(o, name), f = o[name];\n" \
@@ -794,7 +800,10 @@
    "         });\n" \
    "         around(ui.AppInfoStore, 'GetAppInfo', function(steams, app) {\n" \
    "            if (app === SPACEWAR && fresh.app && Date.now() < fresh.until) return infoOf(fresh.app, steams(SPACEWAR));\n" \
-   "            return lanGames.has(app) || app >= ABSENT ? infoOf(app, steams(SPACEWAR)) : steams(app);\n" \
+   "            if (!lanGames.has(app) && !(app >= ABSENT)) return steams(app);\n" \
+   "            const info = infoOf(app, steams(SPACEWAR));\n" \
+   "            titles.add(info.name);\n" \
+   "            return info;\n" \
    "         });\n" \
    "      } catch (e) { }\n" \
    "   };\n" \
@@ -813,7 +822,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 35,\n" \
+   "      version: 36,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
