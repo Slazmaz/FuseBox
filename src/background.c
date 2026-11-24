@@ -59,20 +59,20 @@ void background_apply(void)
       platform_start_background(false);
 }
 
-int background_run(const char *data_dir, const char *config_dir)
+/* Until it's no longer wanted, or told to quit by its icon. */
+static void look_after_steam(const char *data_dir, const char *config_dir)
 {
    char played[1100];
    const struct steam_install *st;
    SDL_PathInfo info;
    SDL_Time seen = 0;
    Uint64 steam_since = 0, pushed = 0, friends = 0, next = 0;
+   bool quit;
 
-   if (!platform_only_background())
-      return 0;
    played_file(config_dir, played, sizeof(played));
    if (SDL_GetPathInfo(played, &info))
       seen = info.modify_time;
-   for (;; SDL_Delay(LOOK_MS))
+   for (quit = false; !quit; quit = platform_tray_wait(LOOK_MS))
    {
       Uint64 now = SDL_GetTicks();
       enum steamui state;
@@ -82,14 +82,14 @@ int background_run(const char *data_dir, const char *config_dir)
       /* As the window left them. */
       ra_init(config_dir);
       if (!ra_active())
-         return 0;
+         return;
       if (!(st = steam_install()) && !(steam_init() && (st = steam_install())))
          continue;
       if (!platform_steam_running(st))
       {
          /* Started by a game: gone with Steam. */
          if (!ra_autostart())
-            return 0;
+            return;
          steam_since = pushed = next = 0;
          continue;
       }
@@ -129,6 +129,20 @@ int background_run(const char *data_dir, const char *config_dir)
       else if (state == STEAMUI_UNSUPPORTED)
          next = SDL_GetTicks() + UNSUPPORTED_MS;
    }
+}
+
+int background_run(const char *data_dir, const char *config_dir)
+{
+   if (!platform_only_background())
+      return 0;
+   /* No icon just to take it away again. */
+   ra_init(config_dir);
+   if (!ra_active())
+      return 0;
+   platform_tray_start();
+   look_after_steam(data_dir, config_dir);
+   platform_tray_stop();
+   return 0;
 }
 
 int background_game(const char *config_dir, char **argv)

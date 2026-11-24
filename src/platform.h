@@ -50,6 +50,12 @@ void platform_autostart(bool on);
 void platform_start_background(bool by_game);
 /* Whether the caller is the only background one; stays so till it ends. */
 bool platform_only_background(void);
+/* The background one's icon by the taskbar's clock: opens FuseBox, or quits
+ * the background one (Windows; nothing elsewhere). */
+void platform_tray_start(void);
+void platform_tray_stop(void);
+/* Waits that long, or until quitting is asked for there: true then. */
+bool platform_tray_wait(int ms);
 /* Runs a game and waits for it; its exit code. argv: its exe and arguments
  * (Windows: taken as they were typed, from after --run). */
 int platform_run_game(char **argv);

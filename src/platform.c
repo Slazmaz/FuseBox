@@ -8,6 +8,11 @@
 #include <SDL3/SDL.h>
 
 #ifdef _WIN32
+/* Windows 10's DPI functions. */
+#undef _WIN32_WINNT
+#undef WINVER
+#define _WIN32_WINNT 0x0A00
+#define WINVER 0x0A00
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
@@ -485,6 +490,229 @@ void platform_start_background(bool by_game)
       CloseHandle(shell);
 }
 
+#define WM_TRAY (WM_APP + 1)
+enum { TRAY_OPEN = 1, TRAY_QUIT };
+
+static struct
+{
+   SDL_Thread *thread;
+   /* Posted once the thread has its window (or has none); to quit. */
+   SDL_Semaphore *ready, *quit;
+   HWND window;
+   NOTIFYICONDATAW icon;
+   /* Explorer's message when it (re)starts: icons are to be added again. */
+   UINT taskbar_created;
+   /* The FuseBox opened from here last. */
+   HANDLE opened;
+} tray;
+
+struct find_window
+{
+   const WCHAR *exe;
+   const WCHAR *title;
+   HWND found;
+};
+
+static BOOL CALLBACK on_window(HWND hwnd, LPARAM user)
+{
+   struct find_window *f = (struct find_window *)user;
+   WCHAR text[1024];
+   DWORD pid = 0, size = SDL_arraysize(text);
+   HANDLE process;
+
+   if (!IsWindowVisible(hwnd) || !GetWindowTextW(hwnd, text, SDL_arraysize(text))
+         || wcscmp(text, f->title) != 0)
+      return TRUE;
+   /* A folder in Explorer can be called that too. */
+   GetWindowThreadProcessId(hwnd, &pid);
+   if (!(process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)))
+      return TRUE;
+   if (QueryFullProcessImageNameW(process, 0, text, &size) && _wcsicmp(text, f->exe) == 0)
+      f->found = hwnd;
+   CloseHandle(process);
+   return !f->found;
+}
+
+static bool to_front(const WCHAR *exe, const WCHAR *title)
+{
+   struct find_window f = { exe, title, NULL };
+
+   EnumWindows(on_window, (LPARAM)&f);
+   if (!f.found)
+      return false;
+   if (IsIconic(f.found))
+      ShowWindowAsync(f.found, SW_RESTORE);
+   SetForegroundWindow(f.found);
+   return true;
+}
+
+/* FuseBox's window to the front, or a new one. */
+static void tray_open(void)
+{
+   WCHAR exe[1024], command[1100];
+   STARTUPINFOW si;
+   PROCESS_INFORMATION pi;
+
+   exe[0] = 0;
+   GetModuleFileNameW(NULL, exe, SDL_arraysize(exe));
+   if (to_front(exe, L"FuseBox"))
+      return;
+   /* A double click is two: the first one's window is yet to come. */
+   if (tray.opened && WaitForSingleObject(tray.opened, 0) == WAIT_TIMEOUT)
+      return;
+   if (tray.opened)
+      CloseHandle(tray.opened);
+   tray.opened = NULL;
+   SDL_zero(si);
+   si.cb = sizeof(si);
+   _snwprintf(command, SDL_arraysize(command), L"\"%ls\"", exe);
+   command[SDL_arraysize(command) - 1] = 0;
+   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   {
+      AllowSetForegroundWindow(pi.dwProcessId);
+      CloseHandle(pi.hThread);
+      tray.opened = pi.hProcess;
+   }
+}
+
+static void tray_menu(HWND hwnd, int x, int y)
+{
+   HMENU menu = CreatePopupMenu();
+   int chosen;
+
+   if (!menu)
+      return;
+   AppendMenuW(menu, MF_STRING, TRAY_OPEN, L"Open FuseBox");
+   AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+   AppendMenuW(menu, MF_STRING, TRAY_QUIT, L"Quit");
+   SetMenuDefaultItem(menu, TRAY_OPEN, FALSE);
+   /* Without being in front (and the message after), it wouldn't close on a
+    * click elsewhere. */
+   SetForegroundWindow(hwnd);
+   chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, x, y, 0, hwnd,
+         NULL);
+   PostMessageW(hwnd, WM_NULL, 0, 0);
+   DestroyMenu(menu);
+   if (chosen == TRAY_OPEN)
+      tray_open();
+   else if (chosen == TRAY_QUIT)
+      PostMessageW(hwnd, WM_CLOSE, 0, 0);
+}
+
+static void tray_add(void)
+{
+   /* Fails at login until there's a taskbar: taskbar_created comes then. */
+   if (Shell_NotifyIconW(NIM_ADD, &tray.icon))
+      Shell_NotifyIconW(NIM_SETVERSION, &tray.icon);
+}
+
+static LRESULT CALLBACK on_tray(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+   if (msg == WM_TRAY)
+   {
+      switch (LOWORD(lp))
+      {
+         case NIN_SELECT:
+         case NIN_KEYSELECT:
+            tray_open();
+            break;
+         case WM_CONTEXTMENU:
+            tray_menu(hwnd, (short)LOWORD(wp), (short)HIWORD(wp));
+            break;
+      }
+      return 0;
+   }
+   if (msg == WM_DESTROY)
+   {
+      Shell_NotifyIconW(NIM_DELETE, &tray.icon);
+      SDL_SignalSemaphore(tray.quit);
+      PostQuitMessage(0);
+      return 0;
+   }
+   if (tray.taskbar_created && msg == tray.taskbar_created)
+      tray_add();
+   return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+static int SDLCALL tray_thread(void *user)
+{
+   HINSTANCE instance = GetModuleHandleW(NULL);
+   UINT dpi;
+   WNDCLASSW wc;
+   MSG msg;
+
+   (void)user;
+   /* Sharp, though SDL's video (which would see to it) isn't used here. */
+   SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+   dpi = GetDpiForSystem();
+   SDL_zero(wc);
+   wc.lpfnWndProc = on_tray;
+   wc.hInstance = instance;
+   wc.lpszClassName = L"FuseBoxTray";
+   RegisterClassW(&wc);
+   tray.taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+   /* Never shown; not a message-only one, those don't get taskbar_created. */
+   tray.window = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"FuseBox", WS_POPUP, 0, 0,
+         0, 0, NULL, NULL, instance, NULL);
+   if (tray.window)
+   {
+      tray.icon.cbSize = sizeof(tray.icon);
+      tray.icon.hWnd = tray.window;
+      tray.icon.uID = 1;
+      tray.icon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
+      tray.icon.uCallbackMessage = WM_TRAY;
+      tray.icon.uVersion = NOTIFYICON_VERSION_4;
+      /* The exe's (fusebox.rc). */
+      tray.icon.hIcon = LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
+            GetSystemMetricsForDpi(SM_CXSMICON, dpi), GetSystemMetricsForDpi(SM_CYSMICON, dpi), 0);
+      wcscpy(tray.icon.szTip, L"FuseBox");
+      tray_add();
+   }
+   SDL_SignalSemaphore(tray.ready);
+   if (!tray.window)
+      return 0;
+   while (GetMessageW(&msg, NULL, 0, 0) > 0)
+   {
+      TranslateMessage(&msg);
+      DispatchMessageW(&msg);
+   }
+   if (tray.icon.hIcon)
+      DestroyIcon(tray.icon.hIcon);
+   return 0;
+}
+
+void platform_tray_start(void)
+{
+   tray.ready = SDL_CreateSemaphore(0);
+   tray.quit = SDL_CreateSemaphore(0);
+   /* Its own thread: the background one's is busy with the network. */
+   if (tray.ready && tray.quit && (tray.thread = SDL_CreateThread(tray_thread, "tray", NULL)))
+      SDL_WaitSemaphore(tray.ready);
+}
+
+void platform_tray_stop(void)
+{
+   if (tray.thread)
+   {
+      if (tray.window)
+         PostMessageW(tray.window, WM_CLOSE, 0, 0);
+      SDL_WaitThread(tray.thread, NULL);
+   }
+   if (tray.opened)
+      CloseHandle(tray.opened);
+   SDL_DestroySemaphore(tray.ready);
+   SDL_DestroySemaphore(tray.quit);
+   SDL_zero(tray);
+}
+
+bool platform_tray_wait(int ms)
+{
+   if (tray.quit)
+      return SDL_WaitSemaphoreTimeout(tray.quit, ms);
+   SDL_Delay(ms);
+   return false;
+}
+
 int platform_run_game(char **argv)
 {
    /* Quotes and all, as Steam had it. */
@@ -627,6 +855,20 @@ void platform_start_background(bool by_game)
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+void platform_tray_start(void)
+{
+}
+
+void platform_tray_stop(void)
+{
+}
+
+bool platform_tray_wait(int ms)
+{
+   SDL_Delay(ms);
+   return false;
 }
 
 int platform_run_game(char **argv)
