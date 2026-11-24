@@ -32,8 +32,14 @@
  * Its store keeps each game's, so one is made here from events like those
  * Steam's servers send, and the store is kept from asking them about it. An
  * event is drawn only for a game the Steam store knows, by another query.
+ * Inviting to a game: Steam has an item for it in friends' menus when the
+ * user's own status says how to connect. Here it does while a game of FuseBox's
+ * runs, for this page only, and what's clicked waits here like the button's.
  * A game that isn't in Steam is run by it all the same, for the overlay and the
  * rest: by a shortcut that's there only meanwhile.
+ *
+ * An accepted invite is a steam:// address this page opens: taken the same way.
+ *
  * Friends' achievements go in the achievements' section, under its link, and
  * leaderboards after it, a section made of Steam's parts: like the button.
  * Modules are
@@ -45,7 +51,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 30) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 31) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -547,7 +553,67 @@
    "         return jsxs.call(this, type, props, ...more);\n" \
    "      };\n" \
    "   }\n" \
+   "   /* Playing with friends. */\n" \
+   "   const FUSEBOX = '+fusebox', SPACEWAR = 480, lanGames = new Set(), passed = new Set();\n" \
+   "   const ui = window.g_FriendsUIApp, undoLan = [];\n" \
+   "   let lanReady = false;\n" \
+   "   const lanGame = () => {\n" \
+   "      try {\n" \
+   "         const o = (SteamUIStore.RunningApps || []).find(x => lanGames.has(x.appid));\n" \
+   "         return o ? o.appid : 0;\n" \
+   "      } catch (e) { return 0; }\n" \
+   "   };\n" \
+   "   const take = url => {\n" \
+   "      const m = /^steam:\\/\\/joinlobby\\/480\\/(\\d+)\\/(\\d+)/.exec(String(url));\n" \
+   "      if (!m || !heard || passed.has(m[1])) return false;\n" \
+   "      send('join ' + m[1] + ' ' + m[2]);\n" \
+   "      return true;\n" \
+   "   };\n" \
    "   const overview = app => appStore.GetAppOverviewByAppID(app);\n" \
+   "   /* A function of Steam's, replaced by one that may leave it to it. */\n" \
+   "   const around = (o, name, mine) => {\n" \
+   "      const was = Object.getOwnPropertyDescriptor(o, name), f = o[name];\n" \
+   "      if (typeof f !== 'function') throw new Error(name);\n" \
+   "      Object.defineProperty(o, name, { configurable: true, enumerable: true, writable: true,\n" \
+   "         value: function(...args) { return mine.call(this, (...a) => f.apply(this, a), ...args); } });\n" \
+   "      undoLan.push(() => {\n" \
+   "         if (was) Object.defineProperty(o, name, was);\n" \
+   "         else delete o[name];\n" \
+   "      });\n" \
+   "   };\n" \
+   "   const lanStart = () => {\n" \
+   "      if (lanReady || !ui || !ui.FriendStore || !ui.ChatStore || !ui.FriendStore.self) return;\n" \
+   "      lanReady = true;\n" \
+   "      const fs = ui.FriendStore;\n" \
+   "      try {\n" \
+   "         let proto = fs.self.persona;\n" \
+   "         while (proto && !Object.hasOwn(proto, 'connect_string')) proto = Object.getPrototypeOf(proto);\n" \
+   "         const was = proto && Object.getOwnPropertyDescriptor(proto, 'connect_string');\n" \
+   "         if (!was || !was.get || !was.configurable) return;\n" \
+   "         around(fs, 'InviteToGame', function(steams, friend, app, connect) {\n" \
+   "            if (connect !== FUSEBOX) return steams(friend, app, connect);\n" \
+   "            const game = lanGame();\n" \
+   "            if (game && !numbers.has(friend.accountid)) send('invite ' + game + ' ' + id64(friend.accountid));\n" \
+   "         });\n" \
+   "         /* Steam's own item, while a session is on. */\n" \
+   "         around(fs, 'InviteToLobby', function(steams, friend, app, lobby) {\n" \
+   "            const game = heard && app === SPACEWAR && !numbers.has(friend.accountid) && lanGame();\n" \
+   "            if (!game) return steams(friend, app, lobby);\n" \
+   "            send('invite ' + game + ' ' + id64(friend.accountid));\n" \
+   "         });\n" \
+   "         Object.defineProperty(proto, 'connect_string', { configurable: true, enumerable: was.enumerable, get() {\n" \
+   "            const own = was.get.call(this);\n" \
+   "            return !own && heard && this === fs.self.persona && lanGame() ? FUSEBOX : own;\n" \
+   "         } });\n" \
+   "         undoLan.push(() => Object.defineProperty(proto, 'connect_string', was));\n" \
+   "      } catch (e) { }\n" \
+   "      /* Wherever an invite is accepted, it comes to one of these. */\n" \
+   "      [[ui, 'OpenURLInBrowser'], [SteamClient.URL, 'ExecuteSteamURL'], [SteamClient.WebChat, 'OpenURLInClient']]\n" \
+   "         .forEach(([o, name]) => {\n" \
+   "            try { around(o, name, function(steams, url, ...more) { return take(url) ? undefined : steams(url, ...more); }); }\n" \
+   "            catch (e) { }\n" \
+   "         });\n" \
+   "   };\n" \
    "   /* Bars drawn before, drawn again. */\n" \
    "   const bars = () => mine && SteamUIStore.WindowStore.SteamUIWindows.forEach(w => {\n" \
    "      try {\n" \
@@ -563,12 +629,18 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 30,\n" \
+   "      version: 31,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
    "         redraw();\n" \
    "         return 'ok';\n" \
+   "      },\n" \
+   "      lan(apps) {\n" \
+   "         lanGames.clear();\n" \
+   "         apps.forEach(app => lanGames.add(app));\n" \
+   "         lanStart();\n" \
+   "         return lanReady ? 'ok' : 'later';\n" \
    "      },\n" \
    "      /* Runs a shortcut there is; '' if Steam hasn't it. */\n" \
    "      async run(app) {\n" \
@@ -588,14 +660,23 @@
    "         if (icon) apps.SetShortcutIcon(app, icon);\n" \
    "         if (!overlay) apps.ToggleEnableSteamOverlayForApp(app);\n" \
    "         if (!input) apps.ToggleAllowDesktopConfiguration(app);\n" \
+   "         lanGames.add(app);\n" \
+   "         lanStart();\n" \
    "         if (await window.__fusebox.run(app)) return String(app);\n" \
    "         window.__fusebox.unonce(app);\n" \
    "         return '';\n" \
    "      },\n" \
    "      unonce(app) {\n" \
+   "         lanGames.delete(app);\n" \
    "         if (games.has(app)) drop(app);\n" \
    "         forget(app);\n" \
    "         SteamClient.Apps.RemoveShortcut(app);\n" \
+   "         return 'ok';\n" \
+   "      },\n" \
+   "      /* An invite that isn't FuseBox's: Steam's after all. */\n" \
+   "      pass(lobby, host) {\n" \
+   "         passed.add(lobby);\n" \
+   "         SteamClient.URL.ExecuteSteamURL('steam://joinlobby/480/' + lobby + '/' + host);\n" \
    "         return 'ok';\n" \
    "      },\n" \
    "      /* The next click, '' for none in that time. */\n" \
@@ -693,6 +774,8 @@
    "         stop();\n" \
    "         later.forEach(clearTimeout);\n" \
    "         undoFriends();\n" \
+   "         undoLan.reverse().forEach(f => { try { f(); } catch (e) { } });\n" \
+   "         lanGames.clear();\n" \
    "         clearTimeout(deaf);\n" \
    "         opens.clear();\n" \
    "         boards.clear();\n" \

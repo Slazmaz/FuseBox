@@ -35,8 +35,9 @@ void steamui_start(const struct steam_install *steam);
  * started playing. Blocking. *games: how many have achievements. */
 enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
 /* Waits some seconds for a click on what's there only while this is called:
- * "open <app id>" (the button for a game's emulator or launcher). False for
- * none; at once when Steam has no port or nothing to click. */
+ * "open <app id>" (the button for a game's emulator or launcher), "invite <app
+ * id> <friend's Steam id>" or "join <lobby> <host's Steam id>" (session.h).
+ * False for none; at once when Steam has no port or nothing to click. */
 bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort);
 /* Has Steam run a game: by the shortcut it has, or by one that's there only
  * until steamui_unonce (lan_once). The app id, 0 if Steam can't now. */
@@ -44,6 +45,8 @@ Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort);
 Uint32 steamui_once(const char *name, const char *exe, const char *options, const char *icon,
       bool overlay, bool input, SDL_AtomicInt *abort);
 bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort);
+/* Has Steam join a lobby after all that steamui_asked told of. */
+void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);
 

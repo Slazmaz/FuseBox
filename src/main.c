@@ -2726,8 +2726,8 @@ static void draw_login(float x, float y, float w, bool in, const char *user)
 static float draw_steam_card(float x, float y, float w)
 {
    static const char shortcuts[] = "Tick games in the list to add them as Steam shortcuts.";
-   static const char menus[] = "Activity, achievements and buttons on games' pages in your library."
-      " This opens a debugging port to access Steam.";
+   static const char menus[] = "Activity, achievements and buttons on games' pages in your library, and"
+      " inviting friends to play. This opens a debugging port to access Steam.";
    static const char autostart[] = "FuseBox needs to be running to add content to Steam menus. If"
       " toggled off FuseBox will not open until manually opened or starting a game added to Steam"
       " with FuseBox.";

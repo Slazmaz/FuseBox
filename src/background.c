@@ -146,22 +146,74 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
    }
 }
 
+/* Tells the session (session.h), started if there's none. *session: the one
+ * started last. */
+static void tell_session(SDL_Process **session, const char *line)
+{
+   SDL_IOStream *io;
+   char exe[1100];
+   int tries;
+
+   for (tries = 0; tries < 2; tries++)
+   {
+      if (*session && SDL_WaitProcess(*session, false, NULL))
+      {
+         SDL_DestroyProcess(*session);
+         *session = NULL;
+      }
+      if (!*session)
+      {
+         const char *args[] = { exe, "--session", NULL };
+         SDL_PropertiesID p = SDL_CreateProperties();
+
+         own_exe(exe, sizeof(exe));
+         SDL_SetPointerProperty(p, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
+         SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_APP);
+         SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_NULL);
+         SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_NULL);
+         *session = SDL_CreateProcessWithProperties(p);
+         SDL_DestroyProperties(p);
+      }
+      if (!*session || !(io = SDL_GetProcessInput(*session)))
+         return;
+      if (SDL_IOprintf(io, "%s\n", line) && SDL_FlushIO(io))
+         return;
+      /* It's just ending: another. */
+      SDL_WaitProcess(*session, true, NULL);
+   }
+}
+
 /* Clicks in Steam, taken by a thread of their own: the other is busy with the
  * network. */
 static int SDLCALL take_clicks(void *user)
 {
    SDL_AtomicInt *stop = user;
+   SDL_Process *session = NULL;
 
    while (!SDL_GetAtomicInt(stop))
    {
       Uint64 since = SDL_GetTicks();
-      unsigned long long a;
+      unsigned long long a, b;
       char what[128];
       int i;
 
       if (steamui_asked(what, sizeof(what), stop))
       {
+         char line[128];
+
          /* Only what these are: it's a web page that says it. */
+         if (SDL_sscanf(what, "invite %llu %llu", &a, &b) == 2 && a <= 0xFFFFFFFFu)
+         {
+            SDL_snprintf(line, sizeof(line), "invite %llu %llu", a, b);
+            tell_session(&session, line);
+            continue;
+         }
+         if (SDL_sscanf(what, "join %llu %llu", &a, &b) == 2)
+         {
+            SDL_snprintf(line, sizeof(line), "join %llu %llu", a, b);
+            tell_session(&session, line);
+            continue;
+         }
          if (SDL_sscanf(what, "open %llu", &a) != 1 || a > 0xFFFFFFFFu)
             continue;
          /* A process of its own: it reads the library, which is the other
@@ -182,6 +234,8 @@ static int SDLCALL take_clicks(void *user)
          for (i = 0; i < LOOK_MS / 100 && !SDL_GetAtomicInt(stop); i++)
             SDL_Delay(100);
    }
+   /* Its input ends: so does it. */
+   SDL_DestroyProcess(session);
    return 0;
 }
 

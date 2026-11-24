@@ -10,6 +10,7 @@
 #include "ra.h"
 #include "steam.h"
 #include "steamnet.h"
+#include "steamui.h"
 #include "tunnel.h"
 
 #include <SDL3/SDL.h>
@@ -386,16 +387,19 @@ static void on_created(const struct steamnet_event *e)
    steamnet_set(ses.lobby, KEY, VERSION);
 }
 
-/* Spacewar's own, or another program's. */
+/* Spacewar's own, or another program's: Steam's to join. */
 static void not_ours(void)
 {
-   if (steamnet_get(ses.lobby, KEY)[0])
+   Uint64 lobby = ses.lobby, host = ses.host;
+
+   if (steamnet_get(lobby, KEY)[0])
    {
       say("Your friend has another version of FuseBox: both need the newest.");
       end_session("another version");
       return;
    }
    end_session("not FuseBox's");
+   steamui_pass(lobby, host, NULL);
 }
 
 static bool is_ours(void)

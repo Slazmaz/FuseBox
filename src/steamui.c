@@ -163,6 +163,32 @@ static void push_opens(const char *url, SDL_AtomicInt *abort)
    SDL_CloseIO(io);
 }
 
+/* The games friends can be invited to: those that start through FuseBox. */
+static void push_lan(const char *url, SDL_AtomicInt *abort)
+{
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+   int i, n = 0;
+
+   if (!io)
+      return;
+   SDL_IOprintf(io, "__fusebox.lan([");
+   library_lock();
+   for (i = 0; i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+
+      if (lan_app(g) && SDL_strcmp(g->source, "Steam") != 0)
+         SDL_IOprintf(io, "%s%u", n++ ? "," : "", (unsigned)lan_app(g));
+   }
+   library_unlock();
+   SDL_IOprintf(io, "])");
+   SDL_WriteU8(io, '\0');
+   evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(io),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, sizeof(result), abort);
+   SDL_CloseIO(io);
+}
+
 /* Both on the same day here. */
 static bool same_day(Sint64 a, Sint64 b)
 {
@@ -256,6 +282,9 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
       return STEAMUI_UNSUPPORTED;
    lan_read_once(steam_settings_dir());
    push_opens(url, abort);
+#ifdef _WIN32
+   push_lan(url, abort);
+#endif
    keep = SDL_IOFromDynamicMem();
    acts = SDL_IOFromDynamicMem();
    if (!(list = collect(&count)) || !keep || !acts)
@@ -329,7 +358,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 30"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 31"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
@@ -402,6 +431,16 @@ bool steamui_unonce(Uint32 appid, SDL_AtomicInt *abort)
          " : (SteamClient.Apps.RemoveShortcut(%u), 'ok')", (unsigned)appid, (unsigned)appid);
    return find_target(url, sizeof(url), abort)
       && evaluate(url, script, result, sizeof(result), abort);
+}
+
+void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort)
+{
+   char url[512], script[200], result[64];
+
+   SDL_snprintf(script, sizeof(script), "window.__fusebox ? __fusebox.pass('%llu','%llu') : ''",
+         (unsigned long long)lobby, (unsigned long long)host);
+   if (find_target(url, sizeof(url), abort))
+      evaluate(url, script, result, sizeof(result), abort);
 }
 
 void steamui_clear(SDL_AtomicInt *abort)
