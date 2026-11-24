@@ -804,6 +804,8 @@ static void job_steam(void *data)
       if (want)
          sgdb_fill(i, false, ART_COVER, jobs_abort());
    }
+   /* While Steam runs: it tells who's logged in. */
+   steam_account();
    if (st && j->close_steam && platform_steam_running(st))
    {
       Uint64 until = SDL_GetTicks() + 30000;
@@ -2857,7 +2859,7 @@ static float draw_steam_card(float x, float y, float w)
    static const char autostart[] = "FuseBox needs to be running to add content to Steam menus. If"
       " toggled off FuseBox will not open until manually opened or starting a game added to Steam"
       " with FuseBox.";
-   char user[128];
+   char user[128], config[1024];
    bool add = steam_shortcuts(), on = steam_menus(), in = ra_user(user, sizeof(user)), running;
    const char *shown = in ? "On ROMs' pages in your library, with friends who play them and"
       " leaderboards." : "On ROMs' pages in your library, with friends who play them and leaderboards."
@@ -2868,8 +2870,9 @@ static float draw_steam_card(float x, float y, float w)
       + (on ? S(52) : app.menus_note[0] ? S(26) : 0);
 
    cy = settings_card(x, y, w, h, "Steam");
+   steam_config(config, sizeof(config));
    ui_text(UI_MEDIUM, S(14), x + S(24), cy + S(6), UI_LEFT, w - S(48), C_DIM, 1,
-         steam_install() ? steam_install()->config : "Not found");
+         config[0] ? config : "Not found");
    cy += S(28);
    if (setting_row(x, cy, w, "Steam shortcuts", shortcuts, 0, add, true))
    {

@@ -17,7 +17,8 @@ struct steam_install
 {
    /* Steam's folder (holds userdata), empty if none was found. */
    char root[1024];
-   /* The most recently used account's userdata/<id>/config. */
+   /* userdata/<id>/config of the account that's logged in, else of the one that
+    * was last. */
    char config[1024];
    /* How to run Steam (for -shutdown and starting it again). */
    char exe[1024];

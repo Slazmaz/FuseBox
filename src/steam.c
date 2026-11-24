@@ -160,6 +160,28 @@ bool steam_init(void)
    return found;
 }
 
+void steam_account(void)
+{
+   struct steam_install now;
+
+   if (!found || !platform_find_steam(&now))
+      return;
+   SDL_LockMutex(set.lock);
+   if (SDL_strcmp(now.config, steam.config) != 0)
+   {
+      SDL_Log("Steam: now %s", now.config);
+      SDL_strlcpy(steam.config, now.config, sizeof(steam.config));
+   }
+   SDL_UnlockMutex(set.lock);
+}
+
+void steam_config(char *dst, size_t size)
+{
+   SDL_LockMutex(set.lock);
+   SDL_strlcpy(dst, found ? steam.config : "", size);
+   SDL_UnlockMutex(set.lock);
+}
+
 const struct steam_install *steam_install(void)
 {
    return found ? &steam : NULL;
@@ -167,7 +189,10 @@ const struct steam_install *steam_install(void)
 
 static void shortcuts_path(char *dst, size_t size)
 {
-   SDL_snprintf(dst, size, "%s" PATH_SEP "shortcuts.vdf", steam.config);
+   char config[1024];
+
+   steam_config(config, sizeof(config));
+   SDL_snprintf(dst, size, "%s" PATH_SEP "shortcuts.vdf", config);
 }
 
 static bool tagged(const struct vdf *shortcut)
@@ -455,6 +480,7 @@ int steam_read_shortcuts(void)
 
    if (!found)
       return 0;
+   steam_account();
    shortcuts_path(path, sizeof(path));
    if (!(root = vdf_load(path)))
       return 0;
@@ -530,7 +556,10 @@ int steam_read_shortcuts(void)
 static void grid_name(Uint32 appid, enum art_type type, char *dst, size_t size)
 {
    static const char *const suffix[ART_TYPES] = { "p", "", "_hero", "_logo", "_icon" };
-   SDL_snprintf(dst, size, "%s" PATH_SEP "grid" PATH_SEP "%u%s", steam.config, (unsigned)appid,
+   char config[1024];
+
+   steam_config(config, sizeof(config));
+   SDL_snprintf(dst, size, "%s" PATH_SEP "grid" PATH_SEP "%u%s", config, (unsigned)appid,
          suffix[type]);
 }
 
@@ -562,11 +591,12 @@ Sint64 steam_art_time(Uint32 appid)
  * shortcut in icon (empty if none). */
 static void copy_art(const struct game *g, Uint32 appid, char *icon, size_t size)
 {
-   char grid[1100], base[1100], dst[1200];
+   char config[1024], grid[1100], base[1100], dst[1200];
    int t;
 
    icon[0] = '\0';
-   SDL_snprintf(grid, sizeof(grid), "%s" PATH_SEP "grid", steam.config);
+   steam_config(config, sizeof(config));
+   SDL_snprintf(grid, sizeof(grid), "%s" PATH_SEP "grid", config);
    SDL_CreateDirectory(grid);
    for (t = 0; t < ART_TYPES; t++)
    {

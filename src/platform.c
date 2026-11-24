@@ -45,6 +45,41 @@ bool platform_exists(const char *path)
    return SDL_GetPathInfo(path, NULL);
 }
 
+/* The account that logged in last, 0 if that isn't known. Going by its files'
+ * times alone it'd still be the one before for a while. */
+static Uint32 last_login(const struct steam_install *steam)
+{
+   char path[1100], *text, *p, *end;
+   Uint64 user = 0, number, newest = 0;
+   Uint32 account = 0;
+   bool time = false;
+
+   SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "config" PATH_SEP "loginusers.vdf", steam->root);
+   if (!(text = SDL_LoadFile(path, NULL)))
+      return 0;
+   /* Quoted strings: each account's Steam id, then its names and values. */
+   for (p = text; (p = SDL_strchr(p, '"')); p = end + 1)
+   {
+      for (end = ++p; *end && *end != '"'; end++)
+         if (*end == '\\' && end[1])
+            end++;
+      if (!*end)
+         break;
+      *end = '\0';
+      number = SDL_strtoull(p, NULL, 10);
+      if (time && number > newest)
+      {
+         newest = number;
+         account = (Uint32)user;
+      }
+      if (end - p == 17 && number >> 32 == 0x01100001)
+         user = number;
+      time = SDL_strcasecmp(p, "timestamp") == 0;
+   }
+   SDL_free(text);
+   return account;
+}
+
 /* The userdata/<id> whose localconfig.vdf changed last: the account used
  * most recently. */
 struct newest
@@ -77,13 +112,25 @@ static SDL_EnumerationResult SDLCALL on_user(void *user, const char *dir, const 
    return SDL_ENUM_CONTINUE;
 }
 
-static bool pick_user(struct steam_install *steam)
+/* account: the one that's logged in, 0 if none is or it isn't known. */
+static bool pick_user(struct steam_install *steam, Uint32 account)
 {
    struct newest n;
-   char userdata[1024];
+   char userdata[1100];
 
    SDL_zero(n);
    SDL_snprintf(userdata, sizeof(userdata), "%s" PATH_SEP "userdata", steam->root);
+   if (account || (account = last_login(steam)))
+   {
+      SDL_snprintf(n.best, sizeof(n.best), "%s" PATH_SEP "%u" PATH_SEP "config", userdata,
+            (unsigned)account);
+      if (platform_exists(n.best))
+      {
+         SDL_strlcpy(steam->config, n.best, sizeof(steam->config));
+         return true;
+      }
+      n.best[0] = '\0';
+   }
    if (!SDL_EnumerateDirectory(userdata, on_user, &n) || !n.best[0])
       return false;
    SDL_strlcpy(steam->config, n.best, sizeof(steam->config));
@@ -167,6 +214,7 @@ void platform_reg_subkeys(const char *hive, const char *key,
 
 bool platform_find_steam(struct steam_install *steam)
 {
+   unsigned account = 0;
    char *p;
 
    SDL_zerop(steam);
@@ -185,7 +233,11 @@ bool platform_find_steam(struct steam_install *steam)
    for (p = steam->exe; *p; p++)
       if (*p == '/')
          *p = '\\';
-   if (!pick_user(steam))
+   /* What a Steam that crashed left there isn't so any more. */
+   if (!platform_steam_running(steam) || !platform_reg_dword("HKCU",
+            "Software\\Valve\\Steam\\ActiveProcess", "ActiveUser", &account))
+      account = 0;
+   if (!pick_user(steam, account))
    {
       steam->root[0] = '\0';
       return false;
@@ -219,7 +271,7 @@ static bool find_root(struct steam_install *steam, const char *home, const char 
       return false;
    SDL_strlcpy(steam->root, real, sizeof(steam->root));
    steam->flatpak = flatpak;
-   return pick_user(steam);
+   return pick_user(steam, 0);
 }
 
 bool platform_find_steam(struct steam_install *steam)

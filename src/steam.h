@@ -12,6 +12,10 @@
 /* Finds Steam; false if it isn't installed. */
 bool steam_init(void);
 const struct steam_install *steam_install(void);
+/* Looks which account is logged in again: it may be another by now. */
+void steam_account(void);
+/* Its folder in Steam's, empty without Steam. */
+void steam_config(char *dst, size_t size);
 
 /* The settings, in <config>/steam.json. After ra_init (older FuseBoxes kept
  * them with the achievements'). Again to read them again. */

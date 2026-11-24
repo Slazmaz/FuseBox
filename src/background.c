@@ -136,6 +136,7 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       for (left = 0; left < 16 && (appid = lan_once_left(config_dir))
             && steamui_unonce(appid, NULL); left++)
          lan_once(config_dir, appid, "", false);
+      steam_account();
       /* Read again each time, and never written: the window's is newer. */
       if (!library_init(data_dir))
          continue;
