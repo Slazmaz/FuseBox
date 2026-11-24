@@ -689,7 +689,8 @@ static bool look(void)
             ses.game = lan_game(ses.config_dir, ses.appid, "");
          look_at_members();
          number_players();
-         if (now - ses.alone_since > (ses.had_guests ? LEFT_MS : ALONE_MS))
+         /* Not now: that's before what look_at_members just set it to. */
+         if (SDL_GetTicks() - ses.alone_since > (ses.had_guests ? LEFT_MS : ALONE_MS))
          {
             end_session("nobody's here");
             return true;
