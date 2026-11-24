@@ -13,9 +13,11 @@
 bool steam_init(void);
 const struct steam_install *steam_install(void);
 
-/* FuseBox's exe, when the game's shortcut is to start it through FuseBox
- * (while Steam shows achievements: background.h), else empty. */
-const char *steam_through(const struct game *g);
+/* What the shortcut FuseBox makes for the game starts: FuseBox, with the
+ * game's path (library_path) as its options; how that's started is FuseBox's
+ * to know (background_game). One with %command% in its options starts by itself. */
+void steam_target(const struct game *g, char *exe, size_t exe_size, char *options,
+      size_t options_size);
 
 /* Adds Steam's own non-Steam shortcuts (those FuseBox didn't make) to the
  * library, so their art can be picked too. */

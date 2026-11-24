@@ -282,7 +282,7 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
    char played[1100], error[1200];
-   /* Steam's shortcuts say how. */
+   /* Older shortcuts say how. */
    bool old = SDL_strcmp(argv[1], "--run") == 0;
    struct start s;
    int code = 1;

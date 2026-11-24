@@ -1201,19 +1201,17 @@ static bool tickable(const struct game *g)
  * their launch options, which are the user's in Steam. */
 static bool settings_differ(const struct game *g)
 {
-   char options[1100];
+   char exe[1024], options[2048];
 
    if (!g->steam_appid || g->gone || (tickable(g) && !g->selected))
       return false;
-   if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input
-         || (g->rom[0] && SDL_strcmp(g->exe, g->sc_exe) != 0))
+   if (g->art_edited || g->steam_overlay != g->sc_overlay || g->steam_input != g->sc_input)
       return !g->no_emulator;
    if (SDL_strcmp(g->source, "Steam") == 0)
       return false;
-   if (SDL_strcmp(g->name, g->sc_name) != 0 || SDL_strcmp(steam_through(g), g->sc_through) != 0)
-      return !g->no_emulator;
-   library_launch_options(g, options, sizeof(options));
-   return SDL_strcmp(options, g->sc_options) != 0 && !g->no_emulator;
+   steam_target(g, exe, sizeof(exe), options, sizeof(options));
+   return !g->no_emulator && (SDL_strcmp(g->name, g->sc_name) != 0
+         || SDL_strcmp(exe, g->sc_exe) != 0 || SDL_strcmp(options, g->sc_options) != 0);
 }
 
 /* Games to add to or take out of Steam, or whose settings change, on the
