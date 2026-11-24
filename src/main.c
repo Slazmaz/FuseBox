@@ -40,6 +40,7 @@ enum msg_kind
    MSG_ADD_EXE,
    MSG_ROM_FOLDER,
    MSG_EMULATOR,
+   MSG_EMULATORS_FOUND,
    MSG_LOGIN,
    MSG_ACHIEVEMENTS
 };
@@ -188,6 +189,15 @@ static GLuint make_texture(const Uint8 *pixels, int w, int h)
 }
 
 /* ---- Jobs -------------------------------------------------------------- */
+
+static void job_find_emulators(void *data)
+{
+   struct msg *m = new_msg(MSG_EMULATORS_FOUND);
+
+   roms_find_emulators();
+   if (m)
+      post(m);
+}
 
 /* data not NULL: ticks the user changed since the last scan are kept. */
 static void job_scan(void *data)
@@ -873,6 +883,8 @@ static struct
    bool scanned;
    /* Something changed while a scan ran: scan again after it. */
    bool scan_again;
+   /* The emulator menu's Scan, which looks for nothing else. */
+   bool finding_emulators;
    enum page page;
 
    /* The library: indices shown, in name order. */
@@ -2441,6 +2453,18 @@ static const char *scan_label(bool scanning)
    return scanning ? "Scanning..." : "Scan";
 }
 
+/* Looks for emulators to pick from, and changes nothing else. */
+static void emulator_scan_button(float x, float y, float w, float h)
+{
+   if (button(x, y, w, h, scan_label(app.finding_emulators), false,
+            app.scanned && !app.finding_emulators, true))
+   {
+      app.finding_emulators = true;
+      app.emulator_note[0] = '\0';
+      jobs_add(job_find_emulators, NULL, JOB_NOW, true);
+   }
+}
+
 /* The ROM folders, each with an x to leave it out. Returns the card's
  * height. */
 static float draw_rom_folders(float x, float y, float w)
@@ -2756,7 +2780,8 @@ static void draw_game_settings(void)
    own = SDL_strcmp(library_game(app.selected)->source, "Steam") == 0;
    rom = library_game(app.selected)->rom[0] != '\0';
    options = roms_options(library_game(app.selected), NULL, 0);
-   chosen = roms_chosen(library_game(app.selected));
+   /* One just found isn't its own until picked. */
+   chosen = library_game(app.selected)->no_emulator ? NULL : roms_chosen(library_game(app.selected));
    SDL_strlcpy(emulator, chosen ? chosen->label : "No emulator", sizeof(emulator));
    library_unlock();
 
@@ -2786,17 +2811,21 @@ static void draw_game_settings(void)
    /* A ROM's emulator, to change. */
    if (rom)
    {
-      /* None found: straight to picking its program. */
+      /* None found: straight to picking its program, or looking again. */
       const char *label = options ? "Change" : "Browse";
-      float bw = button_w(label);
+      float bw = button_w(label), sw = button_w(scan_label(app.finding_emulators));
+      float sx = x + w - S(36) - bw - S(8) - sw;
+      float tw = w - S(84) - bw - (options ? 0 : S(8) + sw);
 
       ui_rect(x + S(20), ry, w - S(40), S(56), S(12), 1, 1, 1, 0.04f);
-      ui_text(UI_BOLD, S(15), x + S(36), ry + S(19), UI_LEFT, w - S(180), C_TEXT, 1, "Emulator");
-      if (options && !app.emulator_note[0])
-         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(180), C_DIM, 1, emulator);
+      ui_text(UI_BOLD, S(15), x + S(36), ry + S(19), UI_LEFT, tw, C_TEXT, 1, "Emulator");
+      if (chosen && !app.emulator_note[0])
+         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, tw, C_DIM, 1, emulator);
       else
-         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, w - S(180), C_RED, 1,
+         ui_text(UI_MEDIUM, S(13), x + S(36), ry + S(38), UI_LEFT, tw, C_RED, 1,
                app.emulator_note[0] ? app.emulator_note : emulator);
+      if (!options)
+         emulator_scan_button(sx, ry + S(9), sw, S(38));
       if (button(x + w - S(36) - bw, ry + S(9), bw, S(38), label, false, true, true))
       {
          app.field = FIELD_NONE;
@@ -2864,8 +2893,11 @@ static int draw_list_modal(const char *title, const char *const *labels, const c
    glDisable(GL_SCISSOR_TEST);
    if (button(x + w - S(28) - S(110), y + h - S(62), S(110), S(42), "Cancel", false, true, true))
       return -2;
-   if (button(x + S(28), y + h - S(62), button_w(extra), S(42), extra, false, true, true))
+   /* All as wide as Cancel. */
+   if (button(x + S(28), y + h - S(62), S(110), S(42), extra, false, true, true))
       return -3;
+   /* Stays open: what's found joins the list. */
+   emulator_scan_button(x + S(28) + S(110) + S(8), y + h - S(62), S(110), S(42));
    return clicked;
 }
 
@@ -2880,7 +2912,7 @@ static void draw_emulator_modal(void)
    if ((g = library_game(app.modal_item)))
    {
       n = SDL_min(roms_options(g, options, 64), 64);
-      chosen = roms_chosen(g);
+      chosen = g->no_emulator ? NULL : roms_chosen(g);
       for (i = 0; i < n; i++)
       {
          labels[i] = options[i]->label;
@@ -3103,6 +3135,9 @@ static void handle_msg(struct msg *m)
                   sizeof(app.emulator_note));
          break;
       }
+      case MSG_EMULATORS_FOUND:
+         app.finding_emulators = false;
+         break;
       case MSG_LOGIN:
          app.ra_busy = false;
          SDL_strlcpy(app.ra_error, m->text, sizeof(app.ra_error));

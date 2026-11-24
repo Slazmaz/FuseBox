@@ -946,13 +946,37 @@ static const struct rom_option *option_of(const struct rom_option *options, int 
    return NULL;
 }
 
+/* Those of the scan's options that aren't offered yet, after the others: the
+ * first of a system's stays its first. */
+static int offer_new(const struct scan *sc)
+{
+   int i, k, added = 0;
+
+   for (i = 0; i < sc->option_count; i++)
+   {
+      struct rom_option *n;
+
+      for (k = 0; k < cfg.option_count; k++)
+         if (cfg.options[k].system == sc->options[i].system
+               && same_path(cfg.options[k].exe, sc->options[i].exe)
+               && SDL_strcmp(cfg.options[k].core, sc->options[i].core) == 0)
+            break;
+      if (k == cfg.option_count && (n = grow(&cfg.options, &cfg.option_count, sizeof(*n))))
+      {
+         *n = sc->options[i];
+         added++;
+      }
+   }
+   return added;
+}
+
 bool roms_add_emulator(struct game *g, const char *exe)
 {
    const struct rom_option *o;
    struct found_emulator f;
    struct scan sc;
    struct added *a;
-   int i, system = system_by_name(g->source);
+   int system = system_by_name(g->source);
 
    if (!g->rom[0] || system < 0 || SDL_strlen(exe) >= sizeof(f.exe))
       return false;
@@ -975,19 +999,7 @@ bool roms_add_emulator(struct game *g, const char *exe)
          f.emulator = -1;
          add_option(&sc, system, &f);
       }
-      /* Those it isn't offered for yet. */
-      for (i = 0; i < sc.option_count; i++)
-      {
-         struct rom_option *n;
-         int k;
-         for (k = 0; k < cfg.option_count; k++)
-            if (cfg.options[k].system == sc.options[i].system
-                  && same_path(cfg.options[k].exe, sc.options[i].exe)
-                  && SDL_strcmp(cfg.options[k].core, sc.options[i].core) == 0)
-               break;
-         if (k == cfg.option_count && (n = grow(&cfg.options, &cfg.option_count, sizeof(*n))))
-            *n = sc.options[i];
-      }
+      offer_new(&sc);
       SDL_free(sc.options);
       if ((a = grow(&cfg.added, &cfg.added_count, sizeof(*a))))
       {
@@ -1592,6 +1604,40 @@ static void update_folders(const struct scan *sc)
    }
 }
 
+/* The emulators on this computer and what they can start. */
+static void scan_options(struct scan *sc)
+{
+   char dir[1024];
+   int i;
+
+   find_emulators(sc);
+   library_lock();
+   for (i = 0; i < cfg.added_count; i++)
+      if (!cfg.added[i].system[0] && platform_exists(cfg.added[i].exe))
+      {
+         parent_dir(cfg.added[i].exe, dir, sizeof(dir));
+         add_emulator(sc, dir, base_name(cfg.added[i].exe));
+      }
+   library_unlock();
+   make_options(sc);
+}
+
+int roms_find_emulators(void)
+{
+   struct scan sc;
+   int n;
+
+   SDL_zero(sc);
+   scan_options(&sc);
+   library_lock();
+   n = offer_new(&sc);
+   library_unlock();
+   SDL_free(sc.options);
+   SDL_free(sc.emulators);
+   SDL_free(sc.folders);
+   return n;
+}
+
 int scan_roms(void)
 {
    struct scan sc;
@@ -1600,16 +1646,7 @@ int scan_roms(void)
    char dir[1024], path[1100];
 
    SDL_zero(sc);
-   find_emulators(&sc);
-   library_lock();
-   for (i = 0; i < cfg.added_count; i++)
-      if (!cfg.added[i].system[0] && platform_exists(cfg.added[i].exe))
-      {
-         parent_dir(cfg.added[i].exe, dir, sizeof(dir));
-         add_emulator(&sc, dir, base_name(cfg.added[i].exe));
-      }
-   library_unlock();
-   make_options(&sc);
+   scan_options(&sc);
 
    /* RPCS3 keeps installed games itself; others often a folder of ROMs. */
    for (i = 0; i < sc.emulator_count; i++)

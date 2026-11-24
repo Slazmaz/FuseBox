@@ -10,7 +10,7 @@
  * the game); the folders are in <data>/config/roms.json.
  *
  * Lock the library (library_lock) around every function here but
- * roms_init and scan_roms, and around any pointer they return. */
+ * roms_init and the two scans, and around any pointer they return. */
 
 struct rom_folder
 {
@@ -37,6 +37,10 @@ void roms_init(const char *config_dir);
 /* Finds emulators and ROMs and adds the ROMs to the library (run it after
  * the other scans). Returns how many ROMs it found. Blocking. */
 int scan_roms(void);
+/* Only finds emulators that weren't there before, to be picked: no game
+ * changes. Returns how many ways to start a system they add. Blocking; locks
+ * the library itself. */
+int roms_find_emulators(void);
 
 int roms_folder_count(void);
 const struct rom_folder *roms_folder(int i);
