@@ -158,7 +158,7 @@ static SDL_EnumerationResult SDLCALL on_once(void *user, const char *dir, const 
    return SDL_ENUM_CONTINUE;
 }
 
-static void read_once(const char *config_dir)
+void lan_read_once(const char *config_dir)
 {
    char dir[1100];
 
@@ -172,12 +172,27 @@ static void read_once(const char *config_dir)
    SDL_UnlockMutex(once.lock);
 }
 
+Uint32 lan_app(const struct game *g)
+{
+   Uint32 appid = g->steam_appid;
+   int i;
+
+   if (appid || !once.lock)
+      return appid;
+   SDL_LockMutex(once.lock);
+   for (i = 0; i < once.count && !appid; i++)
+      if (library_same_path(once.list[i].path, library_path(g)))
+         appid = once.list[i].appid;
+   SDL_UnlockMutex(once.lock);
+   return appid;
+}
+
 Uint32 lan_once_left(const char *config_dir)
 {
    Uint32 appid = 0;
    int i;
 
-   read_once(config_dir);
+   lan_read_once(config_dir);
    SDL_LockMutex(once.lock);
    for (i = 0; i < once.count && !appid; i++)
       if (!lan_running(once.list[i].pid))

@@ -34,7 +34,7 @@ static void own_exe(char *dst, size_t size)
    SDL_snprintf(dst, size, "%sfusebox%s", SDL_GetBasePath(), PATH_SEP[0] == '\\' ? ".exe" : "");
 }
 
-/* Touched when a game ends (its shortcut's app id). */
+/* Touched when a game ends (its shortcut's app id) or starts. */
 static void played_file(const char *config_dir, char *dst, size_t size)
 {
    SDL_snprintf(dst, size, "%s" PATH_SEP "played", config_dir);
@@ -207,7 +207,7 @@ int background_run(const char *data_dir, const char *config_dir)
    return 0;
 }
 
-int background_open(const char *data_dir, const char *appid)
+int background_open(const char *data_dir, const char *config_dir, const char *appid)
 {
    Uint32 id = (Uint32)SDL_strtoul(appid, NULL, 10);
    char exe[1024], name[96];
@@ -216,9 +216,10 @@ int background_open(const char *data_dir, const char *appid)
 
    if (!id || !library_init(data_dir))
       return 1;
+   lan_read_once(config_dir);
    library_lock();
    for (i = 0; i < library_count() && !found; i++)
-      found = library_game(i)->steam_appid == id
+      found = lan_app(library_game(i)) == id
          && scan_program(library_game(i), exe, sizeof(exe), name, sizeof(name));
    library_unlock();
    library_discard();
@@ -360,6 +361,9 @@ static bool through_steam(const char *config_dir, const char *path, const struct
          over = (Uint32)SDL_strtoul(text, NULL, 10) == appid;
          SDL_free(text);
       }
+   /* Its achievements and the rest, for the background one to give. */
+   if (pid && once)
+      SDL_SaveFile(played, "0", 1);
    while (pid && lan_running(pid))
       SDL_Delay(500);
    if (once)

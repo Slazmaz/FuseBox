@@ -46,6 +46,8 @@ void steam_target(const struct game *g, char *exe, size_t exe_size, char *option
  * options count where they have %command%; the rest is FuseBox's to add. */
 void steam_once_target(const char *path, const char *launch_options, const char *more, char *exe,
       size_t exe_size, char *options, size_t options_size);
+/* Where the settings are (steam_read_settings). */
+const char *steam_settings_dir(void);
 
 /* Adds Steam's own non-Steam shortcuts (those FuseBox didn't make) to the
  * library, so their art can be picked too. */

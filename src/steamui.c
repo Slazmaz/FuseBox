@@ -2,6 +2,7 @@
 #include "history.h"
 #include "http.h"
 #include "json.h"
+#include "lan.h"
 #include "library.h"
 #include "ra.h"
 #include "scan.h"
@@ -119,9 +120,10 @@ static struct shown *collect(int *count)
    for (i = 0; games && shown && i < library_count(); i++)
    {
       const struct game *g = library_game(i);
-      if (!g->steam_appid || !g->ra_id || !g->ra_total || !g->rom[0])
+      Uint32 appid = lan_app(g);
+      if (!appid || !g->ra_id || !g->ra_total || !g->rom[0])
          continue;
-      games[n].appid = g->steam_appid;
+      games[n].appid = appid;
       games[n].id = g->ra_id;
       games[n].total = g->ra_total;
       games[n++].unlocked = g->ra_unlocked;
@@ -146,9 +148,11 @@ static void push_opens(const char *url, SDL_AtomicInt *abort)
    {
       const struct game *g = library_game(i);
 
-      if (!g->steam_appid || !scan_program(g, exe, sizeof(exe), name, sizeof(name)))
+      Uint32 appid = lan_app(g);
+
+      if (!appid || !scan_program(g, exe, sizeof(exe), name, sizeof(name)))
          continue;
-      SDL_IOprintf(io, "%s\"%u\":", n++ ? "," : "", (unsigned)g->steam_appid);
+      SDL_IOprintf(io, "%s\"%u\":", n++ ? "," : "", (unsigned)appid);
       json_write_string(io, name);
    }
    library_unlock();
@@ -217,10 +221,12 @@ static void push_histories(const char *url, const struct shown *list, int count,
    {
       const struct game *g = library_game(i);
 
-      for (k = 0; k < count && list[k].appid != g->steam_appid; k++)
+      Uint32 appid = lan_app(g);
+
+      for (k = 0; k < count && list[k].appid != appid; k++)
          ;
-      if (g->steam_appid && k == count && SDL_strcmp(g->source, "Steam") != 0)
-         apps[n++] = g->steam_appid;
+      if (appid && k == count && SDL_strcmp(g->source, "Steam") != 0)
+         apps[n++] = appid;
    }
    library_unlock();
    for (i = 0; i < n && !(abort && SDL_GetAtomicInt(abort)); i++)
@@ -248,6 +254,7 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
       return STEAMUI_WAIT;
    if (SDL_strcmp(result, "ready") != 0)
       return STEAMUI_UNSUPPORTED;
+   lan_read_once(steam_settings_dir());
    push_opens(url, abort);
    keep = SDL_IOFromDynamicMem();
    acts = SDL_IOFromDynamicMem();

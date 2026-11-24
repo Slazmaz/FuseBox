@@ -3557,7 +3557,7 @@ int main(int argc, char **argv)
    {
       int code;
       SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
-      code = base ? background_open(base, argv[2]) : 1;
+      code = base ? background_open(base, config, argv[2]) : 1;
       SDL_Quit();
       return code;
    }

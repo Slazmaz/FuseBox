@@ -306,6 +306,11 @@ void steam_once_target(const char *path, const char *launch_options, const char 
    around_options(launch_options, args, options, options_size);
 }
 
+const char *steam_settings_dir(void)
+{
+   return set.config;
+}
+
 /* One of steam_once_target's. */
 static bool is_once(const struct vdf *s)
 {
