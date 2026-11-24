@@ -37,6 +37,7 @@ static void scan(void)
    int launchers, disks, roms, i;
 
    launchers = scan_launchers();
+   disk_keep_added();
    disks = scan_disks(1);
    roms = scan_roms();
    library_lock();

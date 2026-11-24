@@ -213,6 +213,7 @@ static void job_scan(void *data)
    }
    library_unlock();
    found = scan_launchers();
+   disk_keep_added();
    /* Then what no launcher knows: Windows' record of games, folders that
     * look like games. */
    found += scan_disks(0);
