@@ -74,6 +74,7 @@ add_library(fusebox_core STATIC
 target_include_directories(fusebox_core PUBLIC src)
 target_link_libraries(fusebox_core PUBLIC SDL3::SDL3 PRIVATE CURL::libcurl rcheevos ZLIB::ZLIB zstd::libzstd_shared)
 if(WIN32)
+   target_compile_definitions(fusebox_core PRIVATE WIN32_LEAN_AND_MEAN)
    target_link_libraries(fusebox_core PRIVATE advapi32 dwmapi userenv)
 endif()
 

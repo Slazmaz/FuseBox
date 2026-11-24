@@ -13,7 +13,6 @@
 #undef WINVER
 #define _WIN32_WINNT 0x0A00
 #define WINVER 0x0A00
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
 #include <shellapi.h>
