@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/file.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -1199,6 +1200,8 @@ bool platform_run_game(const char *exe, const char *args, const char *dir, char 
    list[2] = command;
    list[3] = "sh";
    SDL_memcpy(list + 4, argv + skip, sizeof(*list) * (size_t)count);
+   /* What the game leaves running stays known as its own (lan.h). */
+   prctl(PR_SET_CHILD_SUBREAPER, 1);
    pid = fork();
    if (pid == 0)
    {
