@@ -16,11 +16,11 @@
 #define UPDATE_FILES "https://github.com/Slazmaz/FuseBox/releases/download/"
 #endif
 
-/* Between two checks (s): doubled by each, up to the hour GitHub counts
- * requests by, and short again once there were none for a while. */
+/* Between two checks (s): doubled by each, and halved by each WAIT_LESS without
+ * one once it's over. GitHub takes 60 requests an hour. */
 #define WAIT_FIRST 60
-#define WAIT_MOST 3600
-#define WAIT_FORGET 7200
+#define WAIT_MOST 120
+#define WAIT_LESS 120
 
 /* The release's file for this platform ends so (tools/make_release.py); other
  * platforms build their own. */
@@ -362,16 +362,19 @@ static void read_asset(const struct json *root)
 
 void update_check(SDL_AtomicInt *abort, char *note, size_t size)
 {
-   Sint64 asked, now = now_s();
+   Sint64 asked, idle, now = now_s();
    struct json *root = NULL;
    char *body = NULL;
-   int wait, status, v[3];
+   int wait, next, status, v[3];
 
    /* Counted before it's asked: closing FuseBox meanwhile doesn't undo it. */
    SDL_LockMutex(up.lock);
    asked = up.asked;
    wait = up.wait;
-   up.wait = !wait || now - asked >= WAIT_FORGET ? WAIT_FIRST : SDL_min(wait * 2, WAIT_MOST);
+   next = wait * 2;
+   for (idle = now - asked - wait; idle >= WAIT_LESS && next > WAIT_FIRST; idle -= WAIT_LESS)
+      next /= 2;
+   up.wait = SDL_clamp(next, WAIT_FIRST, WAIT_MOST);
    up.asked = now;
    save();
    SDL_UnlockMutex(up.lock);

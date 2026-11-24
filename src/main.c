@@ -2956,7 +2956,7 @@ static float draw_steam_card(float x, float y, float w)
 static float draw_update_card(float x, float y, float w)
 {
    float h = S(128), cy = settings_card(x, y, w, h, "Updates"), rx = x + w - S(24), room, done;
-   float bw = SDL_max(button_w("Check for updates"), button_w("Check again in 60 min"));
+   float bw = SDL_max(button_w("Check for updates"), button_w("Check again in 60 s"));
    char version[32], line[256], label[64];
    bool newer = update_newer(version, sizeof(version));
    int wait = update_wait(&done);
