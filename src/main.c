@@ -3631,6 +3631,7 @@ static void handle_msg(struct msg *m)
          if (m->count)
          {
             app.only_restart = false;
+            app.steam_note[0] = '\0';
             if (app.modal == MODAL_NONE)
                app.modal = MODAL_STEAM;
             break;
