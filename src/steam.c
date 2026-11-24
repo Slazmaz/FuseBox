@@ -291,6 +291,30 @@ static void grid_name(Uint32 appid, enum art_type type, char *dst, size_t size)
          suffix[type]);
 }
 
+Sint64 steam_art_time(Uint32 appid)
+{
+   Sint64 first = 0;
+
+   /* Windows keeps a file's creation time when it's replaced right away, as
+    * copy_art does. Elsewhere there's none to go by. */
+#ifdef _WIN32
+   static const char *const exts[] = { "png", "jpg" };
+   char base[1100], path[1200];
+   SDL_PathInfo info;
+   int t;
+
+   for (t = 0; found && t < ART_TYPES * 2; t++)
+   {
+      grid_name(appid, (enum art_type)(t / 2), base, sizeof(base));
+      SDL_snprintf(path, sizeof(path), "%s.%s", base, exts[t % 2]);
+      if (SDL_GetPathInfo(path, &info) && info.create_time > 0
+            && (!first || info.create_time / SDL_NS_PER_SECOND < first))
+         first = info.create_time / SDL_NS_PER_SECOND;
+   }
+#endif
+   return first;
+}
+
 /* Copies the game's art into Steam's grid; the icon's path for the
  * shortcut in icon (empty if none). */
 static void copy_art(const struct game *g, Uint32 appid, char *icon, size_t size)

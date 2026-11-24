@@ -23,6 +23,11 @@
  * one's render), so React's own jsxs, which makes it, adds the button. Clicks
  * wait here for the background FuseBox (asked), which knows the programs: the
  * page has only their names. Nobody asking, no button.
+ *
+ * Activity is Steam's own section, which shortcuts have a notice instead of.
+ * Its store keeps each game's, so one is made here from events like those
+ * Steam's servers send, and the store is kept from asking them about it. An
+ * event is drawn only for a game the Steam store knows, by another query.
  * Modules are
  * found by what's in them: their numbers change with every Steam update. */
 #define STEAMUI_JS \
@@ -32,7 +37,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 17) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 21) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -92,11 +97,17 @@
    "      try { if (p.props.overview.appid === app) p.forceUpdate(); } catch (e) { }\n" \
    "   }), 0);\n" \
    "   page.prototype.GetSections = function(overview) {\n" \
-   "      const sections = original.apply(this, arguments);\n" \
+   "      const sections = original.apply(this, arguments), app = overview && overview.appid;\n" \
    "      if (!pages.includes(this)) pages = [this, ...pages].slice(0, 4);\n" \
-   "      if (!overview || !games.has(overview.appid)) return sections;\n" \
-   "      const more = new Set(sections).add('achievements');\n" \
-   "      return players.has(overview.appid) ? more.add('friends') : more;\n" \
+   "      if (!games.has(app) && !acts.has(app)) return sections;\n" \
+   "      const more = new Set(sections);\n" \
+   "      if (games.has(app)) more.add('achievements');\n" \
+   "      if (players.has(app)) more.add('friends');\n" \
+   "      if (acts.has(app)) {\n" \
+   "         more.delete('nonsteam');\n" \
+   "         more.add('activity');\n" \
+   "      }\n" \
+   "      return more;\n" \
    "   };\n" \
    "   const names = app => [['achievements', app, 'schema'], ['achievements', app, 'globalpercentages'],\n" \
    "      ['achievements', app, 'user_achievements', me]];\n" \
@@ -104,6 +115,9 @@
    "   const people = new Map(), numbers = new Map(), players = new Map(), later = new Map();\n" \
    "   let Friend, state, inGame, undoFriends = () => {};\n" \
    "   const FIRST = 0xffff0000;\n" \
+   "   /* Each game's activity as it was given, and those whose Steam has. */\n" \
+   "   const given = new Map(), acts = new Set(), building = new Map(), feed = window.appActivityStore;\n" \
+   "   const ACHIEVED = 2, ADDED = 3, PLAYED = 30;\n" \
    "   const id64 = n => (76561197960265728n + BigInt(n)).toString();\n" \
    "   const playing = app => ['FriendsGameplayInfo', me, app, true];\n" \
    "   const ready = () => {\n" \
@@ -260,6 +274,82 @@
    "            || (key[2] === 'user_achievements' && key[3] === me))\n" \
    "         setTimeout(() => games.has(key[1]) && put(key[1], games.get(key[1])), 0);\n" \
    "   });\n" \
+   "   /* Activity. */\n" \
+   "   const quiet = ['FetchLatestActivity', 'FetchLatestActivityFromServer', 'FetchActivityHistory'];\n" \
+   "   if (feed) quiet.forEach(name => {\n" \
+   "      const was = feed[name];\n" \
+   "      feed[name] = function(app) {\n" \
+   "         return given.has(app) ? Promise.resolve() : was.apply(this, arguments);\n" \
+   "      };\n" \
+   "   });\n" \
+   "   /* Steam tells days by today's offset from UTC, whatever it was then: times\n" \
+   "      are moved by the difference, and back once they're in their days. */\n" \
+   "   const moved = time => (new Date().getTimezoneOffset() - new Date(time * 1000).getTimezoneOffset()) * 60;\n" \
+   "   const event = (app, type, time, who, names) => ({ eventtype: () => type, eventtime: () => time + moved(time),\n" \
+   "      steamid_actor: () => who, gameid: () => String(app), appids: () => [], achievement_names: () => names,\n" \
+   "      toObject: () => ({}) });\n" \
+   "   const build = async (app, tries = 0) => {\n" \
+   "      const g = given.get(app);\n" \
+   "      clearTimeout(building.get(app));\n" \
+   "      if (!g || !feed || !feed.m_mapAppActivity) return;\n" \
+   "      const some = feed.m_mapAppActivity.values().next().value;\n" \
+   "      if (!some) {\n" \
+   "         /* Steam makes an empty one for a game that's asked for. */\n" \
+   "         if (!tries) feed.RequestRestoreActivity(app);\n" \
+   "         if (tries < 30) building.set(app, setTimeout(() => build(app, tries + 1), 1000));\n" \
+   "         return;\n" \
+   "      }\n" \
+   "      const at = { updatedAt: Date.now() + 10 * 365 * 864e5 }, o = appStore.GetAppOverviewByAppID(app);\n" \
+   "      const item = ['StoreItem', 'app_' + app], spot = ['AppSpotlightEvent', app];\n" \
+   "      [item, spot].forEach(key => cache.setQueryDefaults(key, { gcTime: Infinity }));\n" \
+   "      cache.setQueryData([...item, 'default_info'], { appid: app, id: app, item_type: 0, success: 1, visible: true,\n" \
+   "         type: 0, name: o ? o.display_name : '' }, at);\n" \
+   "      cache.setQueryData([...item, 'include_assets'], null, at);\n" \
+   "      [true, false].forEach(seen => cache.setQueryData([...spot, seen], null, at));\n" \
+   "      const a = new some.constructor(app), known = new Map((games.get(app) || []).map(x => ['RA_' + x[0],\n" \
+   "         { strID: 'RA_' + x[0], strName: x[1], strDescription: x[2], flAchieved: x[4], bHidden: false,\n" \
+   "            strImage: 'https://media.retroachievements.org/Badge/' + x[3] + '.png' }]));\n" \
+   "      a.m_AchievementMap.set(app, known);\n" \
+   "      g.missing = false;\n" \
+   "      const who = name => {\n" \
+   "         if (!name) return me;\n" \
+   "         if (Friend) return id64(person(name).n);\n" \
+   "         g.missing = true;\n" \
+   "         return '';\n" \
+   "      };\n" \
+   "      const events = g.wins.map(([id, name, time]) => event(app, ACHIEVED, time, who(name), ['RA_' + id]))\n" \
+   "         .filter(e => e.steamid_actor() && known.has(e.achievement_names()[0]));\n" \
+   "      if (g.added) events.push(event(app, ADDED, g.added, me, []));\n" \
+   "      /* Not the first time if something was unlocked before, or who knows when. */\n" \
+   "      const when = new Map(g.wins.filter(w => !w[1]).map(w => [w[0], w[2]]));\n" \
+   "      if (g.played && (games.get(app) || []).every(x => !x[5] || when.get(x[0]) >= g.played))\n" \
+   "         events.push(event(app, PLAYED, g.played, me, []));\n" \
+   "      events.sort((x, y) => y.eventtime() - x.eventtime());\n" \
+   "      await Promise.all(events.map(e => a.AddUserNewsEvent(e)));\n" \
+   "      if (given.get(app) !== g) return;\n" \
+   "      a.SortEvents();\n" \
+   "      a.m_bNoMoreHistoryAvailable = true;\n" \
+   "      /* Comments are Steam's servers'. */\n" \
+   "      a.m_mapActivityByDay.forEach(d => d.allEvents.forEach(e => {\n" \
+   "         e.BSupportsCommentThreads = () => false;\n" \
+   "         e.rtEventTime -= moved(e.rtEventTime);\n" \
+   "         if (e.achievements) e.achievements.forEach(x => { x.rtUnlocked -= moved(x.rtUnlocked); });\n" \
+   "      }));\n" \
+   "      feed.m_mapAppActivity.set(app, a);\n" \
+   "      if (!acts.has(app)) {\n" \
+   "         acts.add(app);\n" \
+   "         mark(app);\n" \
+   "      }\n" \
+   "   };\n" \
+   "   const forget = app => {\n" \
+   "      given.delete(app);\n" \
+   "      clearTimeout(building.get(app));\n" \
+   "      if (!acts.delete(app)) return;\n" \
+   "      feed.m_mapAppActivity.delete(app);\n" \
+   "      cache.removeQueries({ queryKey: ['StoreItem', 'app_' + app] });\n" \
+   "      cache.removeQueries({ queryKey: ['AppSpotlightEvent', app] });\n" \
+   "      mark(app);\n" \
+   "   };\n" \
    "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
    "   const opens = new Map(), buttons = new Set(), clicks = [];\n" \
    "   let heard = false, deaf, wake, jsxs, mine, clicked = 0;\n" \
@@ -290,6 +380,12 @@
    "            if (of) props = { ...props, children: [\n" \
    "               react.createElement(Open, { key: 'fusebox', app: of.props.overview.appid }), ...props.children] };\n" \
    "         }\n" \
+   "         /* The activity's box to post to Steam friends: not about these. */\n" \
+   "         else if (props && props.children && props.children.length === 2) {\n" \
+   "            const list = props.children[1];\n" \
+   "            if (list && list.props && list.props.ShowMoreContent && acts.has(list.props.appid))\n" \
+   "               props = { ...props, children: [false, list] };\n" \
+   "         }\n" \
    "         return jsxs.call(this, type, props, ...more);\n" \
    "      };\n" \
    "   }\n" \
@@ -300,12 +396,15 @@
    "            let f = el[Object.keys(el).find(k => k.startsWith('__reactFiber'))];\n" \
    "            while (f && !(f.stateNode && f.stateNode.forceUpdate)) f = f.return;\n" \
    "            if (f) f.stateNode.forceUpdate();\n" \
+   "            /* And the page it's on, to have it in pages. */\n" \
+   "            while (f && !(f.stateNode && f.stateNode.GetSections)) f = f.return;\n" \
+   "            if (f) f.stateNode.forceUpdate();\n" \
    "         });\n" \
    "      } catch (e) { }\n" \
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 17,\n" \
+   "      version: 21,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -359,7 +458,17 @@
    "            given: Date.now() }, { updatedAt: Date.now() + 10 * 365 * 864e5 });\n" \
    "         if (first) mark(app);\n" \
    "         poke(app);\n" \
+   "         if (given.has(app) && given.get(app).missing) build(app);\n" \
    "         return 'ok';\n" \
+   "      },\n" \
+   "      activity(app, id, wins, added, played) {\n" \
+   "         const key = JSON.stringify([id, wins, added, played, games.has(app)]), was = given.get(app);\n" \
+   "         const o = appStore.GetAppOverviewByAppID(app);\n" \
+   "         const last = () => String(o ? Math.max(o.rt_last_time_played || 0, o.rt_last_time_locally_played || 0) : 0);\n" \
+   "         if (was && was.key === key && !was.missing) return last();\n" \
+   "         given.set(app, { key, id, wins, added, played, missing: false });\n" \
+   "         build(app);\n" \
+   "         return last();\n" \
    "      },\n" \
    "      set(app, list) {\n" \
    "         const first = !games.has(app);\n" \
@@ -370,10 +479,11 @@
    "      },\n" \
    "      whole() {\n" \
    "         return [...games.keys()].every(app => names(app).every(queryKey =>\n" \
-   "            ours(cache.getQueryCache().find({ queryKey }))));\n" \
+   "            ours(cache.getQueryCache().find({ queryKey })))) && [...acts].every(app => feed.m_mapAppActivity.has(app));\n" \
    "      },\n" \
-   "      keep(apps) {\n" \
+   "      keep(apps, active) {\n" \
    "         [...games.keys()].filter(a => !apps.includes(a)).forEach(drop);\n" \
+   "         [...given.keys()].filter(a => !active.includes(a)).forEach(forget);\n" \
    "         return 'ok';\n" \
    "      },\n" \
    "      undo() {\n" \
@@ -385,6 +495,8 @@
    "         redraw();\n" \
    "         if (wake) wake('');\n" \
    "         if (mine && jsx.jsxs === mine) jsx.jsxs = jsxs;\n" \
+   "         [...given.keys()].forEach(forget);\n" \
+   "         if (feed) quiet.forEach(name => { delete feed[name]; });\n" \
    "         [...games.keys()].forEach(drop);\n" \
    "         page.prototype.GetSections = original;\n" \
    "         delete window.__fusebox;\n" \

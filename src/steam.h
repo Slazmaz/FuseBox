@@ -20,6 +20,9 @@ const char *steam_through(const struct game *g);
 /* Adds Steam's own non-Steam shortcuts (those FuseBox didn't make) to the
  * library, so their art can be picked too. */
 int steam_read_shortcuts(void);
+/* When the shortcut's art was first put in Steam (seconds since 1970), 0 if
+ * that can't be told. */
+Sint64 steam_art_time(Uint32 appid);
 
 /* Makes Steam match the library: a shortcut (with its art) for each
  * installed game ticked in_steam, and none for the rest (only ever

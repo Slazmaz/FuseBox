@@ -1,9 +1,11 @@
 #include "steamui.h"
+#include "history.h"
 #include "http.h"
 #include "json.h"
 #include "library.h"
 #include "ra.h"
 #include "scan.h"
+#include "steam.h"
 #include "steamui_js.h"
 
 #include <SDL3/SDL.h>
@@ -156,11 +158,83 @@ static void push_opens(const char *url, SDL_AtomicInt *abort)
    SDL_CloseIO(io);
 }
 
+/* Both on the same day here. */
+static bool same_day(Sint64 a, Sint64 b)
+{
+   SDL_DateTime x, y;
+
+   return SDL_TimeToDateTime(SDL_SECONDS_TO_NS(a), &x, true)
+      && SDL_TimeToDateTime(SDL_SECONDS_TO_NS(b), &y, true)
+      && x.year == y.year && x.month == y.month && x.day == y.day;
+}
+
+/* Gives Steam a game's activity: who unlocked what when (wins: ra_activity's,
+ * of RetroAchievements' game id), and when it was added and first played. */
+static void push_activity(const char *url, Uint32 appid, unsigned id, const char *wins,
+      SDL_AtomicInt *abort)
+{
+   char result[64], *script = NULL;
+   Sint64 added, played, last = 0;
+   int again;
+
+   history_get(library_dir(), appid, &added, &played);
+   if (!added && (added = steam_art_time(appid)))
+   {
+      history_found(library_dir(), appid, added);
+      played = -1;
+   }
+   for (again = 0; again < 2; again++)
+   {
+      result[0] = '\0';
+      if (SDL_asprintf(&script, "__fusebox.activity(%u,%u,%s,%lld,%lld)", (unsigned)appid, id,
+               wins ? wins : "[]", (long long)added, (long long)SDL_max(played, 0)) > 0)
+         evaluate(url, script, result, sizeof(result), abort);
+      SDL_free(script);
+      script = NULL;
+      last = (Sint64)SDL_strtoll(result, NULL, 10);
+      /* Last played the day it was added: first played then too. */
+      if (!added || played > 0 || last < added || !same_day(last, added))
+         break;
+      played = last;
+      history_played(library_dir(), appid, played);
+   }
+}
+
+/* Those without achievements: what FuseBox knows of them itself. list: the
+ * others. Their app ids into acts. */
+static void push_histories(const char *url, const struct shown *list, int count, SDL_IOStream *acts,
+      bool *first, SDL_AtomicInt *abort)
+{
+   Uint32 *apps = NULL;
+   int i, k, n = 0;
+
+   library_lock();
+   apps = SDL_calloc((size_t)SDL_max(1, library_count()), sizeof(*apps));
+   for (i = 0; apps && i < library_count(); i++)
+   {
+      const struct game *g = library_game(i);
+
+      for (k = 0; k < count && list[k].appid != g->steam_appid; k++)
+         ;
+      if (g->steam_appid && k == count && SDL_strcmp(g->source, "Steam") != 0)
+         apps[n++] = g->steam_appid;
+   }
+   library_unlock();
+   for (i = 0; i < n && !(abort && SDL_GetAtomicInt(abort)); i++)
+   {
+      push_activity(url, apps[i], 0, NULL, abort);
+      SDL_IOprintf(acts, "%s%u", *first ? "" : ",", (unsigned)apps[i]);
+      *first = false;
+   }
+   SDL_free(apps);
+}
+
 enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
 {
    char url[512], result[64];
    struct shown *list;
-   SDL_IOStream *keep;
+   SDL_IOStream *keep, *acts;
+   bool first = true;
    int i, count, done = 0;
 
    *games = 0;
@@ -172,8 +246,12 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
    if (SDL_strcmp(result, "ready") != 0)
       return STEAMUI_UNSUPPORTED;
    push_opens(url, abort);
-   if (!(list = collect(&count)) || !(keep = SDL_IOFromDynamicMem()))
+   keep = SDL_IOFromDynamicMem();
+   acts = SDL_IOFromDynamicMem();
+   if (!(list = collect(&count)) || !keep || !acts)
    {
+      SDL_CloseIO(keep);
+      SDL_CloseIO(acts);
       SDL_free(list);
       return STEAMUI_OK;
    }
@@ -181,7 +259,7 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
    for (i = 0; i < count && !(abort && SDL_GetAtomicInt(abort)); i++)
    {
       char *achievements = ra_list(list[i].id, list[i].total, list[i].unlocked, abort);
-      char *script = NULL, *friends;
+      char *script = NULL, *friends, *wins;
 
       /* One whose list can't be had now keeps what Steam has. */
       SDL_IOprintf(keep, "%s%u", i ? "," : "", (unsigned)list[i].appid);
@@ -191,6 +269,8 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
          done++;
       SDL_free(script);
       script = NULL;
+      /* Before the friends: it tells more of them. */
+      wins = achievements ? ra_activity(list[i].id, achievements, abort) : NULL;
       if (achievements && (friends = ra_friends(list[i].id, achievements, abort)))
       {
          if (SDL_asprintf(&script, "__fusebox.friends(%u,%u,%s)", (unsigned)list[i].appid,
@@ -199,9 +279,19 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
          SDL_free(script);
          SDL_free(friends);
       }
+      /* What can't be had now stays as Steam has it. */
+      SDL_IOprintf(acts, "%s%u", first ? "" : ",", (unsigned)list[i].appid);
+      first = false;
+      if (wins)
+         push_activity(url, list[i].appid, list[i].id, wins, abort);
+      SDL_free(wins);
       SDL_free(achievements);
    }
-   SDL_IOprintf(keep, "])");
+   push_histories(url, list, count, acts, &first, abort);
+   SDL_WriteU8(acts, '\0');
+   SDL_IOprintf(keep, "],[%s])", (const char *)SDL_GetPointerProperty(SDL_GetIOProperties(acts),
+            SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""));
+   SDL_CloseIO(acts);
    SDL_WriteU8(keep, '\0');
    if (!(abort && SDL_GetAtomicInt(abort)))
       evaluate(url, SDL_GetPointerProperty(SDL_GetIOProperties(keep),
@@ -219,7 +309,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 17"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 21"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
