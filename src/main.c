@@ -927,6 +927,9 @@ static struct
    char ra_error[128], menus_note[128];
    /* MODAL_STEAM: only to restart it. */
    bool only_restart;
+   /* The game Play was clicked for, and until when that shows. */
+   int started;
+   Uint64 started_until;
    char match[256];
    /* And how far it goes, as it was last drawn. */
    float settings_scroll, settings_most;
@@ -1027,6 +1030,17 @@ static bool button(float x, float y, float w, float h, const char *label, bool p
       ui_rect(x, y, w, h, S(12), 1, 1, 1, (over && enabled ? 0.13f : 0.07f) * a);
    ui_text(UI_BOLD, S(15), x + w / 2, y + h / 2, UI_CENTER, w - S(12), C_TEXT, a, label);
    return enabled && clicked_in(x, y, w, h, modal);
+}
+
+/* Green: what starts a game. */
+static bool play_button(float x, float y, float w, float h, const char *label, bool enabled)
+{
+   bool over = app.modal == MODAL_NONE && inside(app.mx, app.my, x, y, w, h);
+   float a = enabled ? 1.0f : 0.4f;
+
+   ui_rect(x, y, w, h, S(12), 0.18f, 0.60f, 0.34f, (over && enabled ? 1.0f : 0.88f) * a);
+   ui_text(UI_BOLD, S(15), x + w / 2, y + h / 2, UI_CENTER, w - S(12), C_TEXT, a, label);
+   return enabled && clicked_in(x, y, w, h, false);
 }
 
 static float button_w(const char *label)
@@ -2118,6 +2132,58 @@ static void build_view(void)
 
 static void open_game_settings(void);
 
+struct play_job
+{
+   char path[1024];
+   /* Steam's own shortcut: Steam's to start. */
+   Uint32 appid;
+};
+
+static void job_play(void *data)
+{
+   struct play_job *j = data;
+   char url[96];
+
+   /* As it's set here now. */
+   library_save();
+   if (j->appid)
+   {
+      SDL_snprintf(url, sizeof(url), "steam://rungameid/%llu",
+            (unsigned long long)j->appid << 32 | 0x02000000u);
+      SDL_OpenURL(url);
+   }
+   else
+      platform_start_game(j->path);
+   SDL_free(j);
+}
+
+/* How long Play says so (ms): a game takes a moment to show. */
+#define STARTING_MS 6000
+
+static void start_game(int index)
+{
+   struct play_job *j = SDL_calloc(1, sizeof(*j));
+   const struct game *g;
+
+   library_lock();
+   g = library_game(index);
+   if (j && g)
+   {
+      SDL_strlcpy(j->path, library_path(g), sizeof(j->path));
+      if (SDL_strcmp(g->source, "Steam") == 0)
+         j->appid = g->steam_appid;
+   }
+   library_unlock();
+   if (!j || (!j->path[0] && !j->appid))
+   {
+      SDL_free(j);
+      return;
+   }
+   app.started = index;
+   app.started_until = SDL_GetTicks() + STARTING_MS;
+   jobs_add(job_play, j, JOB_NOW, true);
+}
+
 static void end_name(void)
 {
    app.field = FIELD_NONE;
@@ -2218,6 +2284,14 @@ static void draw_game(float x, float y, float w, float h)
       bx = x + w - S(18) - button_w("Settings");
       if (!gone)
       {
+         /* Right of it, what's done most. */
+         float pw = button_w("Starting...");
+         bool starting = app.started == app.selected && SDL_GetTicks() < app.started_until;
+
+         bx -= pw + S(10);
+         if (play_button(x + w - S(18) - pw, y + (sh - S(42)) / 2, pw, S(42),
+                  starting ? "Starting..." : "Play", !starting && !no_emulator))
+            start_game(app.selected);
          if (button(bx, y + (sh - S(42)) / 2, button_w("Settings"), S(42), "Settings", false, true,
                   false))
             open_game_settings();

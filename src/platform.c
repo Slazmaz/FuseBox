@@ -435,29 +435,22 @@ bool platform_only_background(void)
    return CreateMutexW(NULL, FALSE, ONE_NAME) && GetLastError() != ERROR_ALREADY_EXISTS;
 }
 
-void platform_start_background(bool by_game)
+/* Outside: as the desktop's child rather than the caller's, or not at all. Either
+ * way without what Steam put in the caller's environment. */
+static bool start(WCHAR *command, bool outside)
 {
-   HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, ONE_NAME), shell = NULL, token = NULL;
+   HANDLE shell = NULL, token = NULL;
    LPPROC_THREAD_ATTRIBUTE_LIST list = NULL;
    STARTUPINFOEXW si;
    PROCESS_INFORMATION pi;
-   WCHAR command[1100];
    void *env = NULL;
    SIZE_T size = 0;
    DWORD pid = 0;
-   bool as_shells = false;
+   bool as_shells = false, ok = false;
 
-   if (running)
-   {
-      CloseHandle(running);
-      return;
-   }
    SDL_zero(si);
    si.StartupInfo.cb = sizeof(si);
-   background_command(command, SDL_arraysize(command));
-   /* The desktop's child rather than the game's, and without what Steam
-    * put in the game's environment. */
-   if (by_game)
+   if (outside)
    {
       GetWindowThreadProcessId(GetShellWindow(), &pid);
       shell = pid ? OpenProcess(PROCESS_CREATE_PROCESS, FALSE, pid) : NULL;
@@ -474,10 +467,11 @@ void platform_start_background(bool by_game)
          env = NULL;
       CloseHandle(token);
    }
-   if ((!by_game || as_shells) && CreateProcessW(NULL, command, NULL, NULL, FALSE,
+   if ((!outside || as_shells) && CreateProcessW(NULL, command, NULL, NULL, FALSE,
             CREATE_UNICODE_ENVIRONMENT | (as_shells ? EXTENDED_STARTUPINFO_PRESENT : 0), env,
             NULL, &si.StartupInfo, &pi))
    {
+      ok = true;
       CloseHandle(pi.hThread);
       CloseHandle(pi.hProcess);
    }
@@ -488,6 +482,38 @@ void platform_start_background(bool by_game)
    SDL_free(list);
    if (shell)
       CloseHandle(shell);
+   return ok;
+}
+
+void platform_start_background(bool by_game)
+{
+   HANDLE running = OpenMutexW(SYNCHRONIZE, FALSE, ONE_NAME);
+   WCHAR command[1100];
+
+   if (running)
+   {
+      CloseHandle(running);
+      return;
+   }
+   background_command(command, SDL_arraysize(command));
+   start(command, by_game);
+}
+
+bool platform_start_game(const char *path)
+{
+   char text[2300];
+   size_t n = SDL_strlen(path);
+   WCHAR *command;
+   bool ok = false;
+
+   /* A folder's separator would escape the quote. */
+   while (n > 1 && (path[n - 1] == '\\' || path[n - 1] == '/'))
+      n--;
+   SDL_snprintf(text, sizeof(text), "\"%sfusebox.exe\" \"%.*s\"", SDL_GetBasePath(), (int)n, path);
+   if ((command = wide(text)))
+      ok = start(command, true);
+   SDL_free(command);
+   return ok;
 }
 
 #define WM_TRAY (WM_APP + 1)
@@ -934,6 +960,17 @@ void platform_start_background(bool by_game)
    args[n] = NULL;
    if ((p = SDL_CreateProcess(args, false)))
       SDL_DestroyProcess(p);
+}
+
+bool platform_start_game(const char *path)
+{
+   char exe[1024];
+   const char *args[] = { exe, path, NULL };
+   SDL_Process *p = own_exe(exe, sizeof(exe)) ? SDL_CreateProcess(args, false) : NULL;
+
+   if (p)
+      SDL_DestroyProcess(p);
+   return p != NULL;
 }
 
 void platform_arguments(char **argv, int skip, char *dst, size_t size)

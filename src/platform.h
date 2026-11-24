@@ -48,6 +48,9 @@ void platform_autostart(bool on);
 /* Starts it now, unless it runs. by_game: from a game Steam started, so
  * not as part of it: Steam would say the game still runs. */
 void platform_start_background(bool by_game);
+/* Starts fusebox "<game's path>" (background_game), not as part of the caller:
+ * Steam would count it as the caller's game (Windows; elsewhere its child). */
+bool platform_start_game(const char *path);
 /* Whether the caller is the only background one; stays so till it ends. */
 bool platform_only_background(void);
 /* The background one's icon by the taskbar's clock: opens FuseBox, or quits
