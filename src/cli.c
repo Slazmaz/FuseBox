@@ -7,6 +7,7 @@
  *   fusebox-cli list           id, name and each art path, tab separated
  *   fusebox-cli library        library.json's path
  *   fusebox-cli key <api key>  saves the SteamGridDB API key
+ *   fusebox-cli version        FuseBox's version
  *   fusebox-cli scan           which games a scan finds and why (saves nothing)
  */
 #include "disk.h"
@@ -15,6 +16,7 @@
 #include "roms.h"
 #include "scan.h"
 #include "sgdb.h"
+#include "version.h"
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -27,6 +29,7 @@ static void usage(void)
          "       fusebox-cli list\n"
          "       fusebox-cli library\n"
          "       fusebox-cli key <SteamGridDB API key>\n"
+         "       fusebox-cli version\n"
          "       fusebox-cli scan\n");
 }
 
@@ -144,6 +147,11 @@ int main(int argc, char **argv)
    char config[1100];
    int code = 0;
 
+   if (argc == 2 && SDL_strcmp(argv[1], "version") == 0)
+   {
+      printf("%s\n", FUSEBOX_VERSION);
+      return 0;
+   }
    if (!data || !library_init(data))
    {
       fprintf(stderr, "can't open FuseBox's folder\n");
