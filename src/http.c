@@ -296,6 +296,7 @@ char *http_ws_ask(const char *url, const char *text, SDL_AtomicInt *abort, int t
    struct buffer b = { NULL, 0, 0, abort };
    Uint64 until = SDL_GetTicks() + (Uint64)timeout_s * 1000;
    size_t left = SDL_strlen(text), n;
+   Uint64 sent;
    CURL *curl;
    CURLcode res;
    bool done = false;
@@ -319,7 +320,9 @@ char *http_ws_ask(const char *url, const char *text, SDL_AtomicInt *abort, int t
       if (res == CURLE_AGAIN)
          SDL_Delay(2);
    }
-   /* Its answer, in as many pieces as it comes. */
+   /* Its answer, in as many pieces as it comes; one that takes a while is
+    * looked for less often. */
+   sent = SDL_GetTicks();
    while (res == CURLE_OK && !left && !done && !aborted(&b) && SDL_GetTicks() < until)
    {
       const struct curl_ws_frame *meta = NULL;
@@ -330,7 +333,7 @@ char *http_ws_ask(const char *url, const char *text, SDL_AtomicInt *abort, int t
       if (res == CURLE_AGAIN)
       {
          res = CURLE_OK;
-         SDL_Delay(2);
+         SDL_Delay(SDL_GetTicks() - sent < 500 ? 2 : 25);
       }
       else if (res == CURLE_OK && meta && (meta->flags & (CURLWS_TEXT | CURLWS_CONT)))
       {
