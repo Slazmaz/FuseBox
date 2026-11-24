@@ -859,5 +859,6 @@ bool steam_sync(char *msg, size_t size)
             updated + art_only, removed);
    else
       SDL_snprintf(msg, size, "Can't write %s", path);
+   SDL_Log("%s (%s)", msg, path);
    return ok;
 }
