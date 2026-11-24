@@ -92,6 +92,16 @@ set_target_properties(fusebox PROPERTIES WIN32_EXECUTABLE ON)
 add_executable(fusebox-cli src/cli.c)
 target_link_libraries(fusebox-cli PRIVATE fusebox_core)
 
+# In games that are played with friends (Windows): MinHook (BSD).
+if(WIN32)
+   add_library(minhook STATIC
+      third_party/minhook/src/buffer.c
+      third_party/minhook/src/hook.c
+      third_party/minhook/src/trampoline.c
+      third_party/minhook/src/hde/hde64.c)
+   target_include_directories(minhook PUBLIC third_party/minhook/include)
+endif()
+
 # The app icon, in both exes.
 if(WIN32)
    enable_language(RC)
