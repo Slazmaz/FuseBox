@@ -9,6 +9,9 @@
  * this one's version (CMakeLists.txt). What was found last, and when, is in
  * <config>/update.json, so it's known without asking again. */
 
+/* All releases, for a browser. */
+#define UPDATE_PAGE "https://github.com/Slazmaz/FuseBox/releases/latest"
+
 void update_init(const char *config_dir);
 /* Seconds until GitHub may be asked again, 0 if it may now: it takes only so
  * many requests an hour, so each one soon after the last makes it longer. *done:

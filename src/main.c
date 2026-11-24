@@ -845,7 +845,8 @@ enum modal
    MODAL_STEAM,
    MODAL_GAME,
    /* Picks a game's emulator. */
-   MODAL_EMULATOR
+   MODAL_EMULATOR,
+   MODAL_UPDATE
 };
 
 /* A texture made from one of a game's saved images. */
@@ -2047,6 +2048,11 @@ static void check_update(void)
    jobs_add(job_update_check, NULL, JOB_NOW, false);
 }
 
+static void open_update(void)
+{
+   app.modal = MODAL_UPDATE;
+}
+
 /* ---- Top bar ----------------------------------------------------------- */
 
 /* Minimize, maximize (or restore) and close, drawn: the window has no
@@ -2093,7 +2099,8 @@ static void window_buttons(float right, float cy)
 
 static void draw_top(float x0)
 {
-   float right = app.width - S(8);
+   float right = app.width - S(8), text_right;
+   char version[32];
 
    /* Up in the corner, where windows keep them; Settings just before. */
    window_buttons(right, S(23));
@@ -2119,9 +2126,23 @@ static void draw_top(float x0)
          app.ra_error[0] = '\0';
       }
       right = sx + bw;
+      text_right = right - 3 * S(40);
+      /* And a newer FuseBox, left of that. */
+      if (update_newer(version, sizeof(version)))
+      {
+         float uw = ui_text_width(UI_BOLD, S(14), "Update") + S(24);
+
+         sx -= uw + S(4);
+         no_drag(sx, sy, uw, bh);
+         if (hover(sx, sy, uw, bh))
+            ui_rect(sx, sy, uw, bh, S(10), C_ACCENT, 0.18f);
+         ui_text(UI_BOLD, S(14), sx + uw / 2, S(23), UI_CENTER, 0, C_ACCENT, 1, "Update");
+         if (clicked_in(sx, sy, uw, bh, false))
+            open_update();
+         text_right = SDL_min(text_right, sx);
+      }
    }
-   ui_text(UI_MEDIUM, S(14), x0, S(36), UI_LEFT, right - 3 * S(40) - x0 - S(16), C_DIM, 1,
-         app.status);
+   ui_text(UI_MEDIUM, S(14), x0, S(36), UI_LEFT, text_right - x0 - S(16), C_DIM, 1, app.status);
 }
 
 /* ---- The games' list ---------------------------------------------------- */
@@ -2887,15 +2908,21 @@ static float draw_update_card(float x, float y, float w)
    float h = S(128), cy = settings_card(x, y, w, h, "Updates"), rx = x + w - S(24), room, done;
    float bw = SDL_max(button_w("Check for updates"), button_w("Check again in 60 min"));
    char version[32], line[256], label[64];
+   bool newer = update_newer(version, sizeof(version));
    int wait = update_wait(&done);
 
-   if (update_newer(version, sizeof(version)))
+   if (newer)
       SDL_snprintf(line, sizeof(line), "%s is available", version);
    else
       SDL_strlcpy(line, app.update_note, sizeof(line));
    room = w - S(72) - bw;
    /* One button: what there is to do now. */
-   if (app.update_checking)
+   if (newer)
+   {
+      if (button(rx - bw, cy + S(2), bw, S(40), "Update", true, true, false))
+         open_update();
+   }
+   else if (app.update_checking)
       wait_button(rx - bw, cy + S(2), bw, S(40), "Checking...", 0);
    else if (wait)
    {
@@ -3239,6 +3266,29 @@ static void draw_emulator_modal(void)
       close_modal();
 }
 
+static void draw_update_modal(void)
+{
+   float x, y, w = S(520), h = S(196), bx, bw;
+   char version[32], line[160];
+   const char *go = "Open GitHub";
+
+   update_newer(version, sizeof(version));
+   modal_box(w, h, &x, &y, "Update FuseBox");
+   SDL_snprintf(line, sizeof(line), "FuseBox %s is out, this is %s. It's on GitHub.", version,
+         FUSEBOX_VERSION);
+   ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_DIM, 1, line);
+   bw = button_w(go);
+   bx = x + w - S(28) - bw;
+   if (button(bx, y + h - S(66), bw, S(42), go, true, true, true))
+   {
+      SDL_OpenURL(UPDATE_PAGE);
+      close_modal();
+   }
+   bx -= S(8) + S(110);
+   if (button(bx, y + h - S(66), S(110), S(42), "Cancel", false, true, true))
+      close_modal();
+}
+
 static void draw_modal(void)
 {
    float x, y, w, h;
@@ -3251,6 +3301,8 @@ static void draw_modal(void)
    }
    if (app.modal == MODAL_GAME)
       draw_game_settings();
+   else if (app.modal == MODAL_UPDATE)
+      draw_update_modal();
    else if (app.modal == MODAL_STEAM)
    {
       w = S(520);
