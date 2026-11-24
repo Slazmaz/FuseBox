@@ -68,11 +68,17 @@ void history_removed(const char *data_dir, Uint32 appid)
    SDL_RemovePath(path);
 }
 
-void history_playing(const char *data_dir)
+Uint32 history_appid(void)
 {
    const char *id = SDL_getenv("SteamGameId");
+
    /* A shortcut's: its app id above, its kind below. */
-   Uint32 appid = id ? (Uint32)(SDL_strtoull(id, NULL, 10) >> 32) : 0;
+   return id ? (Uint32)(SDL_strtoull(id, NULL, 10) >> 32) : 0;
+}
+
+void history_playing(const char *data_dir)
+{
+   Uint32 appid = history_appid();
    Sint64 added, played;
 
    if (!appid)

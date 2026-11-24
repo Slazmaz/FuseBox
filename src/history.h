@@ -15,7 +15,9 @@ void history_added(const char *data_dir, Uint32 appid);
 void history_found(const char *data_dir, Uint32 appid, Sint64 added);
 void history_played(const char *data_dir, Uint32 appid, Sint64 played);
 void history_removed(const char *data_dir, Uint32 appid);
-/* A game Steam starts (SteamGameId says which): its first time is noted, for
+/* The app id of the shortcut Steam started this with, 0 for none. */
+Uint32 history_appid(void);
+/* A game Steam starts (history_appid): its first time is noted, for
  * one whose adding was. Others may have been played before. */
 void history_playing(const char *data_dir);
 void history_get(const char *data_dir, Uint32 appid, Sint64 *added, Sint64 *played);

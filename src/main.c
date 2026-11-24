@@ -3472,7 +3472,8 @@ int main(int argc, char **argv)
    base = SDL_GetBasePath();
    SDL_snprintf(config, sizeof(config), "%sconfig", base ? base : "");
    /* With no window, and no log: the window's is open. */
-   if (argc >= 3 && SDL_strcmp(argv[1], "--run") == 0)
+   if ((argc >= 3 && SDL_strcmp(argv[1], "--run") == 0)
+         || (argc >= 2 && argv[1][0] && SDL_strncmp(argv[1], "--", 2) != 0))
    {
       SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
       return background_game(base ? base : "", config, argv);

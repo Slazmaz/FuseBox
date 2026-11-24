@@ -208,18 +208,85 @@ int background_open(const char *data_dir, const char *appid)
    return found && platform_open(exe) ? 0 : 1;
 }
 
+/* How a game is started. */
+struct start
+{
+   char exe[1024], args[1600], dir[1024];
+};
+
+/* By the library. False with why in error. */
+static bool find_start(const char *data_dir, const char *path, struct start *s, char *error,
+      size_t size)
+{
+   bool found = false, rom = false;
+   const struct game *g;
+   char *slash;
+
+   SDL_zerop(s);
+   if (library_init(data_dir))
+   {
+      library_lock();
+      g = library_game(library_by_path(path, history_appid()));
+      rom = g && g->rom[0];
+      found = g && g->exe[0] && !(rom && (g->no_emulator || !platform_exists(g->exe)));
+      if (found)
+      {
+         SDL_strlcpy(s->exe, g->exe, sizeof(s->exe));
+         library_launch_options(g, s->args, sizeof(s->args));
+         if (platform_exists(g->start_dir))
+            SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+      }
+      library_unlock();
+      /* The window's to write. */
+      library_discard();
+      library_quit();
+   }
+   if ((rom || !found) && !platform_exists(path))
+      SDL_snprintf(error, size, "This game isn't there any more:\n%s", path);
+   else if (found)
+      return true;
+   else if (rom)
+      SDL_snprintf(error, size, "No emulator was found for this game:\n%s", path);
+   else
+   {
+      /* One the library doesn't have: as it is. */
+      SDL_strlcpy(s->exe, path, sizeof(s->exe));
+      SDL_strlcpy(s->dir, path, sizeof(s->dir));
+      slash = SDL_strrchr(s->dir, PATH_SEP[0]);
+      if (slash)
+         *slash = '\0';
+      if (!slash || !platform_exists(s->dir))
+         s->dir[0] = '\0';
+      return true;
+   }
+   return false;
+}
+
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
    char played[1100], error[1200];
+   /* Steam's shortcuts say how. */
+   bool old = SDL_strcmp(argv[1], "--run") == 0;
+   struct start s;
    int code = 1;
 
    ra_init(config_dir);
+   if (old)
+   {
+      SDL_zero(s);
+      SDL_strlcpy(s.exe, argv[2], sizeof(s.exe));
+   }
+   else if (!find_start(data_dir, argv[1], &s, error, sizeof(error)))
+   {
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
+      return 1;
+   }
    if (ra_active())
       platform_start_background(true);
    history_playing(data_dir);
-   if (!platform_run_game(argv[2], "", "", argv, 3, &code))
+   if (!platform_run_game(s.exe, s.args, s.dir, argv, old ? 3 : 2, &code))
    {
-      SDL_snprintf(error, sizeof(error), "Can't start this game:\n%s", argv[2]);
+      SDL_snprintf(error, sizeof(error), "Can't start this game:\n%s", s.exe);
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
    }
    played_file(config_dir, played, sizeof(played));
