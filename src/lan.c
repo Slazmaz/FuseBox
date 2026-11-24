@@ -197,17 +197,17 @@ void lan_read_once(const char *config_dir)
 
 Uint32 lan_app(const struct game *g)
 {
-   Uint32 appid = g->steam_appid;
+   Uint32 appid = 0;
    int i;
 
-   if (appid || !once.lock)
-      return appid;
+   /* First: there's one where Steam doesn't have the game's own, whatever the
+    * library says, and that's what runs. */
    SDL_LockMutex(once.lock);
    for (i = 0; i < once.count && !appid; i++)
       if (library_same_path(once.list[i].path, library_path(g)))
          appid = once.list[i].appid;
    SDL_UnlockMutex(once.lock);
-   return appid;
+   return appid ? appid : g->steam_appid;
 }
 
 Uint32 lan_once_left(const char *config_dir)

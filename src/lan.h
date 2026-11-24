@@ -25,8 +25,8 @@ bool lan_any(const char *config_dir);
 void lan_once(const char *config_dir, Uint32 appid, const char *path, bool on);
 /* Reads those that are there now, for lan_app. */
 void lan_read_once(const char *config_dir);
-/* The game's shortcut's app id: its own, or that of one that's there only
- * meanwhile; 0 for none. */
+/* The game's shortcut's app id: that of one that's there only meanwhile, or its
+ * own; 0 for none. */
 Uint32 lan_app(const struct game *g);
 /* One whose process is gone, 0 for none (lan_once then). */
 Uint32 lan_once_left(const char *config_dir);
