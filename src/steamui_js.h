@@ -32,8 +32,8 @@
  * Its store keeps each game's, so one is made here from events like those
  * Steam's servers send, and the store is kept from asking them about it. An
  * event is drawn only for a game the Steam store knows, by another query.
- * Leaderboards go after the achievements' section, in one made of Steam's
- * parts: like the button.
+ * Friends' achievements go in the achievements' section, under its link, and
+ * leaderboards after it, a section made of Steam's parts: like the button.
  * Modules are
  * found by what's in them: their numbers change with every Steam update. */
 #define STEAMUI_JS \
@@ -43,7 +43,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 26) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 27) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -447,6 +447,42 @@
    "                  p[1] + '  ' + rank(p), { color: dim, fontSize: '12px', marginTop: '4px' });\n" \
    "            }));\n" \
    "      };\n" \
+   "      /* Friends' achievements: how many of the game's each has. */\n" \
+   "      const progress = app => {\n" \
+   "         const ids = new Set((games.get(app) || []).map(a => a[0])), got = new Map();\n" \
+   "         (given.has(app) ? given.get(app).wins : []).forEach(([id, name]) => {\n" \
+   "            if (name && ids.has(id)) got.set(name, (got.get(name) || new Set()).add(id));\n" \
+   "         });\n" \
+   "         return [...got].map(([name, has]) => ({ name, has: has.size, of: ids.size })).sort((x, y) => y.has - x.has);\n" \
+   "      };\n" \
+   "      const friendRow = app => ({ name, has, of }) => {\n" \
+   "         const who = people.get(name), part = Math.round(has * 1000 / of) / 10;\n" \
+   "         return e('div', { key: name, role: 'link', tabIndex: 0, style: { display: 'flex', gap: '10px',\n" \
+   "            padding: '6px 0', cursor: 'pointer', alignItems: 'center' }, onClick: () => SteamClient.URL.ExecuteSteamURL(\n" \
+   "               'steam://openurl/' + compared(who ? id64(who.n) : 0, app)) },\n" \
+   "            who && who.avatar && e('img', { src: who.avatar, style: { width: '32px', height: '32px', flexShrink: 0 } }),\n" \
+   "            e('div', { style: { flex: '1 1 0', minWidth: 0 } },\n" \
+   "               line('name', e('div', { style: cut }, name), [has + '/' + of + ' ', e('span', { key: 'part',\n" \
+   "                  style: { color: dim } }, '(' + part + '%)')], { color: '#dcdedf', fontSize: '14px' }),\n" \
+   "               e('div', { style: { height: '8px', borderRadius: '4px', background: 'rgba(0, 0, 0, 0.5)',\n" \
+   "                  marginTop: '5px', overflow: 'hidden' } }, e('div', { style: { height: '100%', borderRadius: '4px',\n" \
+   "                  width: part + '%', background: '#1a9fff' } }))));\n" \
+   "      };\n" \
+   "      const Progress = class extends react.Component {\n" \
+   "         constructor(props) { super(props); this.state = { all: false }; }\n" \
+   "         componentDidMount() { buttons.add(this); }\n" \
+   "         componentWillUnmount() { buttons.delete(this); }\n" \
+   "         render() {\n" \
+   "            const list = progress(this.props.app), all = this.state.all;\n" \
+   "            if (!list.length) return null;\n" \
+   "            return e('div', { style: { padding: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.08)' } },\n" \
+   "               e('div', { style: { color: dim, fontSize: '13px', marginBottom: '4px' } }, 'Friends\\' achievements'),\n" \
+   "               (all ? list : list.slice(0, 5)).map(friendRow(this.props.app)),\n" \
+   "               list.length > 5 && e('div', { role: 'button', tabIndex: 0, style: { color: dim, fontSize: '13px',\n" \
+   "                  textAlign: 'right', cursor: 'pointer', paddingTop: '6px' },\n" \
+   "                  onClick: () => this.setState({ all: !all }) }, all ? 'Show less' : 'View all ' + list.length));\n" \
+   "         }\n" \
+   "      };\n" \
    "      const Boards = class extends react.Component {\n" \
    "         constructor(props) { super(props); this.state = { all: false }; }\n" \
    "         componentDidMount() { buttons.add(this); }\n" \
@@ -495,6 +531,10 @@
    "            const list = props.children[1];\n" \
    "            if (list && list.props && list.props.ShowMoreContent && acts.has(list.props.appid))\n" \
    "               props = { ...props, children: [false, list] };\n" \
+   "            /* The achievements' section: its number on top, and the rest. */\n" \
+   "            const top = props.children[0];\n" \
+   "            if (Body && list && list.type === Body && top && top.props && top.props.summary && given.has(top.props.appid))\n" \
+   "               props = { ...props, children: [top, list, e(Progress, { key: 'fusebox', app: top.props.appid })] };\n" \
    "         }\n" \
    "         return jsxs.call(this, type, props, ...more);\n" \
    "      };\n" \
@@ -514,7 +554,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 26,\n" \
+   "      version: 27,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -584,6 +624,7 @@
    "         if (games.has(app)) put(app, games.get(app));\n" \
    "         build(app);\n" \
    "         if (Friend) new Set(wins.map(w => w[1]).filter(Boolean)).forEach(name => theirs(app, person(name)));\n" \
+   "         redraw();\n" \
    "         return last();\n" \
    "      },\n" \
    "      /* The best places first, by how many of the board are behind. */\n" \
