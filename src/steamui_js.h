@@ -37,7 +37,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 21) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 22) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -251,6 +251,8 @@
    "      const at = { updatedAt: Date.now() + 10 * 365 * 864e5 };\n" \
    "      const badge = 'https://media.retroachievements.org/Badge/';\n" \
    "      const key = names(app), got = list.filter(a => a[5]);\n" \
+   "      /* When each was, where that's known: Steam sorts by it. */\n" \
+   "      const when = new Map((given.has(app) ? given.get(app).wins : []).filter(w => !w[1]).map(w => [w[0], w[2]]));\n" \
    "      cache.setQueryDefaults(['achievements', app], { gcTime: Infinity });\n" \
    "      cache.setQueryData(key[0], { appid: app, language: 'english', schema_hash: 1, schema_version: 1,\n" \
    "         groups: [{ id: 0, name: '', archived: false, ispublic: true, developeronly: false,\n" \
@@ -261,7 +263,7 @@
    "      cache.setQueryData(key[1], { percentages: Object.fromEntries(list.map(a => [a[0], a[4]])) }, at);\n" \
    "      cache.setQueryData(key[2], { appid: app, steamid: me, schema_hash: 1,\n" \
    "         achievements: Object.fromEntries(got.map(a => [a[0], { internal_key: a[0], unlocked: true,\n" \
-   "            unlock_time: 0 }])),\n" \
+   "            unlock_time: when.get(a[0]) || 0 }])),\n" \
    "         groups: { 0: { groupid: 0, is_achievable: true, completed_achievements: got.length,\n" \
    "            is_completed: got.length === list.length } } }, at);\n" \
    "   };\n" \
@@ -404,7 +406,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 21,\n" \
+   "      version: 22,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -467,6 +469,7 @@
    "         const last = () => String(o ? Math.max(o.rt_last_time_played || 0, o.rt_last_time_locally_played || 0) : 0);\n" \
    "         if (was && was.key === key && !was.missing) return last();\n" \
    "         given.set(app, { key, id, wins, added, played, missing: false });\n" \
+   "         if (games.has(app)) put(app, games.get(app));\n" \
    "         build(app);\n" \
    "         return last();\n" \
    "      },\n" \
