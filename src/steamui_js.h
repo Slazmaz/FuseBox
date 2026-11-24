@@ -28,6 +28,8 @@
  * Its store keeps each game's, so one is made here from events like those
  * Steam's servers send, and the store is kept from asking them about it. An
  * event is drawn only for a game the Steam store knows, by another query.
+ * Leaderboards go after the achievements' section, in one made of Steam's
+ * parts: like the button.
  * Modules are
  * found by what's in them: their numbers change with every Steam update. */
 #define STEAMUI_JS \
@@ -37,11 +39,11 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 22) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 24) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
-   "   let react, hover, steamCard, css, strips, bar, jsx;\n" \
+   "   let react, hover, steamCard, css, strips, bar, jsx, column, Section, Body;\n" \
    "   webpackChunksteamui.push([[Symbol('fusebox')], {}, r => { req = r; }]);\n" \
    "   if (!req || !req.m) return 'unsupported';\n" \
    "   const pick = (id, test) => {\n" \
@@ -78,6 +80,14 @@
    "         if (!bar && src.includes('AppButtonsContainer:') && src.includes('MenuButton:')) {\n" \
    "            const x = req(id);\n" \
    "            bar = x.AppButtonsContainer ? x : pick(id, y => y.AppButtonsContainer);\n" \
+   "         }\n" \
+   "         if (!column && src.includes('RightColumn:') && src.includes('Spotlights:')) {\n" \
+   "            const x = req(id);\n" \
+   "            column = x.RightColumn ? x : pick(id, y => y.RightColumn);\n" \
+   "         }\n" \
+   "         if (!Section && src.includes('AppDetailsSectionHasLabel') && src.includes('rightColumnSection:')) {\n" \
+   "            Section = pick(id, x => typeof x === 'object' && x.$$typeof);\n" \
+   "            Body = pick(id, x => typeof x === 'function' && String(x).includes('.BodyGutter'));\n" \
    "         }\n" \
    "         if (!jsx && /\\.jsxs=/.test(src)) {\n" \
    "            const x = req(id);\n" \
@@ -243,6 +253,7 @@
    "   const drop = app => {\n" \
    "      games.delete(app);\n" \
    "      players.delete(app);\n" \
+   "      if (boards.delete(app)) redraw();\n" \
    "      mark(app);\n" \
    "      cache.removeQueries({ queryKey: playing(app) });\n" \
    "      names(app).forEach(queryKey => cache.removeQueries({ queryKey }));\n" \
@@ -353,7 +364,7 @@
    "      mark(app);\n" \
    "   };\n" \
    "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
-   "   const opens = new Map(), buttons = new Set(), clicks = [];\n" \
+   "   const opens = new Map(), buttons = new Set(), clicks = [], boards = new Map();\n" \
    "   let heard = false, deaf, wake, jsxs, mine, clicked = 0;\n" \
    "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
    "   const open = app => {\n" \
@@ -375,8 +386,51 @@
    "                  whiteSpace: 'nowrap', display: 'flex', alignItems: 'center' } }, 'Open ' + name);\n" \
    "         }\n" \
    "      };\n" \
+   "      /* Leaderboards: the user's place on each, and friends'. */\n" \
+   "      const e = react.createElement, dim = '#8b929a', cut = { overflow: 'hidden', textOverflow: 'ellipsis',\n" \
+   "         whiteSpace: 'nowrap', flex: '1 1 0', minWidth: 0 };\n" \
+   "      const line = (key, left, right, style) => e('div', { key, style: { display: 'flex', gap: '10px',\n" \
+   "         alignItems: 'center', ...style } }, left, e('div', { style: { flexShrink: 0 } }, right));\n" \
+   "      const row = ([id, title, about, total, places]) => {\n" \
+   "         const own = places.find(p => !p[0]);\n" \
+   "         const rank = p => '#' + p[2].toLocaleString() + ' of ' + total.toLocaleString();\n" \
+   "         return e('div', { key: id, title: about, role: 'link', tabIndex: 0, style: { padding: '7px 0', cursor: 'pointer' },\n" \
+   "            onClick: () => SteamClient.URL.ExecuteSteamURL(\n" \
+   "               'steam://openurl/https://retroachievements.org/leaderboardinfo.php?i=' + id) },\n" \
+   "            line('title', e('div', { style: cut }, title), own ? own[1] : '', { color: '#dcdedf', fontSize: '14px' }),\n" \
+   "            line('rank', e('div', { style: cut }, about), own ? rank(own) : '', { color: dim, fontSize: '12px', marginTop: '2px' }),\n" \
+   "            places.filter(p => p[0]).map(p => {\n" \
+   "               const who = people.get(p[0]);\n" \
+   "               return line(p[0], e('div', { style: { ...cut, display: 'flex', gap: '6px', alignItems: 'center' } },\n" \
+   "                  who && who.avatar && e('img', { src: who.avatar, style: { width: '16px', height: '16px' } }), p[0]),\n" \
+   "                  p[1] + '  ' + rank(p), { color: dim, fontSize: '12px', marginTop: '4px' });\n" \
+   "            }));\n" \
+   "      };\n" \
+   "      const Boards = class extends react.Component {\n" \
+   "         constructor(props) { super(props); this.state = { all: false }; }\n" \
+   "         componentDidMount() { buttons.add(this); }\n" \
+   "         componentWillUnmount() { buttons.delete(this); }\n" \
+   "         render() {\n" \
+   "            const list = boards.get(this.props.app), all = this.state.all;\n" \
+   "            if (!list || !list.length || !Section || !Body) return null;\n" \
+   "            return e(Section, { label: 'Leaderboards', rightColumnSection: true, availableOffline: true,\n" \
+   "               primaryAction: list.length > 5 && { label: all ? 'Show Less' : 'View All ' + list.length,\n" \
+   "                  action: () => this.setState({ all: !all }) } },\n" \
+   "               e(Body, null, (all ? list : list.slice(0, 5)).map(row)));\n" \
+   "         }\n" \
+   "      };\n" \
    "      jsxs = jsx.jsxs;\n" \
    "      mine = jsx.jsxs = function(type, props, ...more) {\n" \
+   "         if (column && type === 'div' && props && props.className === column.RightColumn && Array.isArray(props.children)) {\n" \
+   "            const part = c => c && c.props && c.props.children && c.props.children.props;\n" \
+   "            const at = props.children.findIndex(c => part(c) && part(c).name === 'achievements');\n" \
+   "            const on = at >= 0 && part(props.children[at]).parent;\n" \
+   "            if (on && on.props && on.props.overview) {\n" \
+   "               const app = on.props.overview.appid;\n" \
+   "               props = { ...props, children: [...props.children.slice(0, at + 1), e(Boards, { key: 'fusebox', app }),\n" \
+   "                  ...props.children.slice(at + 1)] };\n" \
+   "            }\n" \
+   "         }\n" \
    "         if (type === 'div' && props && props.className === bar.AppButtonsContainer && Array.isArray(props.children)) {\n" \
    "            const of = props.children.find(c => c && c.props && c.props.overview);\n" \
    "            if (of) props = { ...props, children: [\n" \
@@ -406,7 +460,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 22,\n" \
+   "      version: 24,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -461,6 +515,8 @@
    "         if (first) mark(app);\n" \
    "         poke(app);\n" \
    "         if (given.has(app) && given.get(app).missing) build(app);\n" \
+   "         /* Their pictures may be new. */\n" \
+   "         redraw();\n" \
    "         return 'ok';\n" \
    "      },\n" \
    "      activity(app, id, wins, added, played) {\n" \
@@ -472,6 +528,15 @@
    "         if (games.has(app)) put(app, games.get(app));\n" \
    "         build(app);\n" \
    "         return last();\n" \
+   "      },\n" \
+   "      /* The best places first, by how many of the board are behind. */\n" \
+   "      boards(app, list) {\n" \
+   "         const top = b => Math.min(...b[4].map(p => p[2])) / Math.max(1, b[3]);\n" \
+   "         const sorted = [...list].sort((x, y) => top(x) - top(y));\n" \
+   "         if (JSON.stringify(sorted) === JSON.stringify(boards.get(app))) return 'ok';\n" \
+   "         boards.set(app, sorted);\n" \
+   "         redraw();\n" \
+   "         return 'ok';\n" \
    "      },\n" \
    "      set(app, list) {\n" \
    "         const first = !games.has(app);\n" \
@@ -495,6 +560,7 @@
    "         undoFriends();\n" \
    "         clearTimeout(deaf);\n" \
    "         opens.clear();\n" \
+   "         boards.clear();\n" \
    "         redraw();\n" \
    "         if (wake) wake('');\n" \
    "         if (mine && jsx.jsxs === mine) jsx.jsxs = jsxs;\n" \

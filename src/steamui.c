@@ -169,8 +169,9 @@ static bool same_day(Sint64 a, Sint64 b)
 }
 
 /* Gives Steam a game's activity: who unlocked what when (wins: ra_activity's,
- * of RetroAchievements' game id), and when it was added and first played. */
-static void push_activity(const char *url, Uint32 appid, unsigned id, const char *wins,
+ * of RetroAchievements' game id), and when it was added and first played.
+ * Returns when Steam says it was last played (seconds since 1970). */
+static Sint64 push_activity(const char *url, Uint32 appid, unsigned id, const char *wins,
       SDL_AtomicInt *abort)
 {
    char result[64], *script = NULL;
@@ -198,6 +199,7 @@ static void push_activity(const char *url, Uint32 appid, unsigned id, const char
       played = last;
       history_played(library_dir(), appid, played);
    }
+   return last;
 }
 
 /* Those without achievements: what FuseBox knows of them itself. list: the
@@ -277,13 +279,23 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
                   list[i].id, friends) > 0)
             evaluate(url, script, result, sizeof(result), abort);
          SDL_free(script);
+         script = NULL;
          SDL_free(friends);
       }
       /* What can't be had now stays as Steam has it. */
       SDL_IOprintf(acts, "%s%u", first ? "" : ",", (unsigned)list[i].appid);
       first = false;
       if (wins)
-         push_activity(url, list[i].appid, list[i].id, wins, abort);
+      {
+         Sint64 last = push_activity(url, list[i].appid, list[i].id, wins, abort);
+         char *boards = ra_boards(list[i].id, achievements, last, abort);
+
+         if (boards && SDL_asprintf(&script, "__fusebox.boards(%u,%s)", (unsigned)list[i].appid,
+                  boards) > 0)
+            evaluate(url, script, result, sizeof(result), abort);
+         SDL_free(script);
+         SDL_free(boards);
+      }
       SDL_free(wins);
       SDL_free(achievements);
    }
@@ -309,7 +321,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 22"
+   return evaluate(url, "window.__fusebox && __fusebox.version === 24"
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
