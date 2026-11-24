@@ -18,6 +18,10 @@
  * need may be missing after an update: achievements do without. It isn't
  * ready yet when the account is: they're given once it is.
  *
+ * Comparing achievements with a friend takes their name, picture and unlocks
+ * from queries too. A picture's address is made from its hash: friends' hashes
+ * are marked, and React's jsx gives their images the real address.
+ *
  * The button that opens a game's emulator or launcher goes first among those
  * right of Play. The bar they're in can't be changed itself (MobX fixes each
  * one's render), so React's own jsxs, which makes it, adds the button. Clicks
@@ -39,7 +43,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 24) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === 26) return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -136,7 +140,10 @@
    "      state = store.GetFriendState;\n" \
    "      inGame = store.GetFriendsInGame;\n" \
    "      const count = store.GetCountFriendsInGame;\n" \
-   "      const link = links.BuildSteamURL;\n" \
+   "      const link = links.BuildSteamURL, resolve = links.ResolveURL;\n" \
+   "      links.ResolveURL = function(kind, who, app) {\n" \
+   "         return (kind === 'UserAchievementsPage' && compared(who, app)) || resolve.apply(this, arguments);\n" \
+   "      };\n" \
    "      store.GetFriendState = function(who) {\n" \
    "         const n = typeof who === 'number' ? who : who && who.GetAccountID && who.GetAccountID();\n" \
    "         return numbers.has(n) ? numbers.get(n).friend : state.apply(this, arguments);\n" \
@@ -151,7 +158,11 @@
    "         const real = count.apply(this, arguments) || 0;\n" \
    "         return players.has(app) ? [...numbers.values()].filter(p => p.app === app).length : real;\n" \
    "      };\n" \
-   "      links.BuildSteamURL = function(kind, what) {\n" \
+   "      links.BuildSteamURL = function(kind, what, ...more) {\n" \
+   "         /* Someone's achievements, or the user's own. */\n" \
+   "         const there = kind === 'UserAchievementsPage' ? compared(what, more[0])\n" \
+   "            : kind === 'SteamIDAchievementsPage' ? compared(0, what) : '';\n" \
+   "         if (there) return there;\n" \
    "         if (kind === 'SteamIDPage') {\n" \
    "            const p = numbers.get(Number(BigInt(what) & 0xffffffffn));\n" \
    "            if (p) return 'https://retroachievements.org/user/' + encodeURIComponent(p.name);\n" \
@@ -173,6 +184,7 @@
    "         store.GetFriendsInGame = inGame;\n" \
    "         store.GetCountFriendsInGame = count;\n" \
    "         delete links.BuildSteamURL;\n" \
+   "         delete links.ResolveURL;\n" \
    "      };\n" \
    "      return true;\n" \
    "   };\n" \
@@ -242,12 +254,40 @@
    "         miniProfileData: is(() => ({ EnsureCommunityDataLoaded() { }, community_data: undefined }))\n" \
    "      });\n" \
    "   };\n" \
+   "   /* The address of a game's achievements there, next to a friend's. */\n" \
+   "   const compared = (who, app) => {\n" \
+   "      const g = given.get(Number(app)), p = who && numbers.get(Number(BigInt(who) & 0xffffffffn));\n" \
+   "      if (!g || !g.id) return '';\n" \
+   "      return 'https://retroachievements.org/' + (p ? 'user/' + encodeURIComponent(p.name) + '/game/' + g.id + '/compare'\n" \
+   "         : 'game/' + g.id);\n" \
+   "   };\n" \
+   "   /* Them as a query has people, by a hash that says who. */\n" \
+   "   const MARK = 'fb'.repeat(16);\n" \
+   "   const details = p => {\n" \
+   "      const key = ['PlayerLinkDetails', id64(p.n)], hash = new Uint8Array(20).fill(0xfb);\n" \
+   "      [24, 16, 8, 0].forEach((bits, i) => { hash[16 + i] = p.n >>> bits; });\n" \
+   "      cache.setQueryDefaults(key, { gcTime: Infinity });\n" \
+   "      cache.setQueryData(key, { public_data: { steamid: key[1], persona_name: p.name, visibility_state: 3,\n" \
+   "         profile_state: 1, sha_digest_avatar: hash }, private_data: { persona_state: p.on ? 1 : 0 } },\n" \
+   "         { updatedAt: Date.now() + 10 * 365 * 864e5 });\n" \
+   "   };\n" \
+   "   /* What a friend unlocked of a game's, as the user's is. */\n" \
+   "   const theirs = (app, p) => {\n" \
+   "      const g = given.get(app), list = games.get(app);\n" \
+   "      if (!g || !list) return;\n" \
+   "      const ids = new Set(list.map(a => a[0])), got = g.wins.filter(w => w[1] === p.name && ids.has(w[0]));\n" \
+   "      cache.setQueryData([...names(app)[2].slice(0, 3), id64(p.n)], { appid: app, steamid: id64(p.n), schema_hash: 1,\n" \
+   "         achievements: Object.fromEntries(got.map(w => [w[0], { internal_key: w[0], unlocked: true, unlock_time: w[2] }])),\n" \
+   "         groups: { 0: { groupid: 0, is_achievable: true, completed_achievements: got.length,\n" \
+   "            is_completed: got.length === list.length } } }, { updatedAt: Date.now() + 10 * 365 * 864e5 });\n" \
+   "   };\n" \
    "   const person = name => {\n" \
    "      if (people.has(name)) return people.get(name);\n" \
    "      const p = { name, n: FIRST + people.size, app: 0, avatar: '', seen: '', last: '', icon: '', time: 0, on: 0 };\n" \
    "      make(p);\n" \
    "      people.set(name, p);\n" \
    "      numbers.set(p.n, p);\n" \
+   "      details(p);\n" \
    "      return p;\n" \
    "   };\n" \
    "   const drop = app => {\n" \
@@ -257,6 +297,7 @@
    "      mark(app);\n" \
    "      cache.removeQueries({ queryKey: playing(app) });\n" \
    "      names(app).forEach(queryKey => cache.removeQueries({ queryKey }));\n" \
+   "      cache.removeQueries({ queryKey: names(app)[2].slice(0, 3) });\n" \
    "   };\n" \
    "   const put = (app, list) => {\n" \
    "      const at = { updatedAt: Date.now() + 10 * 365 * 864e5 };\n" \
@@ -365,7 +406,7 @@
    "   };\n" \
    "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
    "   const opens = new Map(), buttons = new Set(), clicks = [], boards = new Map();\n" \
-   "   let heard = false, deaf, wake, jsxs, mine, clicked = 0;\n" \
+   "   let heard = false, deaf, wake, jsxs, mine, plain, pictured, clicked = 0;\n" \
    "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
    "   const open = app => {\n" \
    "      if (Date.now() - clicked < 1500) return;\n" \
@@ -419,6 +460,19 @@
    "               e(Body, null, (all ? list : list.slice(0, 5)).map(row)));\n" \
    "         }\n" \
    "      };\n" \
+   "      plain = jsx.jsx;\n" \
+   "      pictured = jsx.jsx = function(type, props, ...more) {\n" \
+   "         if (type === 'img' && props && typeof props.src === 'string' && props.src.includes(MARK)) {\n" \
+   "            const p = numbers.get(parseInt(props.src.substr(props.src.indexOf(MARK) + MARK.length, 8), 16));\n" \
+   "            if (p && p.avatar) props = { ...props, src: p.avatar };\n" \
+   "         }\n" \
+   "         /* How many friends play, by the friends to compare to: a link to a page\n" \
+   "            of Steam's that isn't there, so only text. */\n" \
+   "         else if (props && typeof props.href === 'string' && props.href.includes('/friendsthatplay/')\n" \
+   "               && players.has(Number(props.href.split('/friendsthatplay/')[1])))\n" \
+   "            props = { ...props, href: undefined, underline: 'none', style: { ...props.style, pointerEvents: 'none' } };\n" \
+   "         return plain.call(this, type, props, ...more);\n" \
+   "      };\n" \
    "      jsxs = jsx.jsxs;\n" \
    "      mine = jsx.jsxs = function(type, props, ...more) {\n" \
    "         if (column && type === 'div' && props && props.className === column.RightColumn && Array.isArray(props.children)) {\n" \
@@ -460,7 +514,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 24,\n" \
+   "      version: 26,\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \
@@ -504,6 +558,8 @@
    "            if (now) p.app = app;\n" \
    "            else if (p.app === app) p.app = 0;\n" \
    "            if (was !== p.on + ' ' + p.app + ' ' + p.last) make(p);\n" \
+   "            details(p);\n" \
+   "            theirs(app, p);\n" \
    "            return p;\n" \
    "         }).filter(p => p.app !== app);\n" \
    "         const first = !players.has(app);\n" \
@@ -527,6 +583,7 @@
    "         given.set(app, { key, id, wins, added, played, missing: false });\n" \
    "         if (games.has(app)) put(app, games.get(app));\n" \
    "         build(app);\n" \
+   "         if (Friend) new Set(wins.map(w => w[1]).filter(Boolean)).forEach(name => theirs(app, person(name)));\n" \
    "         return last();\n" \
    "      },\n" \
    "      /* The best places first, by how many of the board are behind. */\n" \
@@ -564,6 +621,8 @@
    "         redraw();\n" \
    "         if (wake) wake('');\n" \
    "         if (mine && jsx.jsxs === mine) jsx.jsxs = jsxs;\n" \
+   "         if (pictured && jsx.jsx === pictured) jsx.jsx = plain;\n" \
+   "         numbers.forEach(p => cache.removeQueries({ queryKey: ['PlayerLinkDetails', id64(p.n)] }));\n" \
    "         [...given.keys()].forEach(forget);\n" \
    "         if (feed) quiet.forEach(name => { delete feed[name]; });\n" \
    "         [...games.keys()].forEach(drop);\n" \
