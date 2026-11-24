@@ -9,8 +9,10 @@
 
 #ifdef _WIN32
 #define PATH_SEP "\\"
+#define FUSEBOX_EXE "fusebox.exe"
 #else
 #define PATH_SEP "/"
+#define FUSEBOX_EXE "fusebox"
 #endif
 
 struct steam_install
@@ -61,6 +63,8 @@ void platform_start_background(bool by_game);
 bool platform_start_game(const char *path);
 /* Whether the caller is the only background one; stays so till it ends. */
 bool platform_only_background(void);
+/* The same of the session (session.h). */
+bool platform_only_session(void);
 /* Starts another background one in the caller's place, which is to end. False
  * if it can't (other than Windows: FuseBox doesn't update itself there). */
 bool platform_again_background(void);

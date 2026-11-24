@@ -171,7 +171,6 @@ static Uint32 other_id(const struct game *g)
    return fb_crc32(g->id, SDL_strlen(g->id));
 }
 
-#ifdef _WIN32
 /* The games friends can be invited to: those that start through FuseBox. And
  * those that are here, but not in Steam. */
 static void push_lan(const char *url, SDL_AtomicInt *abort)
@@ -220,7 +219,6 @@ static void push_lan(const char *url, SDL_AtomicInt *abort)
             SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""), result, sizeof(result), abort);
    SDL_CloseIO(io);
 }
-#endif
 
 /* Both on the same day here. */
 static bool same_day(Sint64 a, Sint64 b)
@@ -315,9 +313,7 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort)
       return STEAMUI_UNSUPPORTED;
    lan_read_once(steam_settings_dir());
    push_opens(url, abort);
-#ifdef _WIN32
    push_lan(url, abort);
-#endif
    keep = SDL_IOFromDynamicMem();
    acts = SDL_IOFromDynamicMem();
    if (!(list = collect(&count)) || !keep || !acts)

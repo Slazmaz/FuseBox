@@ -17,7 +17,7 @@
 /* fusebox --spacewar: while its input is open, Steam counts Spacewar as played.
  * The session has one for as long as friends are being connected. */
 int session_count(void);
-/* Until it's over. Windows; nothing elsewhere. */
+/* Until it's over. */
 int session_run(const char *data_dir, const char *config_dir);
 
 #endif

@@ -1,8 +1,11 @@
 #include "session.h"
 
 #ifdef _WIN32
-
 #include <windows.h>
+#else
+#define _DEFAULT_SOURCE
+#include <unistd.h>
+#endif
 
 #include "inject.h"
 #include "lan.h"
@@ -41,7 +44,6 @@
 #define UNCOUNTED_MS 60000
 #define HELLO_MS 2000
 #define KEEP_MS 10000
-#define ONE_NAME L"FuseBoxSession"
 
 enum state
 {
@@ -105,14 +107,24 @@ static struct
    bool ended;
 } in;
 
-static int SDLCALL read_input(void *user)
+/* The next letter of this process' input; false once it's closed. */
+static bool read_letter(char *c)
 {
-   HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
-   char line[128], c;
-   size_t n = 0;
+#ifdef _WIN32
    DWORD got;
 
-   while (ReadFile(h, &c, 1, &got, NULL) && got == 1)
+   return ReadFile(GetStdHandle(STD_INPUT_HANDLE), c, 1, &got, NULL) && got == 1;
+#else
+   return read(STDIN_FILENO, c, 1) == 1;
+#endif
+}
+
+static int SDLCALL read_input(void *user)
+{
+   char line[128], c;
+   size_t n = 0;
+
+   while (read_letter(&c))
    {
       if (c != '\n')
       {
@@ -175,7 +187,7 @@ static void count_spacewar(bool on)
       const char *args[] = { exe, "--spacewar", NULL };
       SDL_PropertiesID p = SDL_CreateProperties();
 
-      SDL_snprintf(exe, sizeof(exe), "%sfusebox.exe", SDL_GetBasePath());
+      SDL_snprintf(exe, sizeof(exe), "%s" FUSEBOX_EXE, SDL_GetBasePath());
       SDL_SetPointerProperty(p, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
       SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_APP);
       SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_NULL);
@@ -237,13 +249,11 @@ static void look_at_links(void)
 
 int session_count(void)
 {
-   HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
    char c;
-   DWORD got;
 
    if (!steamnet_count(APP))
       return 1;
-   while (ReadFile(h, &c, 1, &got, NULL) && got == 1)
+   while (read_letter(&c))
       ;
    steamnet_close();
    return 0;
@@ -861,7 +871,7 @@ int session_run(const char *data_dir, const char *config_dir)
    Uint64 next = 0;
    bool going = true;
 
-   if (!CreateMutexW(NULL, FALSE, ONE_NAME) || GetLastError() == ERROR_ALREADY_EXISTS)
+   if (!platform_only_session())
       return 1;
    SDL_snprintf(path, sizeof(path), "%sfusebox-session.log", data_dir);
    log_file = SDL_IOFromFile(path, "w");
@@ -930,17 +940,3 @@ int session_run(const char *data_dir, const char *config_dir)
    log_file = NULL;
    return 0;
 }
-
-#else
-
-int session_count(void)
-{
-   return 0;
-}
-
-int session_run(const char *data_dir, const char *config_dir)
-{
-   return 0;
-}
-
-#endif

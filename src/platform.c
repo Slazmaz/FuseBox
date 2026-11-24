@@ -565,6 +565,11 @@ bool platform_only_background(void)
    return only && GetLastError() != ERROR_ALREADY_EXISTS;
 }
 
+bool platform_only_session(void)
+{
+   return CreateMutexW(NULL, FALSE, L"FuseBoxSession") && GetLastError() != ERROR_ALREADY_EXISTS;
+}
+
 /* Outside: as the desktop's child rather than the caller's, or not at all. Either
  * way without what Steam put in the caller's environment. */
 static bool start(WCHAR *command, bool outside)
@@ -1059,22 +1064,29 @@ void platform_autostart(bool on)
    SDL_SaveFile(path, text, SDL_strlen(text));
 }
 
-/* Locked by the background one while it runs. */
-static int one_file(void)
+/* Locked by the background one, or the session, while it runs. */
+static int one_file(const char *name)
 {
    const char *dir = SDL_getenv("XDG_RUNTIME_DIR");
    char path[1100];
 
    if (dir && dir[0])
-      SDL_snprintf(path, sizeof(path), "%s/fusebox-background", dir);
+      SDL_snprintf(path, sizeof(path), "%s/fusebox-%s", dir, name);
    else
-      SDL_snprintf(path, sizeof(path), "/tmp/fusebox-background-%d", (int)getuid());
+      SDL_snprintf(path, sizeof(path), "/tmp/fusebox-%s-%d", name, (int)getuid());
    return open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
 }
 
 bool platform_only_background(void)
 {
-   int fd = one_file();
+   int fd = one_file("background");
+
+   return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
+}
+
+bool platform_only_session(void)
+{
+   int fd = one_file("session");
 
    return fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) == 0;
 }
@@ -1086,7 +1098,7 @@ void platform_start_background(bool by_game)
    const char *args[8];
    char exe[1024];
    SDL_Process *p;
-   int n = 0, fd = one_file();
+   int n = 0, fd = one_file("background");
    bool runs = fd >= 0 && flock(fd, LOCK_EX | LOCK_NB) != 0;
 
    if (fd >= 0)
@@ -1114,10 +1126,23 @@ bool platform_again_background(void)
 
 bool platform_start_game(const char *path)
 {
+   static const char *const steams[] = { "SteamAppId", "SteamGameId", "SteamOverlayGameId",
+      "LD_PRELOAD" };
    char exe[1024];
    const char *args[] = { exe, path, NULL };
-   SDL_Process *p = own_exe(exe, sizeof(exe)) ? SDL_CreateProcess(args, false) : NULL;
+   SDL_Environment *env = SDL_CreateEnvironment(true);
+   SDL_PropertiesID props = SDL_CreateProperties();
+   SDL_Process *p;
+   size_t i;
 
+   /* Not what's there because of another game. */
+   for (i = 0; i < SDL_arraysize(steams); i++)
+      SDL_UnsetEnvironmentVariable(env, steams[i]);
+   SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
+   SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER, env);
+   p = own_exe(exe, sizeof(exe)) ? SDL_CreateProcessWithProperties(props) : NULL;
+   SDL_DestroyProperties(props);
+   SDL_DestroyEnvironment(env);
    if (p)
       SDL_DestroyProcess(p);
    return p != NULL;
