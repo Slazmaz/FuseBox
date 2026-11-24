@@ -27,6 +27,10 @@ struct steam_install
 
 bool platform_find_steam(struct steam_install *steam);
 bool platform_steam_running(const struct steam_install *steam);
+/* Its process, 0 if it doesn't run; and whether that one still does: it may go
+ * on for a while after it no longer says so. */
+unsigned platform_steam_pid(const struct steam_install *steam);
+bool platform_steam_is(unsigned pid);
 /* Asks Steam to quit, or starts it (with its interface's debugging port
  * open on this computer, unless 0); returns at once. */
 void platform_steam_shutdown(const struct steam_install *steam);

@@ -245,19 +245,30 @@ bool platform_find_steam(struct steam_install *steam)
    return true;
 }
 
-bool platform_steam_running(const struct steam_install *steam)
+unsigned platform_steam_pid(const struct steam_install *steam)
 {
    unsigned pid = 0;
-   HANDLE h;
-   DWORD code = 0;
 
-   if (!platform_reg_dword("HKCU", "Software\\Valve\\Steam\\ActiveProcess", "pid", &pid) || !pid)
+   return platform_reg_dword("HKCU", "Software\\Valve\\Steam\\ActiveProcess", "pid", &pid)
+      && platform_steam_is(pid) ? pid : 0;
+}
+
+bool platform_steam_is(unsigned pid)
+{
+   HANDLE h = pid ? OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid) : NULL;
+   WCHAR exe[1024];
+   DWORD code = 0, size = SDL_arraysize(exe);
+   size_t n;
+   bool is;
+
+   if (!h)
       return false;
-   if (!(h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)))
-      return false;
-   GetExitCodeProcess(h, &code);
+   /* The number may be another's by now. */
+   is = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE
+      && QueryFullProcessImageNameW(h, 0, exe, &size)
+      && (n = wcslen(exe)) >= 9 && _wcsicmp(exe + n - 9, L"steam.exe") == 0;
    CloseHandle(h);
-   return code == STILL_ACTIVE;
+   return is;
 }
 
 #else
@@ -291,7 +302,7 @@ bool platform_find_steam(struct steam_install *steam)
    return true;
 }
 
-bool platform_steam_running(const struct steam_install *steam)
+unsigned platform_steam_pid(const struct steam_install *steam)
 {
    char home[1024], path[1024], *text;
    long pid;
@@ -303,14 +314,25 @@ bool platform_steam_running(const struct steam_install *steam)
       SDL_snprintf(path, sizeof(path),
             "%s/.var/app/com.valvesoftware.Steam/.steam/steam.pid", home);
       if (!(text = SDL_LoadFile(path, NULL)))
-         return false;
+         return 0;
    }
    pid = SDL_strtol(text, NULL, 10);
    SDL_free(text);
-   return pid > 0 && kill((pid_t)pid, 0) == 0;
+   return pid > 0 && platform_steam_is((unsigned)pid) ? (unsigned)pid : 0;
+}
+
+bool platform_steam_is(unsigned pid)
+{
+   /* 0 would be this process's own group. */
+   return pid && kill((pid_t)pid, 0) == 0;
 }
 
 #endif
+
+bool platform_steam_running(const struct steam_install *steam)
+{
+   return platform_steam_pid(steam) != 0;
+}
 
 #ifdef _WIN32
 /* DWM draws its shadow for a window whose frame reaches into the client

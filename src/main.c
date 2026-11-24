@@ -781,6 +781,9 @@ struct steam_job
    bool only_restart;
 };
 
+/* How long Steam may take to close (ms). */
+#define CLOSE_MS 60000
+
 /* The art first (Steam can run meanwhile), then Steam closed only as long
  * as writing its shortcuts takes. */
 static void job_steam(void *data)
@@ -789,6 +792,7 @@ static void job_steam(void *data)
    struct msg *m = new_msg(MSG_STEAM_DONE);
    const struct steam_install *st = steam_install();
    bool was_running = false;
+   unsigned pid = 0;
    int i, count;
 
    library_lock();
@@ -806,27 +810,29 @@ static void job_steam(void *data)
    }
    /* While Steam runs: it tells who's logged in. */
    steam_account();
-   if (st && j->close_steam && platform_steam_running(st))
+   if (st && j->close_steam && (pid = platform_steam_pid(st)))
    {
-      Uint64 until = SDL_GetTicks() + 30000;
+      Uint64 until = SDL_GetTicks() + CLOSE_MS;
       was_running = true;
       post_status("Restarting Steam...");
       platform_steam_shutdown(st);
-      while (platform_steam_running(st) && SDL_GetTicks() < until)
+      /* Its process too: Steam writes its files on the way out, and one that's
+       * still closing would take the new one's start. */
+      while ((platform_steam_is(pid) || platform_steam_running(st)) && SDL_GetTicks() < until)
          SDL_Delay(250);
-      /* Steam writes its files on the way out: let it finish. */
       SDL_Delay(1500);
    }
    if (m)
    {
-      if (st && platform_steam_running(st))
+      if (st && (platform_steam_is(pid) || platform_steam_running(st)))
          SDL_strlcpy(m->text, "Steam is still running: close it and try again", sizeof(m->text));
       else if (!j->only_restart)
          steam_sync(m->text, sizeof(m->text));
       post(m);
    }
    library_save();
-   if (st && (was_running || j->only_restart) && !platform_steam_running(st))
+   if (st && (was_running || j->only_restart) && !platform_steam_is(pid)
+         && !platform_steam_running(st))
    {
       steamui_start(st);
       if (steam_menus())
