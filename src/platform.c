@@ -760,64 +760,90 @@ bool platform_tray_wait(int ms)
    return false;
 }
 
-int platform_run_game(char **argv)
+/* This program's command line from its nth argument on, quotes and all. */
+static const WCHAR *typed_from(int n)
 {
-   /* Quotes and all, as Steam had it. */
-   const WCHAR *tail = wcsstr(GetCommandLineW(), L" --run ");
-   WCHAR *command, *exe, *args;
+   const WCHAR *p = GetCommandLineW();
+
+   for (; n > 0 && *p; n--)
+   {
+      bool quoted = false;
+
+      for (; *p && (quoted || (*p != ' ' && *p != '\t')); p++)
+         if (*p == '\\' && p[1] == '"')
+            p++;
+         else if (*p == '"')
+            quoted = !quoted;
+      while (*p == ' ' || *p == '\t')
+         p++;
+   }
+   return p;
+}
+
+bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,
+      int *code)
+{
+   const WCHAR *more = typed_from(skip);
+   WCHAR *wexe = wide(exe), *wargs = wide(args), *wdir = dir[0] ? wide(dir) : NULL;
+   WCHAR *command = NULL, *params;
    STARTUPINFOW si;
    PROCESS_INFORMATION pi;
    HANDLE process = NULL;
-   DWORD code = 1;
+   DWORD result = 0;
+   bool ok = false;
+   size_t len;
 
    (void)argv;
-   if (!tail)
-      return 1;
-   for (tail += 7; *tail == ' '; tail++)
-      ;
+   *code = 1;
    SDL_zero(si);
    si.cb = sizeof(si);
    SDL_zero(pi);
-   command = SDL_malloc((wcslen(tail) + 1) * sizeof(WCHAR));
-   if (!command)
-      return 1;
-   wcscpy(command, tail);
-   if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+   if (wexe && wargs)
    {
-      CloseHandle(pi.hThread);
-      process = pi.hProcess;
-      AllowSetForegroundWindow(pi.dwProcessId);
+      len = wcslen(wexe) + wcslen(wargs) + wcslen(more) + 8;
+      command = SDL_malloc(len * sizeof(WCHAR));
    }
-   else
+   if (command)
    {
-      /* One that asks to run as administrator, or isn't a program itself. */
-      SHELLEXECUTEINFOW ex;
-
-      wcscpy(command, tail);
-      exe = command;
-      if (*exe == '"')
-         args = wcschr(++exe, '"');
+      _snwprintf(command, len, L"\"%ls\" %ls%ls%ls", wexe, wargs, *wargs && *more ? L" " : L"", more);
+      params = command + wcslen(wexe) + 3;
+      /* One that asks to run as administrator, or isn't a program itself, is
+       * Windows' to open. */
+      if (CreateProcessW(NULL, command, NULL, NULL, FALSE, 0, NULL, wdir, &si, &pi))
+      {
+         CloseHandle(pi.hThread);
+         process = pi.hProcess;
+         AllowSetForegroundWindow(pi.dwProcessId);
+         ok = true;
+      }
       else
-         args = wcschr(exe, ' ');
-      if (args)
-         *args++ = 0;
-      SDL_zero(ex);
-      ex.cbSize = sizeof(ex);
-      ex.fMask = SEE_MASK_NOCLOSEPROCESS;
-      ex.lpFile = exe;
-      ex.lpParameters = args;
-      ex.nShow = SW_SHOWNORMAL;
-      if (ShellExecuteExW(&ex))
-         process = ex.hProcess;
+      {
+         SHELLEXECUTEINFOW ex;
+
+         SDL_zero(ex);
+         ex.cbSize = sizeof(ex);
+         ex.fMask = SEE_MASK_NOCLOSEPROCESS;
+         ex.lpFile = wexe;
+         ex.lpParameters = params;
+         ex.lpDirectory = wdir;
+         ex.nShow = SW_SHOWNORMAL;
+         if ((ok = ShellExecuteExW(&ex)))
+            process = ex.hProcess;
+      }
    }
    SDL_free(command);
+   SDL_free(wexe);
+   SDL_free(wargs);
+   SDL_free(wdir);
    if (process)
    {
       WaitForSingleObject(process, INFINITE);
-      GetExitCodeProcess(process, &code);
+      GetExitCodeProcess(process, &result);
       CloseHandle(process);
    }
-   return (int)code;
+   if (ok)
+      *code = (int)result;
+   return ok;
 }
 
 #else
@@ -928,18 +954,49 @@ bool platform_tray_wait(int ms)
    return false;
 }
 
-int platform_run_game(char **argv)
+bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,
+      int *code)
 {
-   int status = 0;
-   pid_t pid = fork();
+   size_t size = SDL_strlen(exe) * 4 + SDL_strlen(args) + 32, n;
+   char *command = SDL_malloc(size), **list;
+   const char *p;
+   int status = 0, count = 0;
+   pid_t pid;
 
+   *code = 1;
+   while (argv[skip + count])
+      count++;
+   list = SDL_calloc((size_t)count + 5, sizeof(*list));
+   if (!command || !list)
+   {
+      SDL_free(command);
+      SDL_free(list);
+      return false;
+   }
+   /* Through a shell, as Steam would: the arguments are written for one. */
+   n = (size_t)SDL_snprintf(command, size, "exec '");
+   for (p = exe; *p; p++)
+      n += (size_t)SDL_snprintf(command + n, size - n, *p == '\'' ? "'\\''" : "%c", *p);
+   SDL_snprintf(command + n, size - n, "' %s \"$@\"", args);
+   list[0] = "/bin/sh";
+   list[1] = "-c";
+   list[2] = command;
+   list[3] = "sh";
+   SDL_memcpy(list + 4, argv + skip, sizeof(*list) * (size_t)count);
+   pid = fork();
    if (pid == 0)
    {
-      execvp(argv[0], argv);
+      if (dir[0] && chdir(dir) != 0)
+         _exit(127);
+      execv(list[0], list);
       _exit(127);
    }
+   SDL_free(command);
+   SDL_free(list);
    if (pid < 0 || waitpid(pid, &status, 0) < 0)
-      return 1;
-   return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+      return false;
+   *code = WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+   /* A shell's "not found" and "can't be run". */
+   return *code != 127 && *code != 126;
 }
 #endif

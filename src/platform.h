@@ -59,9 +59,12 @@ bool platform_tray_wait(int ms);
 /* A program's window to the front, or the program started; in front, though
  * the caller isn't. False if it can't be. */
 bool platform_open(const char *exe);
-/* Runs a game and waits for it; its exit code. argv: its exe and arguments
- * (Windows: taken as they were typed, from after --run). */
-int platform_run_game(char **argv);
+/* Runs a game and waits for it: exe, with args (as in a command line), and
+ * after them this program's own arguments from argv[skip] on (Windows: as they
+ * were typed). dir: where it starts, empty for here. False if it can't be
+ * started; else its exit code in *code. */
+bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,
+      int *code);
 
 #ifdef _WIN32
 /* hive: "HKLM" or "HKCU". value NULL reads the key's default value. */

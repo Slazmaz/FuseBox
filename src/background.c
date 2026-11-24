@@ -210,14 +210,18 @@ int background_open(const char *data_dir, const char *appid)
 
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
-   char played[1100];
-   int code;
+   char played[1100], error[1200];
+   int code = 1;
 
    ra_init(config_dir);
    if (ra_active())
       platform_start_background(true);
    history_playing(data_dir);
-   code = platform_run_game(argv + 2);
+   if (!platform_run_game(argv[2], "", "", argv, 3, &code))
+   {
+      SDL_snprintf(error, sizeof(error), "Can't start this game:\n%s", argv[2]);
+      SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
+   }
    played_file(config_dir, played, sizeof(played));
    SDL_SaveFile(played, "1", 1);
    return code;
