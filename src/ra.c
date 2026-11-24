@@ -814,6 +814,17 @@ static struct json *saved_activity(unsigned id, const char *user)
    return root;
 }
 
+static bool in_activity(const struct json *saved, const char *name)
+{
+   const struct json *o = json_get(saved, "friends");
+
+   for (o = o ? o->child : NULL; o; o = o->next)
+      if (o->child && o->child->next && o->child->next->type == JSON_STRING
+            && SDL_strcasecmp(o->child->next->str, name) == 0)
+         return true;
+   return false;
+}
+
 static struct won *won_of(struct won *won, int count, const struct json *pair)
 {
    int i;
@@ -1074,7 +1085,7 @@ char *ra_activity(unsigned id, const char *list, SDL_AtomicInt *abort)
 
 char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
 {
-   struct json *friends, *played, *o;
+   struct json *friends, *played, *won, *o;
    char user[128], *out = NULL;
    SDL_Time now = 0;
    SDL_IOStream *io;
@@ -1090,6 +1101,7 @@ char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
    {
       /* Without it, those seen playing are still known. */
       played = who_played(id, list, user, abort);
+      won = saved_activity(id, user);
       SDL_GetCurrentTime(&now);
       SDL_WriteU8(io, '[');
       for (o = friends->child; o; o = o->next)
@@ -1098,7 +1110,8 @@ char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
          bool last = (unsigned)number(o, "LastGameId", 0) == id;
          bool on = (double)(now / SDL_NS_PER_SECOND) - number(o, "LastSeenTime", 0) < NOW_S;
 
-         if (!name[0] || (!last && !has_name(json_get(played, "names"), name)))
+         if (!name[0] || (!last && !has_name(json_get(played, "names"), name)
+                  && !in_activity(won, name)))
             continue;
          SDL_IOprintf(io, "%s[", first ? "" : ",");
          json_write_string(io, name);
@@ -1119,6 +1132,7 @@ char *ra_friends(unsigned id, const char *list, SDL_AtomicInt *abort)
                SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, "[]"));
       SDL_CloseIO(io);
       json_free(played);
+      json_free(won);
    }
    SDL_UnlockMutex(ra.friends_lock);
    return out;
