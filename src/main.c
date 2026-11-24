@@ -1281,7 +1281,7 @@ static const char *steam_state(const struct game *g, float *r, float *gr, float 
    if (settings_differ(g))
    {
       *r = 0.30f, *gr = 0.56f, *b = 1.00f;
-      return "Edited";
+      return "Changed";
    }
    if (g->steam_appid)
    {
@@ -1981,7 +1981,7 @@ static void draw_sidebar(float w)
    else if (choosing())
       SDL_strlcpy(line, "Downloading artwork...", sizeof(line));
    else if (n)
-      SDL_snprintf(line, sizeof(line), "%d change%s waiting", n, n == 1 ? "" : "s");
+      SDL_snprintf(line, sizeof(line), "%d change%s pending", n, n == 1 ? "" : "s");
    else
       SDL_strlcpy(line, app.steam_note[0] ? app.steam_note : "Up to date", sizeof(line));
    ui_text(UI_MEDIUM, S(13), x + S(18), card_y + S(48), UI_LEFT, lw - S(36), C_DIM, 1, line);
