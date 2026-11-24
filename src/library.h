@@ -165,7 +165,7 @@ const char *library_path(const struct game *g);
  * shortcut's app id that is (0: not known), else one in Steam. Under the lock. */
 int library_by_path(const char *path, Uint32 appid);
 /* What it's started with: the launcher's own (args), then the user's
- * (launch_options). */
+ * (launch_options), but for ones with %command%, which are Steam's. */
 void library_launch_options(const struct game *g, char *dst, size_t size);
 
 /* Lower case letters and digits only: "The Witcher 3: Wild Hunt" ->

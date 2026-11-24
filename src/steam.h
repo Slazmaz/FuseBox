@@ -15,7 +15,7 @@ const struct steam_install *steam_install(void);
 
 /* What the shortcut FuseBox makes for the game starts: FuseBox, with the
  * game's path (library_path) as its options; how that's started is FuseBox's
- * to know (background_game). One with %command% in its options starts by itself. */
+ * to know (background_game). Options of the user's with %command% go around. */
 void steam_target(const struct game *g, char *exe, size_t exe_size, char *options,
       size_t options_size);
 

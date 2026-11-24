@@ -77,6 +77,7 @@ static bool is_path(const char *p)
 #endif
 /* What shortcuts had before their game's path alone. */
 #define RUN "--run "
+#define COMMAND "%command%"
 
 /* A quoted argument: on Linux what a shell would take for its own is escaped
  * (Steam starts shortcuts through one). */
@@ -133,15 +134,17 @@ static const char *own_exe(void)
 void steam_target(const struct game *g, char *exe, size_t exe_size, char *options,
       size_t options_size)
 {
-   /* Those put things before the program, which must stay what they're for. */
-   if (SDL_strstr(g->launch_options, "%command%"))
-   {
-      SDL_strlcpy(exe, g->exe, exe_size);
-      library_launch_options(g, options, options_size);
-      return;
-   }
+   const char *lo = g->launch_options, *command = SDL_strstr(lo, COMMAND);
+   char path[1100];
+
    SDL_strlcpy(exe, own_exe(), exe_size);
-   quote_arg(library_path(g), options, options_size);
+   quote_arg(library_path(g), path, sizeof(path));
+   /* Steam puts FuseBox there. */
+   if (command)
+      SDL_snprintf(options, options_size, "%.*s%s %s%s", (int)(command - lo), lo, COMMAND, path,
+            command + SDL_strlen(COMMAND));
+   else
+      SDL_strlcpy(options, path, options_size);
 }
 
 /* What the shortcut starts (into exe), and with which options. One of
@@ -161,6 +164,8 @@ static const char *target(const struct vdf *s, char *exe, size_t size, bool *thr
    p = options;
    if (SDL_strncmp(p, RUN, SDL_strlen(RUN)) == 0)
       p += SDL_strlen(RUN);
+   else if (SDL_strstr(p, COMMAND " \""))
+      p = SDL_strstr(p, COMMAND " \"") + SDL_strlen(COMMAND) + 1;
    if (!(end = read_arg(p, path, sizeof(path))))
       return options;
    *through = true;
@@ -447,18 +452,16 @@ static struct vdf *new_shortcut(struct vdf *list)
 static void fill_shortcut(struct vdf *s, const struct game *g, Uint32 appid, const char *icon)
 {
    char own[1024], exe[1100], options[2048], dir[1100];
-   const char *start_dir;
    struct vdf *tags;
 
    steam_target(g, own, sizeof(own), options, sizeof(options));
    quote(own, exe, sizeof(exe));
    /* The game's own is FuseBox's to start it in. */
-   start_dir = SDL_strstr(g->launch_options, "%command%") ? g->start_dir : SDL_GetBasePath();
-   quote(start_dir, dir, sizeof(dir));
+   quote(SDL_GetBasePath(), dir, sizeof(dir));
    vdf_set_int(s, "appid", appid);
    vdf_set_str(s, "AppName", g->name);
    vdf_set_str(s, "Exe", exe);
-   vdf_set_str(s, "StartDir", start_dir[0] ? dir : "");
+   vdf_set_str(s, "StartDir", dir);
    vdf_set_str(s, "LaunchOptions", options);
    vdf_set_str(s, "icon", icon);
    if (!vdf_find(s, "ShortcutPath"))

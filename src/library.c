@@ -54,8 +54,9 @@ Uint32 fb_crc32(const void *data, size_t size)
 
 void library_launch_options(const struct game *g, char *dst, size_t size)
 {
-   SDL_snprintf(dst, size, "%s%s%s", g->args, g->args[0] && g->launch_options[0] ? " " : "",
-         g->launch_options);
+   const char *own = SDL_strstr(g->launch_options, "%command%") ? "" : g->launch_options;
+
+   SDL_snprintf(dst, size, "%s%s%s", g->args, g->args[0] && own[0] ? " " : "", own);
 }
 
 const char *library_path(const struct game *g)
