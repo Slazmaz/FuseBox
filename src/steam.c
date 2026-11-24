@@ -1,5 +1,6 @@
 #include "steam.h"
 #include "history.h"
+#include "json.h"
 #include "library.h"
 #include "ra.h"
 #include "vdf.h"
@@ -10,6 +11,120 @@
 
 static struct steam_install steam;
 static bool found;
+
+static struct
+{
+   char config[1024];
+   /* Under lock. */
+   SDL_Mutex *lock;
+   bool autostart, made_file;
+   int port;
+} set;
+
+/* Under the lock. */
+static void save_settings(void)
+{
+   char path[1100];
+   SDL_IOStream *io;
+
+   SDL_CreateDirectory(set.config);
+   SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "steam.json", set.config);
+   if (!(io = SDL_IOFromFile(path, "wb")))
+   {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
+      return;
+   }
+   SDL_IOprintf(io, "{\n  \"autostart\": %s,\n  \"made_file\": %s,\n  \"port\": %d\n}\n",
+         set.autostart ? "true" : "false", set.made_file ? "true" : "false", set.port);
+   SDL_CloseIO(io);
+}
+
+void steam_read_settings(const char *config_dir)
+{
+   char path[1100], *text;
+   struct json *root;
+   bool old;
+
+   SDL_strlcpy(set.config, config_dir, sizeof(set.config));
+   if (!set.lock)
+      set.lock = SDL_CreateMutex();
+   SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "steam.json", config_dir);
+   /* They were the achievements'. */
+   if ((old = !platform_exists(path)))
+      SDL_snprintf(path, sizeof(path), "%s" PATH_SEP "retroachievements.json", config_dir);
+   text = SDL_LoadFile(path, NULL);
+   root = text ? json_parse(text) : NULL;
+   SDL_LockMutex(set.lock);
+   /* One being written just now can't be read: as they were. */
+   if (root || old)
+   {
+      set.autostart = !root || json_bool(root, "autostart", true);
+      set.made_file = root && json_bool(root, "made_file", false);
+      set.port = root ? (int)json_num(root, "port", 0) : 0;
+   }
+   /* Now, as the achievements' are written without them. */
+   if (old)
+      save_settings();
+   SDL_UnlockMutex(set.lock);
+   json_free(root);
+   SDL_free(text);
+}
+
+static bool get_setting(const bool *value)
+{
+   bool on;
+
+   SDL_LockMutex(set.lock);
+   on = *value;
+   SDL_UnlockMutex(set.lock);
+   return on;
+}
+
+static void change_setting(bool *value, bool on)
+{
+   SDL_LockMutex(set.lock);
+   *value = on;
+   save_settings();
+   SDL_UnlockMutex(set.lock);
+}
+
+bool steam_autostart(void)
+{
+   return get_setting(&set.autostart);
+}
+
+void steam_set_autostart(bool on)
+{
+   change_setting(&set.autostart, on);
+}
+
+bool steam_made_file(void)
+{
+   return get_setting(&set.made_file);
+}
+
+void steam_set_made_file(bool made)
+{
+   change_setting(&set.made_file, made);
+}
+
+int steam_port(void)
+{
+   int port;
+
+   SDL_LockMutex(set.lock);
+   port = set.port;
+   SDL_UnlockMutex(set.lock);
+   return port;
+}
+
+void steam_set_port(int port)
+{
+   SDL_LockMutex(set.lock);
+   set.port = port;
+   save_settings();
+   SDL_UnlockMutex(set.lock);
+}
 
 bool steam_init(void)
 {

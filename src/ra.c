@@ -45,8 +45,7 @@ static struct
    /* Under lock. */
    SDL_Mutex *lock;
    char user[128], token[128];
-   bool in_steam, autostart, made_file;
-   int port;
+   bool in_steam;
 
    /* One refresh at a time; what it keeps: when each console's progress
     * was last asked for (ms), and whether its games were. */
@@ -86,9 +85,6 @@ void ra_init(const char *config_dir)
    text = SDL_LoadFile(path, NULL);
    root = text ? json_parse(text) : NULL;
    ra.in_steam = !root || json_bool(root, "in_steam", true);
-   ra.autostart = !root || json_bool(root, "autostart", true);
-   ra.made_file = root && json_bool(root, "made_file", false);
-   ra.port = root ? (int)json_num(root, "port", 0) : 0;
    SDL_UnlockMutex(ra.lock);
    json_free(root);
    SDL_free(text);
@@ -107,9 +103,7 @@ static void save_settings(void)
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
       return;
    }
-   SDL_IOprintf(io, "{\n  \"in_steam\": %s,\n  \"autostart\": %s,\n  \"made_file\": %s,\n"
-         "  \"port\": %d\n}\n", ra.in_steam ? "true" : "false", ra.autostart ? "true" : "false",
-         ra.made_file ? "true" : "false", ra.port);
+   SDL_IOprintf(io, "{\n  \"in_steam\": %s\n}\n", ra.in_steam ? "true" : "false");
    SDL_CloseIO(io);
 }
 
@@ -139,60 +133,6 @@ bool ra_active(void)
    active = ra.in_steam && ra.token[0];
    SDL_UnlockMutex(ra.lock);
    return active;
-}
-
-bool ra_autostart(void)
-{
-   bool on;
-
-   SDL_LockMutex(ra.lock);
-   on = ra.autostart;
-   SDL_UnlockMutex(ra.lock);
-   return on;
-}
-
-void ra_set_autostart(bool on)
-{
-   SDL_LockMutex(ra.lock);
-   ra.autostart = on;
-   save_settings();
-   SDL_UnlockMutex(ra.lock);
-}
-
-bool ra_made_file(void)
-{
-   bool made;
-
-   SDL_LockMutex(ra.lock);
-   made = ra.made_file;
-   SDL_UnlockMutex(ra.lock);
-   return made;
-}
-
-void ra_set_made_file(bool made)
-{
-   SDL_LockMutex(ra.lock);
-   ra.made_file = made;
-   save_settings();
-   SDL_UnlockMutex(ra.lock);
-}
-
-int ra_port(void)
-{
-   int port;
-
-   SDL_LockMutex(ra.lock);
-   port = ra.port;
-   SDL_UnlockMutex(ra.lock);
-   return port;
-}
-
-void ra_set_port(int port)
-{
-   SDL_LockMutex(ra.lock);
-   ra.port = port;
-   save_settings();
-   SDL_UnlockMutex(ra.lock);
 }
 
 bool ra_user(char *user, size_t size)

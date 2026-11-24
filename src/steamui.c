@@ -22,8 +22,8 @@ void steamui_start(const struct steam_install *steam)
    /* Another one each time: not to be found by what looks for a usual one. */
    if (ra_active())
       port = 20000 + (int)SDL_rand(40000);
-   if (port || ra_port())
-      ra_set_port(port);
+   if (port || steam_port())
+      steam_set_port(port);
    platform_steam_start(steam, port);
 }
 
@@ -62,7 +62,7 @@ static bool find_at(int port, char *url, size_t size, SDL_AtomicInt *abort)
 
 static bool find_target(char *url, size_t size, SDL_AtomicInt *abort)
 {
-   return find_at(ra_port(), url, size, abort) || find_at(STEAM_PORT, url, size, abort);
+   return find_at(steam_port(), url, size, abort) || find_at(STEAM_PORT, url, size, abort);
 }
 
 /* Runs the script there; what it returned (text) in result. */

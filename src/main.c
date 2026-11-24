@@ -2624,9 +2624,9 @@ static float draw_achievements_card(float x, float y, float w)
       ui_text(UI_BOLD, S(15), x + S(36), cy + S(21), UI_LEFT, w - S(140), C_TEXT, 1, "Auto start");
       ui_text(UI_MEDIUM, S(13), x + S(36), cy + S(42), UI_LEFT, w - S(140), C_DIM, 1,
             "FuseBox waits in the background from login, with no window.");
-      if (toggle(rx - S(12) - S(44), cy + S(18), ra_autostart(), false))
+      if (toggle(rx - S(12) - S(44), cy + S(18), steam_autostart(), false))
       {
-         ra_set_autostart(!ra_autostart());
+         steam_set_autostart(!steam_autostart());
          background_apply();
       }
       cy += S(72);
@@ -3509,6 +3509,7 @@ int main(int argc, char **argv)
    sgdb_init(config);
    roms_init(config);
    ra_init(config);
+   steam_read_settings(config);
    steam_init();
    if (only_steam)
    {

@@ -46,19 +46,19 @@ void background_apply(void)
       if (active && !platform_exists(path))
       {
          if (SDL_SaveFile(path, "", 0))
-            ra_set_made_file(true);
+            steam_set_made_file(true);
          else
             SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't write %s: %s", path, SDL_GetError());
       }
       /* Another program's stays. */
-      else if (!active && ra_made_file())
+      else if (!active && steam_made_file())
       {
          SDL_RemovePath(path);
-         ra_set_made_file(false);
+         steam_set_made_file(false);
       }
    }
-   platform_autostart(active && ra_autostart());
-   if (active && ra_autostart())
+   platform_autostart(active && steam_autostart());
+   if (active && steam_autostart())
       platform_start_background(false);
 }
 
@@ -84,6 +84,7 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
 
       /* As the window left them. */
       ra_init(config_dir);
+      steam_read_settings(config_dir);
       if (!ra_active())
          return;
       if (!(st = steam_install()) && !(steam_init() && (st = steam_install())))
@@ -91,7 +92,7 @@ static void look_after_steam(const char *data_dir, const char *config_dir)
       if (!platform_steam_running(st))
       {
          /* Started by a game: gone with Steam. */
-         if (!ra_autostart())
+         if (!steam_autostart())
             return;
          steam_since = pushed = next = 0;
          continue;
@@ -288,6 +289,7 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    int code = 1;
 
    ra_init(config_dir);
+   steam_read_settings(config_dir);
    if (old)
    {
       SDL_zero(s);

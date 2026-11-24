@@ -13,6 +13,20 @@
 bool steam_init(void);
 const struct steam_install *steam_install(void);
 
+/* The settings, in <config>/steam.json. After ra_init (older FuseBoxes kept
+ * them with the achievements'). Again to read them again. */
+void steam_read_settings(const char *config_dir);
+/* Whether FuseBox starts with the computer to show achievements (background.h);
+ * on until turned off. */
+bool steam_autostart(void);
+void steam_set_autostart(bool on);
+/* Whether FuseBox made the file that has Steam open its port. */
+bool steam_made_file(void);
+void steam_set_made_file(bool made);
+/* The port Steam was last started with, 0 for none. */
+int steam_port(void);
+void steam_set_port(int port);
+
 /* What the shortcut FuseBox makes for the game starts: FuseBox, with the
  * game's path (library_path) as its options; how that's started is FuseBox's
  * to know (background_game). Options of the user's with %command% go around. */

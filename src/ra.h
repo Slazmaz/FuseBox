@@ -9,9 +9,9 @@
 /* RetroAchievements: which ROMs have achievements and which of them the
  * user has unlocked. Only ever read: earning them is the emulator's job.
  * The login's token is in <config>/credentials.cfg (the password is never
- * kept); <config>/retroachievements.json has the settings here. */
+ * kept); <config>/retroachievements.json has the setting here. */
 
-/* Again to read the login and settings again. */
+/* Again to read the login and setting again. */
 void ra_init(const char *config_dir);
 
 /* The account logged in to; false (and an empty name) for none. */
@@ -27,16 +27,6 @@ bool ra_in_steam(void);
 void ra_set_in_steam(bool on);
 /* Logged in, with that on. */
 bool ra_active(void);
-/* Whether FuseBox starts with the computer for it (background.h); on until
- * turned off. */
-bool ra_autostart(void);
-void ra_set_autostart(bool on);
-/* Whether FuseBox made the file that has Steam open its port. */
-bool ra_made_file(void);
-void ra_set_made_file(bool made);
-/* The port Steam was last started with for it, 0 for none. */
-int ra_port(void);
-void ra_set_port(int port);
 
 /* Finds the achievements of the library's ROMs (the ra_ fields of game).
  * What was asked minutes ago is only asked again with force. Blocking;
