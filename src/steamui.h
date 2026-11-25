@@ -36,7 +36,7 @@ enum steamui_player
 
 struct steamui_party
 {
-   Uint64 lobby;
+   Uint64 lobby, host, left;
    char name[256];
    Uint64 ids[STEAMUI_PLAYERS];
    enum steamui_player states[STEAMUI_PLAYERS];
@@ -86,8 +86,9 @@ bool steamui_art(Uint32 id, SDL_AtomicInt *abort);
 bool steamui_unlocks(Uint32 appid, SDL_AtomicInt *abort);
 /* Sends the friend a chat message: invited to that game. */
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort);
-/* Who is there while playing with friends: Steam shows them in the friends' list.
- * Lobby 0: it's over. Steam takes it as over too if it isn't told again in a minute. */
+/* Who is there while playing with friends: Steam shows them in the friends' list,
+ * and says who comes and leaves. Lobby 0: it's over; left: by whom, 0 if not by
+ * one who left. Steam takes it as over too if it isn't told again in a minute. */
 void steamui_party(const struct steamui_party *p, SDL_AtomicInt *abort);
 /* Has Steam join a lobby after all that steamui_asked told of. */
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort);

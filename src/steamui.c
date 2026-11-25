@@ -732,11 +732,11 @@ void steamui_party(const struct steamui_party *p, SDL_AtomicInt *abort)
    SDL_IOprintf(io, "window.__fusebox && __fusebox.party ? __fusebox.party('%llu',",
          (unsigned long long)p->lobby);
    json_write_string(io, p->name);
-   SDL_IOprintf(io, ",[");
+   SDL_IOprintf(io, ",'%llu',[", (unsigned long long)p->host);
    for (i = 0; i < p->count; i++)
       SDL_IOprintf(io, "%s['%llu','%s']", i ? "," : "", (unsigned long long)p->ids[i],
             states[p->states[i]]);
-   SDL_IOprintf(io, "]) : ''");
+   SDL_IOprintf(io, "],'%llu') : ''", (unsigned long long)p->left);
    run_script(io, result, sizeof(result), abort);
 }
 

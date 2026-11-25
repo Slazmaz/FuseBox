@@ -82,6 +82,8 @@ static struct
    Uint64 members[MEMBERS];
    int member_count;
    bool had_guests;
+   /* Who it's over with: the host, where they left. */
+   Uint64 left;
    Uint64 alone_since;
    struct tunnel_port ports[TUNNEL_PORTS];
    int port_count;
@@ -239,9 +241,11 @@ static void show_party(void)
       return;
    /* Compared as it is in memory. */
    SDL_memset(&p, 0, sizeof(p));
+   p.left = ses.left;
    if (ses.state == HOSTING || ses.state == JOINED)
    {
       p.lobby = ses.lobby;
+      p.host = ses.host;
       SDL_strlcpy(p.name, ses.name, sizeof(p.name));
       for (i = 0; i < ses.member_count; i++)
       {
@@ -392,6 +396,7 @@ static void end_session(const char *why)
    ses.ports_text[0] = ses.name[0] = ses.path[0] = '\0';
    set_state(IDLE);
    show_party();
+   ses.left = 0;
 }
 
 static void take(Uint64 from, int channel, const void *data, int size)
@@ -885,7 +890,10 @@ static void handle(const struct steamnet_event *e)
          SDL_Log("%s %s", steamnet_name(e->who), e->ok ? "joined" : "left");
          look_at_members();
          if (ses.state == JOINED && !e->ok && e->who == ses.host)
+         {
+            ses.left = ses.host;
             end_session("the host left");
+         }
          break;
       case STEAMNET_REQUEST:
          /* Only members'. */
@@ -952,6 +960,7 @@ static bool look(void)
       case JOINED:
          if (steamnet_owner(ses.lobby) != ses.host)
          {
+            ses.left = ses.host;
             end_session("the host left");
             return true;
          }

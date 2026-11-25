@@ -2,7 +2,7 @@
 #define FUSEBOX_STEAMUI_JS_H
 
 /* Counted up with each change to the script: an older one is replaced. */
-#define STEAMUI_VERSION "45"
+#define STEAMUI_VERSION "46"
 
 /* Run in Steam's SharedJSContext. Returns "ready", "wait" (Steam is still
  * starting) or "unsupported".
@@ -54,7 +54,8 @@
  *
  * Who is there while playing with friends (party) is a group on top of the
  * friends' list, the overlay's too, of Steam's own rows: their type is kept as
- * one is made. It's given again and again: over if it isn't.
+ * one is made. Who came or left is told by Steam's toast for a friend who plays,
+ * its words changed on the way. It's given again and again: over if it isn't.
  *
  * The overlay has a button for achievements, not for shortcuts: its entry among
  * the overlay's is changed. What's behind it (and Big Picture's item) asks the
@@ -474,9 +475,9 @@
    "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
    "   const opens = new Map(), buttons = new Set(), clicks = [], boards = new Map();\n" \
    "   let heard = false, deaf, wake, jsxs, mine, plain, pictured, clicked = 0;\n" \
-   "   /* Playing with friends, as it's shown: none for not. */\n" \
-   "   let party = null, partyOver, Row;\n" \
-   "   const STATES = { invited: ['Invited', '#8b929a'],\n" \
+   "   /* Playing with friends, as it's shown: none for not. Those told of as there. */\n" \
+   "   let party = null, partyOver, Row, toasting = '';\n" \
+   "   const there = new Set(), SAYS = 'fusebox:', STATES = { invited: ['Invited', '#8b929a'],\n" \
    "      connecting: ['Connecting...', '#d9b25c'], connected: ['Connected', '#a1cd44'] };\n" \
    "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
    "   const said = new Map();\n" \
@@ -604,7 +605,7 @@
    "            const p = numbers.get(parseInt(props.src.substr(props.src.indexOf(MARK) + MARK.length, 8), 16));\n" \
    "            if (p && p.avatar) props = { ...props, src: p.avatar };\n" \
    "         }\n" \
-   "         else [type, props] = invited(type, props);\n" \
+   "         else [type, props] = toasted(...invited(type, props));\n" \
    "         /* How many friends play, by the friends to compare to: a link to a page\n" \
    "            of Steam's that isn't there, so only text. */\n" \
    "         if (props && typeof props.href === 'string' && props.href.includes('/friendsthatplay/')\n" \
@@ -844,7 +845,34 @@
    "      return [react.Fragment, { children: [react.createElement(type, { key: 'time', ...props }),\n" \
    "         react.createElement(type, { key: 'fusebox', className: props.className, style }, 'FuseBox')] }];\n" \
    "   };\n" \
+   "   /* A toast's game is what it's to say, and the game. On the desktop it's given\n" \
+   "      apart; elsewhere it's a span in the text of what's made next. */\n" \
+   "   const toasted = (type, props) => {\n" \
+   "      const said = x => typeof x === 'string' && x.startsWith(SAYS) ? x.substr(SAYS.length).split('|') : null;\n" \
+   "      const parts = props && (said(props.gameName) || (type === 'span' && said(props.children)));\n" \
+   "      if (parts) {\n" \
+   "         const game = parts.slice(1).join('|');\n" \
+   "         toasting = type === 'span' ? parts[0] + ' ' + game : '';\n" \
+   "         return [type, type === 'span' ? { ...props, children: game } : { ...props, body: parts[0], gameName: game }];\n" \
+   "      }\n" \
+   "      if (toasting && props && props.steamID && props.body) {\n" \
+   "         props = { ...props, body: toasting };\n" \
+   "         toasting = '';\n" \
+   "      }\n" \
+   "      return [type, props];\n" \
+   "   };\n" \
    "   const account = id => Number(BigInt(id) & 0xffffffffn);\n" \
+   "   /* A new one, by the user's settings for toasts, with the sound of a friend who plays. */\n" \
+   "   const toast = (id, what, game) => {\n" \
+   "      try {\n" \
+   "         const all = NotificationStore.GetNotificationTargets();\n" \
+   "         const type = Object.keys(all).find(t => all[t].strTest === 'Friend in Game');\n" \
+   "         if (type) NotificationStore.ProcessNotification({ ...all[type], fnTray: null, showToast: true }, {\n" \
+   "            notificationID: NotificationStore.m_nNextTestNotificationID++, rtCreated: Math.floor(Date.now() / 1000),\n" \
+   "            eType: Number(type), nToastDurationMS: 0, eSource: 1, bNewIndicator: false,\n" \
+   "            data: { steamid: () => id, game_name: () => SAYS + what + '|' + game } }, 0);\n" \
+   "      } catch (e) { }\n" \
+   "   };\n" \
    "   /* Friends' lists drawn before, drawn again: not their rows, whose type is\n" \
    "      then had from one. */\n" \
    "   const lists = () => {\n" \
@@ -869,6 +897,7 @@
    "   const endParty = () => {\n" \
    "      clearTimeout(partyOver);\n" \
    "      party = null;\n" \
+   "      there.clear();\n" \
    "      redraw();\n" \
    "   };\n" \
    "   let fresh = { app: 0, until: 0 };\n" \
@@ -1003,13 +1032,25 @@
    "         note(ui.FriendStore.self.accountid, ui.GetServerRTime32(), text);\n" \
    "         return 'ok';\n" \
    "      },\n" \
-   "      /* Who is there: [Steam id, state]. No lobby: it's over. */\n" \
-   "      party(lobby, name, list) {\n" \
+   "      /* Who is there: [Steam id, state]. No lobby: it's over; left: who left then. */\n" \
+   "      party(lobby, name, host, list, left) {\n" \
    "         if (lobby === '0') {\n" \
+   "            if (party && there.has(left)) toast(left, 'left', party.name);\n" \
    "            endParty();\n" \
    "            return 'ok';\n" \
    "         }\n" \
    "         const first = !party || party.lobby !== lobby;\n" \
+   "         if (first) there.clear();\n" \
+   "         [...there].filter(id => !list.some(p => p[0] === id)).forEach(id => {\n" \
+   "            there.delete(id);\n" \
+   "            toast(id, 'left', name);\n" \
+   "         });\n" \
+   "         list.forEach(([id, state]) => {\n" \
+   "            if (state !== 'connected' || there.has(id)) return;\n" \
+   "            there.add(id);\n" \
+   "            /* Those there when this was told of first aren't new. */\n" \
+   "            if (!first) toast(id, id === host ? 'is now hosting you in' : 'joined you in', name);\n" \
+   "         });\n" \
    "         party = { lobby, name, list };\n" \
    "         clearTimeout(partyOver);\n" \
    "         partyOver = setTimeout(endParty, 60000);\n" \
