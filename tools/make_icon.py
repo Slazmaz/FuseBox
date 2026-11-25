@@ -1,6 +1,6 @@
 """Draws FuseBox's icon (a white lightning bolt on a blue rounded tile) into
-src/fusebox.ico, for the .exe. The window draws the same icon itself
-(set_window_icon in main.c): keep BOLT, BLUE and RADIUS in step with it.
+src/fusebox.ico, for the .exe. The window and the tray draw the same icon
+(src/bolt.c): keep BOLT, BLUE and RADIUS in step with it.
 
 Standard library only: python tools/make_icon.py
 """
@@ -8,7 +8,7 @@ import os
 import struct
 import zlib
 
-# The bolt, in a square from -0.5 to 0.5 (y down): main.c's `bolt`.
+# The bolt, in a square from -0.5 to 0.5 (y down): bolt.c's `bolt`.
 BOLT = [(0.14, -0.40), (-0.27, 0.06), (-0.01, 0.06),
         (-0.14, 0.40), (0.27, -0.06), (0.01, -0.06)]
 # C_ACCENT.

@@ -7,6 +7,7 @@
  * while nothing changes (events or finished jobs wake it). */
 #include "anim.h"
 #include "background.h"
+#include "bolt.h"
 #include "gl.h"
 #include "http.h"
 #include "disk.h"
@@ -1218,28 +1219,6 @@ enum icon
    ICONS
 };
 
-/* The lightning bolt of FuseBox's icon, in a square from -0.5 to 0.5 (y
- * down). tools/make_icon.py draws the .exe's icon from the same points. */
-static const float bolt[][2] = {
-   { 0.14f, -0.40f }, { -0.27f, 0.06f }, { -0.01f, 0.06f },
-   { -0.14f, 0.40f }, { 0.27f, -0.06f }, { 0.01f, -0.06f },
-};
-
-static bool in_bolt(float x, float y)
-{
-   int i, j, n = (int)SDL_arraysize(bolt);
-   bool in = false;
-
-   /* Even-odd: a ray to the right crosses the edges an odd number of
-    * times from inside. */
-   for (i = 0, j = n - 1; i < n; j = i++)
-      if ((bolt[i][1] > y) != (bolt[j][1] > y)
-            && x < (bolt[j][0] - bolt[i][0]) * (y - bolt[i][1]) / (bolt[j][1] - bolt[i][1])
-               + bolt[i][0])
-         in = !in;
-   return in;
-}
-
 static void draw_icon(enum icon icon, float cx, float cy, float size, float r, float g, float b,
       float a);
 
@@ -1871,7 +1850,7 @@ static GLuint icon_texture(enum icon icon, int px)
             int in = 0;
             for (sy = 0; sy < 4; sy++)
                for (sx = 0; sx < 4; sx++)
-                  in += in_bolt((x + (sx + 0.5f) / 4) / px - 0.5f, (y + (sy + 0.5f) / 4) / px - 0.5f);
+                  in += bolt_in((x + (sx + 0.5f) / 4) / px - 0.5f, (y + (sy + 0.5f) / 4) / px - 0.5f);
             a = in / 16.0f;
          }
          else
@@ -3826,42 +3805,16 @@ static bool SDLCALL on_live_resize(void *user, SDL_Event *e)
 }
 
 /* The app's icon for the window (taskbar, Alt+Tab; the .exe has its own
- * from tools/make_icon.py): the bolt in white on a blue rounded tile. */
+ * from tools/make_icon.py). */
 static void set_window_icon(void)
 {
-   enum { SIZE = 64, SUB = 4 };
-   SDL_Surface *s = SDL_CreateSurface(SIZE, SIZE, SDL_PIXELFORMAT_RGBA32);
-   const float radius = 0.22f, blue[3] = { C_ACCENT };
-   int x, y, sx, sy;
+   enum { SIZE = 64 };
+   static Uint8 pixels[SIZE * SIZE * 4];
+   SDL_Surface *s = SDL_CreateSurfaceFrom(SIZE, SIZE, SDL_PIXELFORMAT_RGBA32, pixels, SIZE * 4);
 
    if (!s)
       return;
-   for (y = 0; y < SIZE; y++)
-      for (x = 0; x < SIZE; x++)
-      {
-         float r = 0, g = 0, b = 0, a = 0;
-         Uint8 *p = (Uint8 *)s->pixels + y * s->pitch + x * 4;
-         for (sy = 0; sy < SUB; sy++)
-            for (sx = 0; sx < SUB; sx++)
-            {
-               float fx = (x + (sx + 0.5f) / SUB) / SIZE - 0.5f;
-               float fy = (y + (sy + 0.5f) / SUB) / SIZE - 0.5f;
-               float qx = SDL_max(SDL_fabsf(fx) - (0.5f - radius), 0.0f);
-               float qy = SDL_max(SDL_fabsf(fy) - (0.5f - radius), 0.0f);
-               if (qx * qx + qy * qy > radius * radius)
-                  continue;
-               a += 1;
-               if (in_bolt(fx, fy))
-                  r += 1, g += 1, b += 1;
-               else
-                  r += blue[0], g += blue[1], b += blue[2];
-            }
-         /* Colour averaged over the covered samples, coverage as alpha. */
-         p[0] = a ? (Uint8)(r / a * 255) : 0;
-         p[1] = a ? (Uint8)(g / a * 255) : 0;
-         p[2] = a ? (Uint8)(b / a * 255) : 0;
-         p[3] = (Uint8)(a * 255 / (SUB * SUB));
-      }
+   bolt_icon(pixels, SIZE);
    SDL_SetWindowIcon(app.window, s);
    SDL_DestroySurface(s);
 }
