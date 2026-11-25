@@ -346,6 +346,24 @@ static bool is_program(const char *path)
    return n > 4 && SDL_strcasecmp(path + n - 4, ".exe") == 0;
 }
 
+/* A path from the command line, from where FuseBox was run: Steam runs it
+ * elsewhere. */
+static void full_path(const char *path, char *dst, size_t size)
+{
+   char *here = NULL;
+   bool full = path[0] == '/';
+
+#ifdef _WIN32
+   full |= path[0] == '\\' || (path[0] && path[1] == ':');
+#endif
+   if (!full && platform_exists(path))
+      here = SDL_GetCurrentDirectory();
+   while (here && path[0] == '.' && path[1] == PATH_SEP[0])
+      path += 2;
+   SDL_snprintf(dst, size, "%s%s", here ? here : "", path);
+   SDL_free(here);
+}
+
 /* By the library; what that has no emulator for is looked for again. False
  * with why in error. */
 static bool find_start(const char *data_dir, const char *config_dir, const char *path,
@@ -481,16 +499,17 @@ static bool through_steam(const char *config_dir, const char *path, const struct
 
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
-   char played[1100], error[1200], more[2048], ended[16];
+   char path[1024], played[1100], error[1200], more[2048], ended[16];
    /* Older shortcuts say how. */
    bool old = SDL_strcmp(argv[1], "--run") == 0, once = SDL_strcmp(argv[1], "--once") == 0;
-   const char *path = once ? argv[2] : argv[1], *in_steam = SDL_getenv("SteamGameId");
+   const char *in_steam = SDL_getenv("SteamGameId");
    int code = 1, skip = old || once ? 3 : 2;
    struct start s;
 
    ra_init(config_dir);
    steam_read_settings(config_dir);
    SDL_zero(s);
+   full_path(once ? argv[2] : argv[1], path, sizeof(path));
    if (old)
       SDL_strlcpy(s.exe, argv[2], sizeof(s.exe));
    else if (!find_start(data_dir, config_dir, path, &s, error, sizeof(error)))
