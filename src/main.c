@@ -2290,7 +2290,7 @@ static void job_play(void *data)
    {
       SDL_snprintf(url, sizeof(url), "steam://rungameid/%llu",
             (unsigned long long)j->appid << 32 | 0x02000000u);
-      SDL_OpenURL(url);
+      platform_open_url(url);
    }
    else
       platform_start_game(j->path);

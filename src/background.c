@@ -178,11 +178,10 @@ static void tell_session(SDL_Process **session, const char *line)
          SDL_PropertiesID p = SDL_CreateProperties();
 
          own_exe(exe, sizeof(exe));
-         SDL_SetPointerProperty(p, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
          SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDIN_NUMBER, SDL_PROCESS_STDIO_APP);
          SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDOUT_NUMBER, SDL_PROCESS_STDIO_NULL);
          SDL_SetNumberProperty(p, SDL_PROP_PROCESS_CREATE_STDERR_NUMBER, SDL_PROCESS_STDIO_NULL);
-         *session = SDL_CreateProcessWithProperties(p);
+         *session = platform_process(args, p);
          SDL_DestroyProperties(p);
       }
       if (!*session || !(io = SDL_GetProcessInput(*session)))
@@ -244,7 +243,7 @@ static int SDLCALL take_clicks(void *user)
          SDL_snprintf(id, sizeof(id), "%u", (unsigned)a);
          args[0] = exe;
          args[2] = id;
-         if ((p = SDL_CreateProcess(args, false)))
+         if ((p = platform_process(args, 0)))
             SDL_DestroyProcess(p);
       }
       /* No Steam, or none with buttons. */

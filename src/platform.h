@@ -1,6 +1,7 @@
 #ifndef FUSEBOX_PLATFORM_H
 #define FUSEBOX_PLATFORM_H
 
+#include <SDL3/SDL.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -37,6 +38,13 @@ bool platform_steam_is(unsigned pid);
  * open on this computer, unless 0); returns at once. */
 void platform_steam_shutdown(const struct steam_install *steam);
 void platform_steam_start(const struct steam_install *steam, int port);
+
+/* Starts a program, as SDL does; with more properties than its arguments, unless 0.
+ * Not by SDL itself: in its threads most signals are blocked, and a program
+ * started there would have them so, not ending when it's asked to (Linux). */
+SDL_Process *platform_process(const char *const *args, SDL_PropertiesID more);
+/* The same of SDL_OpenURL. */
+bool platform_open_url(const char *url);
 
 /* The home folder, without a trailing separator. */
 void platform_home(char *dst, size_t size);

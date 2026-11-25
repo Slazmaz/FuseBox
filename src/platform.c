@@ -21,6 +21,7 @@
 #include <wchar.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <sys/file.h>
 #include <sys/prctl.h>
@@ -442,6 +443,43 @@ bool platform_exe_icon(const char *exe, const char *png_path)
 }
 #endif
 
+SDL_Process *platform_process(const char *const *args, SDL_PropertiesID more)
+{
+   SDL_PropertiesID props = SDL_CreateProperties();
+   SDL_Process *p;
+#ifndef _WIN32
+   sigset_t none, was;
+
+   sigemptyset(&none);
+   pthread_sigmask(SIG_SETMASK, &none, &was);
+#endif
+   if (more)
+      SDL_CopyProperties(more, props);
+   SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, (void *)args);
+   p = SDL_CreateProcessWithProperties(props);
+#ifndef _WIN32
+   pthread_sigmask(SIG_SETMASK, &was, NULL);
+#endif
+   SDL_DestroyProperties(props);
+   return p;
+}
+
+bool platform_open_url(const char *url)
+{
+   bool ok;
+#ifndef _WIN32
+   sigset_t none, was;
+
+   sigemptyset(&none);
+   pthread_sigmask(SIG_SETMASK, &none, &was);
+#endif
+   ok = SDL_OpenURL(url);
+#ifndef _WIN32
+   pthread_sigmask(SIG_SETMASK, &was, NULL);
+#endif
+   return ok;
+}
+
 static void run(const struct steam_install *steam, bool shutdown, int port)
 {
    const char *args[8];
@@ -466,7 +504,7 @@ static void run(const struct steam_install *steam, bool shutdown, int port)
    }
    args[n] = NULL;
    /* Not waited for: Steam keeps running after FuseBox closes. */
-   if ((p = SDL_CreateProcess(args, false)))
+   if ((p = platform_process(args, 0)))
       SDL_DestroyProcess(p);
    else
       SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Can't run %s: %s", steam->exe, SDL_GetError());
@@ -1118,7 +1156,7 @@ void platform_start_background(bool by_game)
    args[n++] = exe;
    args[n++] = "--background";
    args[n] = NULL;
-   if ((p = SDL_CreateProcess(args, false)))
+   if ((p = platform_process(args, 0)))
       SDL_DestroyProcess(p);
 }
 
@@ -1133,7 +1171,7 @@ bool platform_again_background(void)
    only = -1;
    /* Not this process' exe any more: that's been moved away. */
    SDL_snprintf(exe, sizeof(exe), "%s" FUSEBOX_EXE, SDL_GetBasePath());
-   if ((p = SDL_CreateProcess(args, false)))
+   if ((p = platform_process(args, 0)))
    {
       SDL_DestroyProcess(p);
       return true;
@@ -1157,9 +1195,8 @@ bool platform_start_game(const char *path)
    /* Not what's there because of another game. */
    for (i = 0; i < SDL_arraysize(steams); i++)
       SDL_UnsetEnvironmentVariable(env, steams[i]);
-   SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ARGS_POINTER, args);
    SDL_SetPointerProperty(props, SDL_PROP_PROCESS_CREATE_ENVIRONMENT_POINTER, env);
-   p = own_exe(exe, sizeof(exe)) ? SDL_CreateProcessWithProperties(props) : NULL;
+   p = own_exe(exe, sizeof(exe)) ? platform_process(args, props) : NULL;
    SDL_DestroyProperties(props);
    SDL_DestroyEnvironment(env);
    if (p)
@@ -1194,7 +1231,7 @@ void platform_arguments(char **argv, int skip, char *dst, size_t size)
 bool platform_open(const char *exe)
 {
    const char *args[] = { exe, NULL };
-   SDL_Process *p = SDL_CreateProcess(args, false);
+   SDL_Process *p = platform_process(args, 0);
 
    if (p)
       SDL_DestroyProcess(p);
