@@ -41,6 +41,8 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
  * what's missing there (steamui_art), or "unlocks <app id>" (steamui_unlocks).
  * False for none; at once when Steam has no port or nothing to click. */
 bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort);
+/* Whether Steam can be asked to run a game: STEAMUI_OK if so. */
+enum steamui steamui_ready(SDL_AtomicInt *abort);
 /* Has Steam run a game: by the shortcut it has, or by one that's there only
  * until steamui_unonce (lan_once). The app id, 0 if Steam can't now. */
 Uint32 steamui_run(Uint32 appid, SDL_AtomicInt *abort);

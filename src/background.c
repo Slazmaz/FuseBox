@@ -474,6 +474,41 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
 /* How long Steam may take to start a game (ms). */
 #define START_MS 60000
 
+/* How long Steam may take to start (ms), its login too; and how long it may be
+ * gone meanwhile: it restarts when it updated. */
+#define STEAM_MS 180000
+#define STEAM_GONE_MS 20000
+
+/* Starts Steam unless it runs, and waits until it can run games. False with why
+ * in error. */
+static bool steam_on(char *error, size_t size)
+{
+   Uint64 now = SDL_GetTicks(), until = now + STEAM_MS, there = now;
+   enum steamui ready = STEAMUI_NO_PORT;
+
+   if (!steam_init())
+   {
+      SDL_strlcpy(error, "Steam isn't installed here.\nFuseBox needs it to open games.", size);
+      return false;
+   }
+   if (platform_steam_running(steam_install()))
+      return true;
+   steamui_start(steam_install());
+   while (ready != STEAMUI_OK && ready != STEAMUI_UNSUPPORTED && now < until
+         && now - there < STEAM_GONE_MS)
+   {
+      SDL_Delay(1000);
+      now = SDL_GetTicks();
+      if (platform_steam_running(steam_install()))
+         there = now;
+      ready = steamui_ready(NULL);
+   }
+   if (ready == STEAMUI_OK || ready == STEAMUI_UNSUPPORTED)
+      return true;
+   SDL_strlcpy(error, "Steam didn't start.\nFuseBox needs it to open games.", size);
+   return false;
+}
+
 /* Has Steam run the game, with its overlay and the rest; waits until it's over.
  * False if Steam can't now: it's started without. more: arguments after it. */
 static bool through_steam(const char *config_dir, const char *path, const char *emulator,
@@ -487,7 +522,7 @@ static bool through_steam(const char *config_dir, const char *path, const char *
    /* The game's own shortcut doesn't have these. */
    bool once = !s->appid || more[0] || emulator[0], over = false;
 
-   if (!steam_menus() || !steam_init() || !platform_steam_running(steam_install()))
+   if (!platform_steam_running(steam_install()))
       return false;
    /* One that comes back here didn't come from Steam as it looks: not again. */
    SDL_snprintf(asked, sizeof(asked), "%s" PATH_SEP "asked", config_dir);
@@ -567,8 +602,13 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    if (steam_menus())
       platform_start_background(true);
    /* Not by Steam: by it now. */
-   if (!old && !once && !(in_steam && in_steam[0]))
+   if (!old && !once && !(in_steam && in_steam[0]) && steam_menus())
    {
+      if (!steam_on(error, sizeof(error)))
+      {
+         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
+         return 1;
+      }
       platform_arguments(argv, skip, more, sizeof(more));
       if (through_steam(config_dir, path, emulator, &s, more))
          return 0;

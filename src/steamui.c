@@ -404,6 +404,18 @@ bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort)
       && what[0];
 }
 
+enum steamui steamui_ready(SDL_AtomicInt *abort)
+{
+   char url[512], result[64];
+
+   if (!find_target(url, sizeof(url), abort))
+      return STEAMUI_NO_PORT;
+   if (!evaluate(url, STEAMUI_JS, result, sizeof(result), abort)
+         || SDL_strcmp(result, "wait") == 0)
+      return STEAMUI_WAIT;
+   return SDL_strcmp(result, "ready") == 0 ? STEAMUI_OK : STEAMUI_UNSUPPORTED;
+}
+
 /* Runs what starts a game there; the app id it's run as, 0 if Steam can't. */
 static Uint32 run_in_steam(const char *script, SDL_AtomicInt *abort)
 {
