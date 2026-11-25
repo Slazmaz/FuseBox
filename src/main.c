@@ -1007,7 +1007,7 @@ static struct
    char name[256];
    int name_game;
    SDL_FRect name_rect;
-   /* The game settings' launch options while they're edited. */
+   /* The launch options in the game's options while they're edited. */
    char options[512];
    enum modal modal;
    struct sgdb_game *matches;
@@ -2248,7 +2248,7 @@ static void build_view(void)
 
 /* ---- Game page --------------------------------------------------------- */
 
-static void open_game_settings(void);
+static void open_game_options(void);
 
 static void save_key(void)
 {
@@ -2421,9 +2421,9 @@ static void draw_game(float x, float y, float w, float h)
       /* For when SteamGridDB's art is for another game (a sequel, a
        * remaster): pick the right one. Steam or not is the list's tick. */
       /* Not for an uninstalled game: it's only there to leave Steam. */
-      /* Right: the game's settings (its shortcut's overlay, Steam Input,
+      /* Right: the game's options (its shortcut's overlay, Steam Input,
        * launch options), kept whether it's in Steam yet or not. */
-      bx = x + w - S(18) - button_w("Settings");
+      bx = x + w - S(18) - button_w("Options");
       if (!gone)
       {
          /* Right of it, what's done most. */
@@ -2434,9 +2434,9 @@ static void draw_game(float x, float y, float w, float h)
          if (play_button(x + w - S(18) - pw, y + (sh - S(42)) / 2, pw, S(42),
                   starting ? "Starting..." : "Play", !starting && !no_emulator))
             start_game(app.selected);
-         if (button(bx, y + (sh - S(42)) / 2, button_w("Settings"), S(42), "Settings", false, true,
+         if (button(bx, y + (sh - S(42)) / 2, button_w("Options"), S(42), "Options", false, true,
                   false))
-            open_game_settings();
+            open_game_options();
          bx -= S(10);
       }
       else
@@ -3075,7 +3075,7 @@ static void modal_box(float w, float h, float *x, float *y, const char *title)
 
 static void close_modal(void)
 {
-   /* Opened from the game's settings: back to them. */
+   /* Opened from the game's options: back to them. */
    if (app.modal == MODAL_EMULATOR)
    {
       app.modal = MODAL_GAME;
@@ -3127,7 +3127,7 @@ static bool toggle(float x, float y, bool on, bool enabled, bool modal)
    return enabled && clicked_in(x - S(4), y - S(4), w + S(8), h + S(8), modal);
 }
 
-static void open_game_settings(void)
+static void open_game_options(void)
 {
    library_lock();
    if (library_game(app.selected))
@@ -3137,8 +3137,8 @@ static void open_game_settings(void)
    app.modal = MODAL_GAME;
 }
 
-/* The game's settings. */
-static void draw_game_settings(void)
+/* The game's options. */
+static void draw_game_options(void)
 {
    static const char *const labels[2][2] = {
       { "Steam Overlay", "Steam's in-game overlay (Shift+Tab)" },
@@ -3434,7 +3434,7 @@ static void draw_modal(void)
       return;
    }
    if (app.modal == MODAL_GAME)
-      draw_game_settings();
+      draw_game_options();
    else if (app.modal == MODAL_UPDATE)
       draw_update_modal();
    else if (app.modal == MODAL_STEAM)
