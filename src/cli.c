@@ -6,7 +6,6 @@
  *      next ask is instant and the window shows it. Exit 1: none found.
  *   fusebox-cli list           id, name and each art path, tab separated
  *   fusebox-cli library        library.json's path
- *   fusebox-cli key <api key>  saves the SteamGridDB API key
  *   fusebox-cli version        FuseBox's version
  *   fusebox-cli scan           which games a scan finds and why (saves nothing)
  *   fusebox-cli steam          whether and why Steam offers to invite friends
@@ -34,7 +33,6 @@ static void usage(void)
          "usage: fusebox-cli art <game name or id> <cover|wide|hero|logo|icon> [--no-fetch]\n"
          "       fusebox-cli list\n"
          "       fusebox-cli library\n"
-         "       fusebox-cli key <SteamGridDB API key>\n"
          "       fusebox-cli version\n"
          "       fusebox-cli scan\n"
          "       fusebox-cli steam\n");
@@ -135,7 +133,7 @@ static int art(const char *name, const char *type_name, bool fetch)
    }
    if (!sgdb_has_key())
    {
-      fprintf(stderr, "no SteamGridDB API key: fusebox-cli key <key>\n");
+      fprintf(stderr, "no SteamGridDB API key: add one in FuseBox, in Settings\n");
       return 1;
    }
 
@@ -208,8 +206,6 @@ int main(int argc, char **argv)
       list();
    else if (argc == 2 && SDL_strcmp(argv[1], "library") == 0)
       printf("%slibrary.json\n", data);
-   else if (argc == 3 && SDL_strcmp(argv[1], "key") == 0)
-      sgdb_set_key(argv[2]);
    else if (argc == 2 && SDL_strcmp(argv[1], "scan") == 0)
       scan();
    else if (argc == 2 && SDL_strcmp(argv[1], "steam") == 0)
