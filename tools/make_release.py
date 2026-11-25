@@ -1,6 +1,7 @@
 """Zips build/ into build/FuseBox-<version>-windows-x64.zip (on Linux
 -linux-x64.zip, of the folder tools/make_linux.sh gives), for a GitHub
 release: FuseBox looks for a file named so in the latest release (update.c).
+On Linux also the same in a .tar.gz, for people.
 Only FuseBox's own files go in, never what it keeps next to its exe.
 
 Standard library only: build, then python tools/make_release.py
@@ -9,6 +10,7 @@ import glob
 import os
 import re
 import sys
+import tarfile
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,5 +52,17 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             info.external_attr = (0o100755 if name in PROGRAMS else 0o100644) << 16
         with open(files[name], "rb") as f:
             z.writestr(info, f.read(), compresslevel=9)
-print(out)
-print(f'gh release create v{version} "{out}" --title "FuseBox {version}" --generate-notes')
+outs = [out]
+if LINUX:
+    outs.append(out[:-len("zip")] + "tar.gz")
+    with tarfile.open(outs[1], "w:gz", compresslevel=9) as t:
+        for name in sorted(files):
+            info = t.gettarinfo(files[name], "FuseBox/" + name)
+            info.mode = 0o755 if name in PROGRAMS else 0o644
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            with open(files[name], "rb") as f:
+                t.addfile(info, f)
+print(*outs, sep="\n")
+quoted = " ".join(f'"{o}"' for o in outs)
+print(f'gh release create v{version} {quoted} --title "FuseBox {version}" --notes-file <notes>')
