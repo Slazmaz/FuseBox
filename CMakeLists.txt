@@ -177,6 +177,8 @@ if(WIN32)
    enable_language(RC)
    target_sources(fusebox PRIVATE src/fusebox.rc)
    target_sources(fusebox-cli PRIVATE src/fusebox.rc)
+   # Not found in it by itself: the version would stay the one it was first built with.
+   set_source_files_properties(src/fusebox.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_BINARY_DIR}/generated/version.h)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
