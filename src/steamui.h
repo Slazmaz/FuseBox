@@ -70,8 +70,6 @@ bool steamui_unlocks(Uint32 appid, SDL_AtomicInt *abort);
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort);
 /* Has Steam join a lobby after all that steamui_asked told of. */
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort);
-/* Whether and why Steam offers to invite friends, as lines of text. */
-void steamui_state(char *dst, size_t size, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
 void steamui_clear(SDL_AtomicInt *abort);
 

@@ -69,7 +69,5 @@ bool roms_emulator_args(const struct game *g, const char *rom, const char *exe, 
 /* An emulator's name by its exe: the one FuseBox knows it by, else the
  * file's. */
 void roms_emulator_name(const char *exe, char *dst, size_t size);
-/* The emulators the last scan found, "Dolphin, PCSX2". */
-const char *roms_emulators(void);
 
 #endif

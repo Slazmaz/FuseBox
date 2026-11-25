@@ -12,22 +12,12 @@
  *      SteamGridDB's art for it, most popular first: id, size, kind and
  *      address, tab separated.
  *   fusebox-cli list           id, name and each art path, tab separated
- *   fusebox-cli library        library.json's path
  *   fusebox-cli version        FuseBox's version
- *   fusebox-cli scan           which games a scan finds and why (saves nothing)
- *   fusebox-cli steam          whether and why Steam offers to invite friends
  */
-#include "disk.h"
 #include "http.h"
-#include "lan.h"
 #include "library.h"
 #include "platform.h"
-#include "ra.h"
-#include "roms.h"
-#include "scan.h"
 #include "sgdb.h"
-#include "steam.h"
-#include "steamui.h"
 #include "version.h"
 
 #include <SDL3/SDL.h>
@@ -42,79 +32,7 @@ static void usage(void)
          "       fusebox-cli setart <game name or id> <type> <image file, address or id from listart>\n"
          "       fusebox-cli listart <game name or id> <type> [--animated]\n"
          "       fusebox-cli list\n"
-         "       fusebox-cli library\n"
-         "       fusebox-cli version\n"
-         "       fusebox-cli scan\n"
-         "       fusebox-cli steam\n");
-}
-
-/* A dry run of the window's scan, to see what it finds and why. */
-static void scan(void)
-{
-   Uint64 start = SDL_GetTicks();
-   int launchers, disks, roms, i;
-
-   library_scan_begin();
-   launchers = scan_launchers();
-   disk_keep_added();
-   disks = scan_disks(1);
-   roms = scan_roms();
-   library_scan_end(false);
-   library_lock();
-   printf("emulators: %s\n", roms_emulators()[0] ? roms_emulators() : "none");
-   for (i = 0; i < roms_folder_count(); i++)
-      printf("ROM folder: %s\n", roms_folder(i)->path);
-   for (i = 0; i < library_count(); i++)
-   {
-      const struct game *g = library_game(i);
-      if (!g->installed || !g->rom[0])
-         continue;
-      printf("%s: %s: ", g->source, g->name);
-      if (g->no_emulator)
-         printf("no emulator (%s)\n", g->rom);
-      else
-         printf("\"%s\" %s\n", g->exe, g->args);
-   }
-   if (roms_unknown())
-      printf("%d files of no known system\n", roms_unknown());
-   library_unlock();
-   printf("%d from launchers, %d on disk, %d ROMs, in %llu ms\n", launchers, disks, roms,
-         (unsigned long long)(SDL_GetTicks() - start));
-   library_discard();
-}
-
-/* For a computer that can't be looked at. While a game runs. */
-static void steam(const char *config)
-{
-   static char text[16384];
-   char dir[1024];
-   int i;
-
-   ra_init(config);
-   steam_read_settings(config);
-   steam_init();
-   steam_config(dir, sizeof(dir));
-   printf("FuseBox %s\n", FUSEBOX_VERSION);
-   printf("Steam: %s, %s\n", dir[0] ? dir : "not found",
-         steam_install() && platform_steam_running(steam_install()) ? "runs" : "doesn't run");
-   printf("content in Steam's menus: %s, auto start: %s\n", steam_menus() ? "on" : "off",
-         steam_autostart() ? "on" : "off");
-   platform_fuseboxes(text, sizeof(text));
-   printf("running FuseBoxes:\n%s", text[0] ? text : "none\n");
-   printf("a game runs: %s\n", lan_any(config) ? "yes" : "no");
-   lan_read_once(config);
-   library_lock();
-   for (i = 0; i < library_count(); i++)
-   {
-      const struct game *g = library_game(i);
-
-      if (lan_app(g) && SDL_strcmp(g->source, "Steam") != 0)
-         printf("%u: %s (the library says %u)\n", (unsigned)lan_app(g), g->name,
-               (unsigned)g->steam_appid);
-   }
-   library_unlock();
-   steamui_state(text, sizeof(text), NULL);
-   printf("%s\n", text);
+         "       fusebox-cli version\n");
 }
 
 static bool has_key(void)
@@ -386,7 +304,6 @@ int main(int argc, char **argv)
    }
    SDL_snprintf(config, sizeof(config), "%sconfig", data);
    sgdb_init(config);
-   roms_init(config);
 
    if (argc >= 4 && SDL_strcmp(argv[1], "art") == 0)
       code = art(argv[2], argv[3], !(argc >= 5 && SDL_strcmp(argv[4], "--no-fetch") == 0));
@@ -397,15 +314,6 @@ int main(int argc, char **argv)
       code = list_art(argv[2], argv[3], argc == 5);
    else if (argc == 2 && SDL_strcmp(argv[1], "list") == 0)
       list();
-   else if (argc == 2 && SDL_strcmp(argv[1], "library") == 0)
-      printf("%slibrary.json\n", data);
-   else if (argc == 2 && SDL_strcmp(argv[1], "scan") == 0)
-      scan();
-   else if (argc == 2 && SDL_strcmp(argv[1], "steam") == 0)
-   {
-      steam(config);
-      library_discard();
-   }
    else
    {
       usage();

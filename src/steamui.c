@@ -730,18 +730,6 @@ void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort)
       evaluate(url, script, result, sizeof(result), abort);
 }
 
-void steamui_state(char *dst, size_t size, SDL_AtomicInt *abort)
-{
-   char url[512];
-
-   if (!find_target(url, sizeof(url), abort))
-      SDL_strlcpy(dst, "Steam's port: not open", size);
-   else if (!evaluate(url, "!window.__fusebox ? 'Steam\\'s page: without FuseBox\\'s script' : __fusebox.state"
-            " ? __fusebox.state() : 'Steam\\'s page: another version\\'s script, ' + __fusebox.version",
-            dst, size, abort) || !dst[0])
-      SDL_strlcpy(dst, "Steam's page: no answer", size);
-}
-
 void steamui_clear(SDL_AtomicInt *abort)
 {
    char url[512], result[64];

@@ -201,7 +201,6 @@ static struct
    struct rom_option *options;
    int option_count;
    int unknown;
-   char found[512];
 } cfg;
 
 /* ---- Small helpers ------------------------------------------------------ */
@@ -595,11 +594,6 @@ void roms_choose(struct game *g, const struct rom_option *option)
    SDL_strlcpy(g->emulator, option->exe, sizeof(g->emulator));
    SDL_strlcpy(g->core, option->core, sizeof(g->core));
    library_changed();
-}
-
-const char *roms_emulators(void)
-{
-   return cfg.found;
 }
 
 /* ---- Emulators ---------------------------------------------------------- */
@@ -1763,15 +1757,6 @@ int scan_roms(void)
    cfg.options = sc.options;
    cfg.option_count = sc.option_count;
    cfg.unknown = sc.unknown;
-   cfg.found[0] = '\0';
-   for (n = 0; n < EMULATORS; n++)
-      for (i = 0; i < sc.emulator_count; i++)
-         if (sc.emulators[i].emulator == n)
-         {
-            SDL_strlcat(cfg.found, cfg.found[0] ? ", " : "", sizeof(cfg.found));
-            SDL_strlcat(cfg.found, emulators[n].name, sizeof(cfg.found));
-            break;
-         }
    library_unlock();
    n = sc.rom_count;
    SDL_free(sc.roms);

@@ -15,7 +15,6 @@
 #define WINVER 0x0A00
 #include <windows.h>
 #include <dwmapi.h>
-#include <psapi.h>
 #include <shellapi.h>
 #include <userenv.h>
 #include <wchar.h>
@@ -519,41 +518,6 @@ void platform_steam_start(const struct steam_install *steam, int port)
 {
    run(steam, false, port);
 }
-
-#ifdef _WIN32
-void platform_fuseboxes(char *dst, size_t size)
-{
-   static DWORD pids[8192];
-   DWORD bytes = 0, i;
-
-   dst[0] = '\0';
-   if (!K32EnumProcesses(pids, sizeof(pids), &bytes))
-      return;
-   for (i = 0; i < bytes / sizeof(pids[0]); i++)
-   {
-      HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pids[i]);
-      WCHAR exe[1024];
-      DWORD count = SDL_arraysize(exe);
-      char path[1024];
-
-      if (!p)
-         continue;
-      if (QueryFullProcessImageNameW(p, 0, exe, &count) && count >= 12
-            && _wcsicmp(exe + count - 12, L"\\fusebox.exe") == 0)
-      {
-         narrow(exe, path, sizeof(path));
-         SDL_strlcat(dst, path, size);
-         SDL_strlcat(dst, "\n", size);
-      }
-      CloseHandle(p);
-   }
-}
-#else
-void platform_fuseboxes(char *dst, size_t size)
-{
-   dst[0] = '\0';
-}
-#endif
 
 /* --- Without a window (background.h) --- */
 
