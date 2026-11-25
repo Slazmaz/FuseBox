@@ -6,9 +6,9 @@
  *      next ask is instant and the window shows it. Exit 1: none found.
  *   fusebox-cli setart <game name or id> <type> <image>
  *      Makes it the game's art, as if picked in the window, and prints its
- *      path: a file, an address, or the id of one of the choices. Steam gets
+ *      path: a file, an address, or an id from listart. Steam gets
  *      it through the window. Exit 1: not done.
- *   fusebox-cli choices <game name or id> <type> [--animated]
+ *   fusebox-cli listart <game name or id> <type> [--animated]
  *      SteamGridDB's art for it, most popular first: id, size, kind and
  *      address, tab separated.
  *   fusebox-cli list           id, name and each art path, tab separated
@@ -39,8 +39,8 @@ static void usage(void)
 {
    fprintf(stderr,
          "usage: fusebox-cli art <game name or id> <cover|wide|hero|logo|icon> [--no-fetch]\n"
-         "       fusebox-cli setart <game name or id> <type> <image file, address or choice's id>\n"
-         "       fusebox-cli choices <game name or id> <type> [--animated]\n"
+         "       fusebox-cli setart <game name or id> <type> <image file, address or id from listart>\n"
+         "       fusebox-cli listart <game name or id> <type> [--animated]\n"
          "       fusebox-cli list\n"
          "       fusebox-cli library\n"
          "       fusebox-cli version\n"
@@ -199,7 +199,7 @@ static unsigned sgdb_game(const char *name)
    return id;
 }
 
-static int choices(const char *name, const char *type_name, bool animated)
+static int list_art(const char *name, const char *type_name, bool animated)
 {
    enum art_type type = art_from_name(type_name);
    struct sgdb_art *arts = NULL;
@@ -247,8 +247,8 @@ static const char *image_ext(const char *path)
    return SDL_memcmp(head, "RIFF", 4) == 0 && SDL_memcmp(head + 8, "WEBP", 4) == 0 ? "webp" : NULL;
 }
 
-/* The address of the one of SteamGridDB's choices for the game with that id. */
-static bool find_choice(const char *name, enum art_type type, unsigned id, char *url, size_t size)
+/* The address of SteamGridDB's art for the game with that id. */
+static bool find_art(const char *name, enum art_type type, unsigned id, char *url, size_t size)
 {
    unsigned game = sgdb_game(name);
    bool found = false;
@@ -296,7 +296,7 @@ static int set_art(const char *data, const char *name, const char *type_name, co
       chosen = (unsigned)SDL_strtoul(image, NULL, 10);
       if (!has_key())
          return 1;
-      if (!find_choice(id, type, chosen, url, sizeof(url)))
+      if (!find_art(id, type, chosen, url, sizeof(url)))
       {
          fprintf(stderr, "no such %s on SteamGridDB for this game: %s\n", art_names[type], image);
          return 1;
@@ -393,8 +393,8 @@ int main(int argc, char **argv)
    else if (argc == 5 && SDL_strcmp(argv[1], "setart") == 0)
       code = set_art(data, argv[2], argv[3], argv[4]);
    else if ((argc == 4 || (argc == 5 && SDL_strcmp(argv[4], "--animated") == 0))
-         && SDL_strcmp(argv[1], "choices") == 0)
-      code = choices(argv[2], argv[3], argc == 5);
+         && SDL_strcmp(argv[1], "listart") == 0)
+      code = list_art(argv[2], argv[3], argc == 5);
    else if (argc == 2 && SDL_strcmp(argv[1], "list") == 0)
       list();
    else if (argc == 2 && SDL_strcmp(argv[1], "library") == 0)
