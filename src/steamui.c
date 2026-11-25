@@ -659,6 +659,29 @@ bool steamui_art(Uint32 id, SDL_AtomicInt *abort)
    return found;
 }
 
+bool steamui_unlocks(Uint32 appid, SDL_AtomicInt *abort)
+{
+   char url[512], result[64], *script = NULL, *unlocks;
+   unsigned id = 0;
+   bool ok = false;
+   int i;
+
+   library_lock();
+   for (i = 0; i < library_count() && !id; i++)
+      if (lan_app(library_game(i)) == appid)
+         id = library_game(i)->ra_id;
+   library_unlock();
+   if (!id || !(unlocks = ra_unlocks(id, abort)))
+      return false;
+   if (SDL_asprintf(&script, "window.__fusebox && __fusebox.unlocked ? __fusebox.unlocked(%u,%s) : ''",
+            (unsigned)appid, unlocks) > 0)
+      ok = find_target(url, sizeof(url), abort)
+         && evaluate(url, script, result, sizeof(result), abort) && result[0];
+   SDL_free(script);
+   SDL_free(unlocks);
+   return ok;
+}
+
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort)
 {
    SDL_IOStream *io = SDL_IOFromDynamicMem();

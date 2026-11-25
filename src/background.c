@@ -229,6 +229,8 @@ static int SDLCALL take_clicks(void *user)
             flag = "--open";
          else if (SDL_sscanf(what, "art %llu", &a) == 1)
             flag = "--art";
+         else if (SDL_sscanf(what, "unlocks %llu", &a) == 1)
+            flag = "--unlocks";
          else
             continue;
          if (a > 0xFFFFFFFFu)
@@ -307,6 +309,22 @@ int background_art(const char *data_dir, const char *config_dir, const char *id)
    if (!steam_menus() || !library_init(data_dir))
       return 1;
    ok = steamui_art((Uint32)SDL_strtoul(id, NULL, 10), NULL);
+   library_discard();
+   library_quit();
+   return ok ? 0 : 1;
+}
+
+int background_unlocks(const char *data_dir, const char *config_dir, const char *appid)
+{
+   Uint32 id = (Uint32)SDL_strtoul(appid, NULL, 10);
+   bool ok;
+
+   ra_init(config_dir);
+   steam_read_settings(config_dir);
+   if (!id || !steam_menus() || !ra_active() || !library_init(data_dir))
+      return 1;
+   lan_read_once(config_dir);
+   ok = steamui_unlocks(id, NULL);
    library_discard();
    library_quit();
    return ok ? 0 : 1;

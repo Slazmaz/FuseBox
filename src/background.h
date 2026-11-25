@@ -31,4 +31,8 @@ int background_open(const char *data_dir, const char *config_dir, const char *ap
  * (steamui_art). */
 int background_art(const char *data_dir, const char *config_dir, const char *id);
 
+/* fusebox --unlocks <app id>: which achievements of the game whose shortcut that
+ * is the user has, to Steam (steamui_unlocks). */
+int background_unlocks(const char *data_dir, const char *config_dir, const char *appid);
+
 #endif

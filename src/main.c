@@ -3899,6 +3899,15 @@ int main(int argc, char **argv)
       SDL_Quit();
       return code;
    }
+   if (argc == 3 && SDL_strcmp(argv[1], "--unlocks") == 0)
+   {
+      int code;
+      SDL_SetLogPriorities(SDL_LOG_PRIORITY_CRITICAL);
+      code = base ? background_unlocks(base, config, argv[2]) : 1;
+      http_quit();
+      SDL_Quit();
+      return code;
+   }
    if (argc == 2 && SDL_strcmp(argv[1], "--session") == 0)
    {
       int code;

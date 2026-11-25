@@ -2,7 +2,7 @@
 #define FUSEBOX_STEAMUI_JS_H
 
 /* Counted up with each change to the script: an older one is replaced. */
-#define STEAMUI_VERSION "38"
+#define STEAMUI_VERSION "39"
 
 /* Run in Steam's SharedJSContext. Returns "ready", "wait" (Steam is still
  * starting) or "unsupported".
@@ -52,6 +52,11 @@
  * name, a word on that, and no pictures. One that came with the message is
  * over when the friend plays nothing any more, not when it isn't Spacewar.
  *
+ * The overlay has a button for achievements, not for shortcuts: its entry among
+ * the overlay's is changed. What's behind it (and Big Picture's item) asks the
+ * game's details how many there are: they're answered for here. Opened while a
+ * game runs, what was unlocked since is asked for like a click.
+ *
  * Friends' achievements go in the achievements' section, under its link, and
  * leaderboards after it, a section made of Steam's parts: like the button.
  * Modules are
@@ -67,7 +72,7 @@
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
-   "   let react, hover, steamCard, css, strips, bar, jsx, column, Section, Body;\n" \
+   "   let react, hover, steamCard, css, strips, bar, jsx, column, Section, Body, entry;\n" \
    "   webpackChunksteamui.push([[Symbol('fusebox')], {}, r => { req = r; }]);\n" \
    "   if (!req || !req.m) return 'unsupported';\n" \
    "   const pick = (id, test) => {\n" \
@@ -113,6 +118,11 @@
    "            Section = pick(id, x => typeof x === 'object' && x.$$typeof);\n" \
    "            Body = pick(id, x => typeof x === 'function' && String(x).includes('.BodyGutter'));\n" \
    "         }\n" \
+   "         /* The overlay's button: the same entry each time it's asked for. */\n" \
+   "         if (!entry && src.includes('#AppOverlay_Toolbar_Achievements')) {\n" \
+   "            const of = pick(id, x => typeof x === 'function' && x('Achievements').buttonVisible), x = of && of('Achievements');\n" \
+   "            if (x && of('Achievements') === x) entry = x;\n" \
+   "         }\n" \
    "         if (!jsx && /\\.jsxs=/.test(src)) {\n" \
    "            const x = req(id);\n" \
    "            if (x.jsx && x.jsxs) jsx = x;\n" \
@@ -143,6 +153,36 @@
    "      }\n" \
    "      return more;\n" \
    "   };\n" \
+   "   /* The overlay. Details are made anew when Steam changes them, so what's\n" \
+   "      answered instead is kept by them, and by the achievements it's of. */\n" \
+   "   const counts = new WeakMap(), facts = window.appDetailsStore, buttonWas = entry && entry.buttonVisible;\n" \
+   "   const counted = (app, details) => {\n" \
+   "      const list = games.get(app), kept = details && counts.get(details);\n" \
+   "      if (!details || !list) return details;\n" \
+   "      if (kept && kept.list === list) return kept.told;\n" \
+   "      const achievements = { vecHighlight: [], vecUnachieved: [], vecAchievedHidden: [], nTotal: list.length,\n" \
+   "         nAchieved: list.filter(a => a[5]).length };\n" \
+   "      const told = new Proxy(details, { get: (o, key) => key === 'achievements' ? achievements : Reflect.get(o, key) });\n" \
+   "      counts.set(details, { list, told });\n" \
+   "      return told;\n" \
+   "   };\n" \
+   "   /* What's drawn from them looks again: an overlay may be there already. */\n" \
+   "   const recount = app => {\n" \
+   "      try {\n" \
+   "         const data = facts.m_mapAppData.get(app);\n" \
+   "         if (data && data.details) data.details = Object.assign({}, data.details);\n" \
+   "      } catch (e) { }\n" \
+   "   };\n" \
+   "   const overlay = !!(entry && facts && facts.GetAppDetails && facts.GetAchievements);\n" \
+   "   if (overlay) {\n" \
+   "      const { GetAppDetails, GetAchievements } = facts;\n" \
+   "      facts.GetAppDetails = function(app) { return counted(app, GetAppDetails.apply(this, arguments)); };\n" \
+   "      facts.GetAchievements = function(app) {\n" \
+   "         const details = games.has(app) && this.GetAppDetails(app);\n" \
+   "         return details ? details.achievements : GetAchievements.apply(this, arguments);\n" \
+   "      };\n" \
+   "      entry.buttonVisible = function(o) { return !!(o && games.has(o.appid)) || buttonWas.apply(this, arguments); };\n" \
+   "   }\n" \
    "   const names = app => [['achievements', app, 'schema'], ['achievements', app, 'globalpercentages'],\n" \
    "      ['achievements', app, 'user_achievements', me]];\n" \
    "   /* Friends: by name, and by the number they go by here; each game's. */\n" \
@@ -312,6 +352,7 @@
    "   };\n" \
    "   const drop = app => {\n" \
    "      games.delete(app);\n" \
+   "      if (overlay) recount(app);\n" \
    "      players.delete(app);\n" \
    "      if (boards.delete(app)) redraw();\n" \
    "      mark(app);\n" \
@@ -319,6 +360,8 @@
    "      names(app).forEach(queryKey => cache.removeQueries({ queryKey }));\n" \
    "      cache.removeQueries({ queryKey: names(app)[2].slice(0, 3) });\n" \
    "   };\n" \
+   "   /* Unlocked while it was looked: about then, until it's known better. */\n" \
+   "   const lately = new Map();\n" \
    "   const put = (app, list) => {\n" \
    "      const at = { updatedAt: Date.now() + 10 * 365 * 864e5 };\n" \
    "      const badge = 'https://media.retroachievements.org/Badge/';\n" \
@@ -335,7 +378,7 @@
    "      cache.setQueryData(key[1], { percentages: Object.fromEntries(list.map(a => [a[0], a[4]])) }, at);\n" \
    "      cache.setQueryData(key[2], { appid: app, steamid: me, schema_hash: 1,\n" \
    "         achievements: Object.fromEntries(got.map(a => [a[0], { internal_key: a[0], unlocked: true,\n" \
-   "            unlock_time: when.get(a[0]) || 0 }])),\n" \
+   "            unlock_time: when.get(a[0]) || lately.get(a[0]) || 0 }])),\n" \
    "         groups: { 0: { groupid: 0, is_achievable: true, completed_achievements: got.length,\n" \
    "            is_completed: got.length === list.length } } }, at);\n" \
    "   };\n" \
@@ -581,6 +624,16 @@
    "      } catch (e) { }\n" \
    "      return ids;\n" \
    "   };\n" \
+   "   /* Opened over a game: what was unlocked by now. */\n" \
+   "   const looks = new Map();\n" \
+   "   const look = (pid, app, active) => {\n" \
+   "      const of = games.has(app) ? app : running().find(a => games.has(a));\n" \
+   "      if (!active || !of || !heard || Date.now() - (looks.get(of) || 0) < 15000) return;\n" \
+   "      looks.set(of, Date.now());\n" \
+   "      send('unlocks ' + of);\n" \
+   "   };\n" \
+   "   let opened;\n" \
+   "   try { opened = overlay && SteamClient.Overlay.RegisterForOverlayActivated(look); } catch (e) { }\n" \
    "   const lanGame = () => running().find(app => lanGames.has(app)) || 0;\n" \
    "   /* Friends see a game of Steam's: inviting is to that one. */\n" \
    "   const steamGame = () => ![0, SPACEWAR].includes(ui.FriendStore.self.persona.m_unGamePlayedAppID || 0);\n" \
@@ -1008,10 +1061,22 @@
    "         return 'ok';\n" \
    "      },\n" \
    "      set(app, list) {\n" \
-   "         const first = !games.has(app);\n" \
+   "         const first = !games.has(app), count = first ? 0 : games.get(app).length;\n" \
    "         games.set(app, list);\n" \
    "         put(app, list);\n" \
    "         if (first) mark(app);\n" \
+   "         if (overlay && count !== list.length) recount(app);\n" \
+   "         return 'ok';\n" \
+   "      },\n" \
+   "      /* Those the user has by now, of the ones that were given. */\n" \
+   "      unlocked(app, ids) {\n" \
+   "         const list = games.get(app), fresh = (list || []).filter(a => !a[5] && ids.includes(a[0]));\n" \
+   "         if (!fresh.length) return 'ok';\n" \
+   "         fresh.forEach(a => {\n" \
+   "            a[5] = 1;\n" \
+   "            lately.set(a[0], Math.floor(Date.now() / 1000));\n" \
+   "         });\n" \
+   "         put(app, list);\n" \
    "         return 'ok';\n" \
    "      },\n" \
    "      whole() {\n" \
@@ -1025,6 +1090,12 @@
    "      },\n" \
    "      undo() {\n" \
    "         stop();\n" \
+   "         if (opened) opened.unregister();\n" \
+   "         if (overlay) {\n" \
+   "            entry.buttonVisible = buttonWas;\n" \
+   "            delete facts.GetAppDetails;\n" \
+   "            delete facts.GetAchievements;\n" \
+   "         }\n" \
    "         later.forEach(clearTimeout);\n" \
    "         undoFriends();\n" \
    "         undoLan.reverse().forEach(f => { try { f(); } catch (e) { } });\n" \

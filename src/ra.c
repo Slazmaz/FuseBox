@@ -507,6 +507,35 @@ static bool is_unlocked(const struct json *unlocks, unsigned id)
    return false;
 }
 
+char *ra_unlocks(unsigned id, SDL_AtomicInt *abort)
+{
+   char request[64], *list = NULL;
+   struct json *root, *unlocks, *o;
+   SDL_IOStream *io;
+   bool first = true;
+
+   SDL_snprintf(request, sizeof(request), "unlocks&g=%u&h=0", id);
+   if (!(root = ask(request, abort)))
+      return NULL;
+   if ((unlocks = json_get(root, "UserUnlocks")) && (io = SDL_IOFromDynamicMem()))
+   {
+      SDL_WriteU8(io, '[');
+      for (o = unlocks->child; o; o = o->next)
+         if (o->type == JSON_NUMBER)
+         {
+            SDL_IOprintf(io, "%s%u", first ? "" : ",", (unsigned)o->num);
+            first = false;
+         }
+      SDL_WriteU8(io, ']');
+      SDL_WriteU8(io, '\0');
+      list = SDL_strdup(SDL_GetPointerProperty(SDL_GetIOProperties(io),
+               SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, ""));
+      SDL_CloseIO(io);
+   }
+   json_free(root);
+   return list;
+}
+
 char *ra_list(unsigned id, unsigned total, unsigned unlocked, SDL_AtomicInt *abort)
 {
    char path[1100], request[64], user[128], *list;

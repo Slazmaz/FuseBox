@@ -38,7 +38,7 @@ enum steamui steamui_push(bool only_friends, int *games, SDL_AtomicInt *abort);
 /* Waits some seconds for a click on what's there only while this is called:
  * "open <app id>" (the button for a game's emulator or launcher), "invite <app
  * id> <friend's Steam id>" or "join <lobby> <host's Steam id>" (session.h); or
- * what's missing there (steamui_art).
+ * what's missing there (steamui_art), or "unlocks <app id>" (steamui_unlocks).
  * False for none; at once when Steam has no port or nothing to click. */
 bool steamui_asked(char *what, size_t size, SDL_AtomicInt *abort);
 /* Has Steam run a game: by the shortcut it has, or by one that's there only
@@ -61,6 +61,9 @@ bool steamui_take_out(Uint32 appid, SDL_AtomicInt *abort);
 /* Gives Steam the pictures of a game that isn't in Steam, for an invite to it:
  * "art <id>", which steamui_asked also tells of. */
 bool steamui_art(Uint32 id, SDL_AtomicInt *abort);
+/* Gives Steam which of the achievements it shows of that shortcut's game the user
+ * has by now: "unlocks <app id>", told of when the overlay is opened. */
+bool steamui_unlocks(Uint32 appid, SDL_AtomicInt *abort);
 /* Sends the friend a chat message: invited to that game. */
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort);
 /* Has Steam join a lobby after all that steamui_asked told of. */
