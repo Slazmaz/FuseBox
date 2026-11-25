@@ -2,7 +2,7 @@
 #define FUSEBOX_STEAMUI_JS_H
 
 /* Counted up with each change to the script: an older one is replaced. */
-#define STEAMUI_VERSION "39"
+#define STEAMUI_VERSION "40"
 
 /* Run in Steam's SharedJSContext. Returns "ready", "wait" (Steam is still
  * starting) or "unsupported".
@@ -606,6 +606,7 @@
    "            if (Body && list && list.type === Body && top && top.props && top.props.summary && given.has(top.props.appid))\n" \
    "               props = { ...props, children: [top, list, e(Progress, { key: 'fusebox', app: top.props.appid })] };\n" \
    "         }\n" \
+   "         [type, props] = stamped(type, props);\n" \
    "         return jsxs.call(this, type, props, ...more);\n" \
    "      };\n" \
    "   }\n" \
@@ -787,13 +788,8 @@
    "      const invite = props && props.gameInvite, friend = props && props.inviter;\n" \
    "      if (fromFusebox(invite) && friend && ui && friend !== ui.FriendStore.self && friend.persona && friend.persona.is_ingame)\n" \
    "         return [type, { ...props, inviter: hostOf(friend, invite.appID) }];\n" \
-   "      /* An invite's picture is made right before its name: the name alone may be\n" \
-   "         one of Steam's games' too. */\n" \
+   "      /* An invite's picture is made right before the rest of it. */\n" \
    "      if (props && typeof props.strClassNames === 'string' && 'appID' in props) drawn = props.appID;\n" \
-   "      /* The game's name on it, and what it's with, small. */\n" \
-   "      if (type === 'div' && props && props.className === 'productName' && (drawn >= ABSENT || lanGames.has(drawn)))\n" \
-   "         return [type, { ...props, children: react.createElement(react.Fragment, null, props.children,\n" \
-   "            react.createElement('span', { style: { marginLeft: '8px', fontSize: '11px', opacity: 0.5 } }, 'FuseBox')) }];\n" \
    "      if (props && typeof props.strClassNames === 'string' && (props.appID >= ABSENT || lanGames.has(props.appID))) {\n" \
    "         const src = props.appID >= ABSENT && !otherNames(props.appID) ? '' : wide(props.appID);\n" \
    "         if (src) return ['img', { src, className: props.strClassNames }];\n" \
@@ -801,6 +797,15 @@
    "         if (props.appID >= ABSENT) return ['div', { className: props.strClassNames, style: { display: 'none' } }];\n" \
    "      }\n" \
    "      return [type, props];\n" \
+   "   };\n" \
+   "   /* When it was sent is in its bottom right corner: what it's with, like that in\n" \
+   "      the left one, over the picture's blur. */\n" \
+   "   const stamped = (type, props) => {\n" \
+   "      if (type !== 'div' || !props || props.className !== 'invitedTimeLabel'\n" \
+   "            || !(drawn >= ABSENT || lanGames.has(drawn))) return [type, props];\n" \
+   "      const style = { insetInlineEnd: 'auto', insetInlineStart: '8px', textAlign: 'start', color: 'rgba(255, 255, 255, 0.4)' };\n" \
+   "      return [react.Fragment, { children: [react.createElement(type, { key: 'time', ...props }),\n" \
+   "         react.createElement(type, { key: 'fusebox', className: props.className, style }, 'FuseBox')] }];\n" \
    "   };\n" \
    "   let fresh = { app: 0, until: 0 };\n" \
    "   /* The app whose invite is being drawn. */\n" \
