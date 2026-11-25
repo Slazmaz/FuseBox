@@ -720,6 +720,26 @@ void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort)
    SDL_CloseIO(io);
 }
 
+void steamui_party(const struct steamui_party *p, SDL_AtomicInt *abort)
+{
+   static const char *const states[] = { "invited", "connecting", "connected" };
+   SDL_IOStream *io = SDL_IOFromDynamicMem();
+   char result[64];
+   int i;
+
+   if (!io)
+      return;
+   SDL_IOprintf(io, "window.__fusebox && __fusebox.party ? __fusebox.party('%llu',",
+         (unsigned long long)p->lobby);
+   json_write_string(io, p->name);
+   SDL_IOprintf(io, ",[");
+   for (i = 0; i < p->count; i++)
+      SDL_IOprintf(io, "%s['%llu','%s']", i ? "," : "", (unsigned long long)p->ids[i],
+            states[p->states[i]]);
+   SDL_IOprintf(io, "]) : ''");
+   run_script(io, result, sizeof(result), abort);
+}
+
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort)
 {
    char url[512], script[200], result[64];

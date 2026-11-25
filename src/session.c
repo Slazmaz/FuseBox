@@ -44,6 +44,8 @@
 #define UNCOUNTED_MS 60000
 #define HELLO_MS 2000
 #define KEEP_MS 10000
+/* Steam is told again who is there this often (steamui_party). */
+#define TELL_MS 20000
 
 enum state
 {
@@ -74,6 +76,9 @@ static struct
       Uint64 who, told;
    } invites[MEMBERS];
    int invite_count;
+   /* Those who were sent one and didn't come (yet). */
+   Uint64 invited[STEAMUI_PLAYERS - MEMBERS];
+   int invited_count;
    Uint64 members[MEMBERS];
    int member_count;
    bool had_guests;
@@ -167,6 +172,105 @@ static void say(const char *text)
       SDL_DetachThread(thread);
    else
       SDL_AddAtomicInt(&messages, -1);
+}
+
+/* What Steam is to show of who is there. By a thread of its own: the games'
+ * packets can't wait for it. */
+static struct
+{
+   SDL_Mutex *lock;
+   SDL_Condition *changed;
+   SDL_Thread *thread;
+   struct steamui_party party;
+   bool news, ended;
+} shown;
+
+static int SDLCALL tell_steam(void *user)
+{
+   SDL_LockMutex(shown.lock);
+   for (;;)
+   {
+      struct steamui_party p;
+
+      if (!shown.news && !shown.ended)
+         SDL_WaitConditionTimeout(shown.changed, shown.lock, TELL_MS);
+      if (!shown.news && shown.ended)
+         break;
+      if (!shown.news && !shown.party.lobby)
+         continue;
+      p = shown.party;
+      shown.news = false;
+      SDL_UnlockMutex(shown.lock);
+      steamui_party(&p, NULL);
+      SDL_LockMutex(shown.lock);
+   }
+   SDL_UnlockMutex(shown.lock);
+   return 0;
+}
+
+static void start_telling(void)
+{
+   shown.lock = SDL_CreateMutex();
+   shown.changed = SDL_CreateCondition();
+   if (shown.lock && shown.changed)
+      shown.thread = SDL_CreateThread(tell_steam, "steam", NULL);
+}
+
+/* Once it was told of the last. */
+static void end_telling(void)
+{
+   if (!shown.thread)
+      return;
+   SDL_LockMutex(shown.lock);
+   shown.ended = true;
+   SDL_SignalCondition(shown.changed);
+   SDL_UnlockMutex(shown.lock);
+   SDL_WaitThread(shown.thread, NULL);
+   shown.thread = NULL;
+}
+
+/* As they are now. */
+static void show_party(void)
+{
+   struct steamui_party p;
+   int i, k;
+
+   if (!shown.thread)
+      return;
+   /* Compared as it is in memory. */
+   SDL_memset(&p, 0, sizeof(p));
+   if (ses.state == HOSTING || ses.state == JOINED)
+   {
+      p.lobby = ses.lobby;
+      SDL_strlcpy(p.name, ses.name, sizeof(p.name));
+      for (i = 0; i < ses.member_count; i++)
+      {
+         p.ids[p.count] = ses.members[i];
+         p.states[p.count++] = steamnet_connected(ses.members[i]) ? STEAMUI_CONNECTED
+            : STEAMUI_CONNECTING;
+      }
+      for (i = 0; i < ses.invited_count; i++)
+      {
+         for (k = 0; k < ses.member_count && ses.members[k] != ses.invited[i]; k++)
+            ;
+         /* Came: who leaves then isn't invited any more. */
+         if (k < ses.member_count)
+         {
+            ses.invited[i--] = ses.invited[--ses.invited_count];
+            continue;
+         }
+         p.ids[p.count] = ses.invited[i];
+         p.states[p.count++] = STEAMUI_INVITED;
+      }
+   }
+   SDL_LockMutex(shown.lock);
+   if (SDL_memcmp(&p, &shown.party, sizeof(p)) != 0)
+   {
+      shown.party = p;
+      shown.news = true;
+      SDL_SignalCondition(shown.changed);
+   }
+   SDL_UnlockMutex(shown.lock);
 }
 
 static void set_state(enum state state)
@@ -284,9 +388,10 @@ static void end_session(const char *why)
    ses.lobby = ses.host = 0;
    ses.appid = ses.game = 0;
    ses.started = ses.had_guests = false;
-   ses.invite_count = ses.member_count = ses.port_count = 0;
+   ses.invite_count = ses.invited_count = ses.member_count = ses.port_count = 0;
    ses.ports_text[0] = ses.name[0] = ses.path[0] = '\0';
    set_state(IDLE);
+   show_party();
 }
 
 static void take(Uint64 from, int channel, const void *data, int size)
@@ -601,6 +706,17 @@ static void invite(Uint32 appid, Uint64 who)
    ses.alone_since = SDL_GetTicks();
 }
 
+static void was_invited(Uint64 who)
+{
+   int i;
+
+   for (i = 0; i < ses.invited_count; i++)
+      if (ses.invited[i] == who)
+         return;
+   if (ses.invited_count < (int)SDL_arraysize(ses.invited))
+      ses.invited[ses.invited_count++] = who;
+}
+
 /* Sends those that wait. */
 static void send_invites(void)
 {
@@ -618,8 +734,11 @@ static void send_invites(void)
       }
       else if (now - ses.invites[i].told >= SAID_MS)
       {
-         SDL_Log("Inviting %s: %s", steamnet_name(ses.invites[i].who),
-               steamnet_invite(ses.lobby, ses.invites[i].who) ? "sent" : "refused");
+         bool sent = steamnet_invite(ses.lobby, ses.invites[i].who);
+
+         SDL_Log("Inviting %s: %s", steamnet_name(ses.invites[i].who), sent ? "sent" : "refused");
+         if (sent)
+            was_invited(ses.invites[i].who);
          SDL_memmove(&ses.invites[i], &ses.invites[i + 1],
                sizeof(ses.invites[0]) * (size_t)(--ses.invite_count - i));
          i--;
@@ -807,6 +926,7 @@ static bool look(void)
             ses.game = lan_game(ses.config_dir, ses.appid, "");
          look_at_members();
          look_at_links();
+         show_party();
          number_players();
          /* Not now: that's before what look_at_members just set it to. */
          if (SDL_GetTicks() - ses.alone_since > (ses.had_guests ? LEFT_MS : ALONE_MS))
@@ -841,6 +961,7 @@ static bool look(void)
          read_host_ports();
          if (!ses.started)
             start_game();
+         show_party();
          if (ses.game && !lan_running(ses.game))
          {
             end_session("the game ended");
@@ -892,6 +1013,7 @@ int session_run(const char *data_dir, const char *config_dir)
       return 1;
    }
    SDL_DetachThread(SDL_CreateThread(read_input, "input", NULL));
+   start_telling();
    /* Until something is asked for, then until that's over. */
    next = SDL_GetTicks() + ANSWER_MS;
    while (going)
@@ -934,6 +1056,7 @@ int session_run(const char *data_dir, const char *config_dir)
          SDL_Delay(20);
    }
    end_session("the end");
+   end_telling();
    inject_end();
    steamnet_close();
    SDL_CloseIO(log_file);

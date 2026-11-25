@@ -2,7 +2,7 @@
 #define FUSEBOX_STEAMUI_JS_H
 
 /* Counted up with each change to the script: an older one is replaced. */
-#define STEAMUI_VERSION "41"
+#define STEAMUI_VERSION "45"
 
 /* Run in Steam's SharedJSContext. Returns "ready", "wait" (Steam is still
  * starting) or "unsupported".
@@ -51,6 +51,10 @@
  * pictures from FuseBox, asked for like a click; one that isn't here either its
  * name, a word on that, and no pictures. One that came with the message is
  * over when the friend plays nothing any more, not when it isn't Spacewar.
+ *
+ * Who is there while playing with friends (party) is a group on top of the
+ * friends' list, the overlay's too, of Steam's own rows: their type is kept as
+ * one is made. It's given again and again: over if it isn't.
  *
  * The overlay has a button for achievements, not for shortcuts: its entry among
  * the overlay's is changed. What's behind it (and Big Picture's item) asks the
@@ -470,6 +474,10 @@
    "   /* The buttons: each game's program's name, those drawn, and clicks. */\n" \
    "   const opens = new Map(), buttons = new Set(), clicks = [], boards = new Map();\n" \
    "   let heard = false, deaf, wake, jsxs, mine, plain, pictured, clicked = 0;\n" \
+   "   /* Playing with friends, as it's shown: none for not. */\n" \
+   "   let party = null, partyOver, Row;\n" \
+   "   const STATES = { invited: ['Invited', '#8b929a'],\n" \
+   "      connecting: ['Connecting...', '#d9b25c'], connected: ['Connected', '#a1cd44'] };\n" \
    "   const redraw = () => buttons.forEach(b => { try { b.forceUpdate(); } catch (e) { } });\n" \
    "   const said = new Map();\n" \
    "   const send = text => {\n" \
@@ -565,8 +573,33 @@
    "               e(Body, null, (all ? list : list.slice(0, 5)).map(row)));\n" \
    "         }\n" \
    "      };\n" \
+   "      /* The friends of the session, on top of the friends' list. */\n" \
+   "      const Party = class extends react.Component {\n" \
+   "         componentDidMount() { buttons.add(this); }\n" \
+   "         componentWillUnmount() { buttons.delete(this); }\n" \
+   "         render() {\n" \
+   "            if (!party || !party.list.length || !Row || !ui || !ui.FriendStore) return null;\n" \
+   "            let icon = '', app = gameNamed(party.name);\n" \
+   "            try { icon = app ? ui.AppInfoStore.GetAppInfo(app).icon_url : ''; } catch (e) { }\n" \
+   "            const rows = party.list.map(([id, state]) => {\n" \
+   "               const friend = ui.FriendStore.GetPlayer(account(id)), [text, color] = STATES[state] || ['', ''];\n" \
+   "               return friend && e(Row, { key: id, friend, context: { chatContext: 'friendslist' }, bFriendsListEntry: true,\n" \
+   "                  notDraggable: true, listStatusIndicator: e('div', { style: { color, fontSize: '12px', flexShrink: 0,\n" \
+   "                     marginInlineStart: 'auto', padding: '0 10px', alignSelf: 'center' } }, text) });\n" \
+   "            });\n" \
+   "            return e('div', { className: 'friendGroup gameGroup' },\n" \
+   "               e('div', { className: 'groupName', title: party.name }, e('div', { className: 'gameGroupContainer' },\n" \
+   "                  e('div', { className: 'ExpandPlusMinus' }), icon && e('img', { className: 'groupIcon', src: icon })), 'Playing with you',\n" \
+   "                  e('span', { className: 'groupCount' }, '(' + party.list.filter(p => p[1] !== 'invited').length + ')'), e('hr')),\n" \
+   "               e('div', { className: 'friendsContainer' }, rows));\n" \
+   "         }\n" \
+   "      };\n" \
    "      plain = jsx.jsx;\n" \
    "      pictured = jsx.jsx = function(type, props, ...more) {\n" \
+   "         if (!Row && props && props.bFriendsListEntry && props.friend) {\n" \
+   "            Row = type;\n" \
+   "            setTimeout(redraw, 0);\n" \
+   "         }\n" \
    "         if (type === 'img' && props && typeof props.src === 'string' && props.src.includes(MARK)) {\n" \
    "            const p = numbers.get(parseInt(props.src.substr(props.src.indexOf(MARK) + MARK.length, 8), 16));\n" \
    "            if (p && p.avatar) props = { ...props, src: p.avatar };\n" \
@@ -596,6 +629,10 @@
    "            if (of) props = { ...props, children: [\n" \
    "               react.createElement(Open, { key: 'fusebox', app: of.props.overview.appid }), ...props.children] };\n" \
    "         }\n" \
+   "         /* Before the friends' list itself, which is second. */\n" \
+   "         else if (type === 'div' && props && props.className === 'listContentContainer' && Array.isArray(props.children))\n" \
+   "            props = { ...props, children: [...props.children.slice(0, 1), react.createElement(Party, { key: 'fusebox' }),\n" \
+   "               ...props.children.slice(1)] };\n" \
    "         /* The activity's box to post to Steam friends: not about these. */\n" \
    "         else if (props && props.children && props.children.length === 2) {\n" \
    "            const list = props.children[1];\n" \
@@ -807,6 +844,33 @@
    "      return [react.Fragment, { children: [react.createElement(type, { key: 'time', ...props }),\n" \
    "         react.createElement(type, { key: 'fusebox', className: props.className, style }, 'FuseBox')] }];\n" \
    "   };\n" \
+   "   const account = id => Number(BigInt(id) & 0xffffffffn);\n" \
+   "   /* Friends' lists drawn before, drawn again: not their rows, whose type is\n" \
+   "      then had from one. */\n" \
+   "   const lists = () => {\n" \
+   "      let popups = [];\n" \
+   "      try { popups = [...g_PopupManager.GetPopups()]; } catch (e) { }\n" \
+   "      popups.forEach(p => {\n" \
+   "         try {\n" \
+   "            p.window.document.querySelectorAll('.listContentContainer').forEach(el => {\n" \
+   "               const fiber = x => x[Object.keys(x).find(k => k.startsWith('__reactFiber'))];\n" \
+   "               const row = !Row && el.querySelector('.friend');\n" \
+   "               let f = row ? fiber(row) : null, found;\n" \
+   "               for (let i = 0; f && i < 30; i++, f = f.return)\n" \
+   "                  if (f.memoizedProps && f.memoizedProps.bFriendsListEntry && f.memoizedProps.friend) found = f.elementType;\n" \
+   "               if (found && typeof found !== 'string') Row = found;\n" \
+   "               f = fiber(el);\n" \
+   "               while (f && !(f.stateNode && f.stateNode.forceUpdate)) f = f.return;\n" \
+   "               if (f) f.stateNode.forceUpdate();\n" \
+   "            });\n" \
+   "         } catch (e) { }\n" \
+   "      });\n" \
+   "   };\n" \
+   "   const endParty = () => {\n" \
+   "      clearTimeout(partyOver);\n" \
+   "      party = null;\n" \
+   "      redraw();\n" \
+   "   };\n" \
    "   let fresh = { app: 0, until: 0 };\n" \
    "   /* The app whose invite is being drawn. */\n" \
    "   let drawn = 0;\n" \
@@ -937,6 +1001,20 @@
    "         const text = 'Invited you to play ' + name + ' with FuseBox';\n" \
    "         ui.ChatStore.GetFriendChat(Number(BigInt(friend) & 0xffffffffn)).SendChatMessage(text);\n" \
    "         note(ui.FriendStore.self.accountid, ui.GetServerRTime32(), text);\n" \
+   "         return 'ok';\n" \
+   "      },\n" \
+   "      /* Who is there: [Steam id, state]. No lobby: it's over. */\n" \
+   "      party(lobby, name, list) {\n" \
+   "         if (lobby === '0') {\n" \
+   "            endParty();\n" \
+   "            return 'ok';\n" \
+   "         }\n" \
+   "         const first = !party || party.lobby !== lobby;\n" \
+   "         party = { lobby, name, list };\n" \
+   "         clearTimeout(partyOver);\n" \
+   "         partyOver = setTimeout(endParty, 60000);\n" \
+   "         if (first) lists();\n" \
+   "         redraw();\n" \
    "         return 'ok';\n" \
    "      },\n" \
    "      /* Runs a shortcut there is; '' if Steam hasn't it. */\n" \
@@ -1094,6 +1172,7 @@
    "         undoLan.reverse().forEach(f => { try { f(); } catch (e) { } });\n" \
    "         lanGames.clear();\n" \
    "         clearTimeout(deaf);\n" \
+   "         endParty();\n" \
    "         opens.clear();\n" \
    "         boards.clear();\n" \
    "         redraw();\n" \

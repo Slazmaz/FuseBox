@@ -25,6 +25,24 @@ enum steamui
    STEAMUI_OK
 };
 
+#define STEAMUI_PLAYERS 24
+
+enum steamui_player
+{
+   STEAMUI_INVITED,
+   STEAMUI_CONNECTING,
+   STEAMUI_CONNECTED
+};
+
+struct steamui_party
+{
+   Uint64 lobby;
+   char name[256];
+   Uint64 ids[STEAMUI_PLAYERS];
+   enum steamui_player states[STEAMUI_PLAYERS];
+   int count;
+};
+
 /* Whether Steam has what was given to it: STEAMUI_OK, STEAMUI_WAIT (not
  * yet, or it forgot) or STEAMUI_NO_PORT. */
 enum steamui steamui_check(SDL_AtomicInt *abort);
@@ -68,6 +86,9 @@ bool steamui_art(Uint32 id, SDL_AtomicInt *abort);
 bool steamui_unlocks(Uint32 appid, SDL_AtomicInt *abort);
 /* Sends the friend a chat message: invited to that game. */
 void steamui_invited(Uint64 who, const char *name, SDL_AtomicInt *abort);
+/* Who is there while playing with friends: Steam shows them in the friends' list.
+ * Lobby 0: it's over. Steam takes it as over too if it isn't told again in a minute. */
+void steamui_party(const struct steamui_party *p, SDL_AtomicInt *abort);
 /* Has Steam join a lobby after all that steamui_asked told of. */
 void steamui_pass(Uint64 lobby, Uint64 host, SDL_AtomicInt *abort);
 /* Takes them all back out, if Steam has them. */
