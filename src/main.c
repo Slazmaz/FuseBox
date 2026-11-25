@@ -28,6 +28,7 @@
 #include <SDL3/SDL_main.h>
 #include <stb_image.h>
 #include <stb_truetype.h>
+#include <string.h>
 
 /* ---- Messages from jobs to the window ---------------------------------- */
 
@@ -2085,6 +2086,7 @@ static void install_update(void)
 static void open_update(void)
 {
    app.update_error[0] = '\0';
+   app.modal_scroll = 0;
    app.modal = MODAL_UPDATE;
 }
 
@@ -3314,13 +3316,73 @@ static void draw_emulator_modal(void)
       close_modal();
 }
 
+/* The text in lines w wide, the first one's middle at cy; only counted where it
+ * isn't to be drawn. Returns how many there are. */
+static int draw_lines(float px, float x, float cy, float w, float line, const char *text, bool draw)
+{
+   char part[512];
+   int lines = 0;
+
+   for (; *text; lines++)
+   {
+      size_t n = 0, fit = 0;
+
+      /* As many words as there's room for, or one. */
+      do
+      {
+         n += strspn(text + n, " ");
+         n += strcspn(text + n, " ");
+         SDL_utf8strlcpy(part, text, SDL_min(n + 1, sizeof(part)));
+         if (fit && ui_text_width(UI_MEDIUM, px, part) > w)
+            break;
+         fit = n;
+      } while (text[n]);
+      SDL_utf8strlcpy(part, text, SDL_min(fit + 1, sizeof(part)));
+      if (draw)
+         ui_text(UI_MEDIUM, px, x, cy + lines * line, UI_LEFT, w, C_TEXT, 1, part);
+      text += fit;
+      text += strspn(text, " ");
+   }
+   return lines;
+}
+
+/* What's new, the first line's top at y. Returns how high it is. */
+static float draw_notes(const char *notes, float x, float y, float w, bool draw)
+{
+   float px = S(14), line = S(21), gap = S(5), top = y;
+   char item[UPDATE_NOTES];
+
+   while (*notes)
+   {
+      size_t n = strcspn(notes, "\n");
+
+      SDL_strlcpy(item, notes, SDL_min(n + 1, sizeof(item)));
+      if (draw)
+         ui_rect(x + S(2), y + line / 2 - S(2.5f), S(5), S(5), S(2.5f), C_ACCENT, 1);
+      y += draw_lines(px, x + S(18), y + line / 2, w - S(18), line, item, draw) * line + gap;
+      notes += n;
+      notes += strspn(notes, "\n");
+   }
+   return SDL_max(0, y - gap - top);
+}
+
 static void draw_update_modal(void)
 {
-   float x, y, w = S(520), h = S(196), bx, bw;
-   char version[32], line[160];
-   bool here = update_can_install();
+   float x, y, w = S(520), h = S(196), list_h = 0, bx, bw;
+   char version[32], line[160], notes[UPDATE_NOTES];
+   bool here = update_can_install(), listed = update_notes(notes, sizeof(notes));
    const char *go = here ? "Update" : "Open GitHub";
 
+   if (listed)
+   {
+      float all = draw_notes(notes, 0, 0, w - S(56), false);
+
+      list_h = SDL_min(all, SDL_max(S(42), app.height - S(260)));
+      h += list_h + S(8);
+      app.modal_scroll -= app.wheel * S(60);
+      app.wheel = 0;
+      app.modal_scroll = SDL_clamp(app.modal_scroll, 0, all - list_h);
+   }
    update_newer(version, sizeof(version));
    modal_box(w, h, &x, &y, "Update FuseBox");
    if (app.update_busy)
@@ -3334,6 +3396,15 @@ static void draw_update_modal(void)
       ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_RED, 1, line);
    else
       ui_text(UI_MEDIUM, S(15), x + S(28), y + S(84), UI_LEFT, w - S(56), C_DIM, 1, line);
+   if (listed)
+   {
+      float top = y + S(112);
+
+      glEnable(GL_SCISSOR_TEST);
+      glScissor((int)x, app.height - (int)(top + list_h), (int)w, (int)list_h);
+      draw_notes(notes, x + S(28), top - app.modal_scroll, w - S(56), true);
+      glDisable(GL_SCISSOR_TEST);
+   }
    /* Not while Steam's files are being written. */
    bw = button_w(go);
    bx = x + w - S(28) - bw;
@@ -3350,9 +3421,6 @@ static void draw_update_modal(void)
    bx -= S(8) + S(110);
    if (button(bx, y + h - S(66), S(110), S(42), "Cancel", false, true, true))
       close_modal();
-   if (here && button(x + S(28), y + h - S(66), button_w("What's new"), S(42), "What's new", false,
-            true, true))
-      SDL_OpenURL(UPDATE_PAGE);
 }
 
 static void draw_modal(void)

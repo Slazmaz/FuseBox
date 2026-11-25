@@ -12,6 +12,9 @@
 /* All releases, for a browser. */
 #define UPDATE_PAGE "https://github.com/Slazmaz/FuseBox/releases/latest"
 
+/* Room for a release's notes. */
+#define UPDATE_NOTES 4096
+
 /* Takes away what an earlier update left, too. */
 void update_init(const char *data_dir, const char *config_dir);
 /* Seconds until GitHub may be asked again, 0 if it may now: it takes only so
@@ -22,6 +25,9 @@ int update_wait(float *done);
 void update_check(SDL_AtomicInt *abort, char *note, size_t size);
 /* The newer version there is, false if none is known of. */
 bool update_newer(char *version, size_t size);
+/* What's new in it, a line for each item of its release notes; false if they list
+ * nothing. */
+bool update_notes(char *notes, size_t size);
 /* Whether it can be installed from here: else it's in UPDATE_PAGE only. */
 bool update_can_install(void);
 /* Downloads it and puts it in this one's place; this one is to end then. *percent:

@@ -11,6 +11,7 @@
 #include "version.h"
 
 #include <SDL3/SDL.h>
+#include <string.h>
 #include <zlib.h>
 
 /* Set otherwise only to test. */
@@ -52,6 +53,8 @@ static struct
     * and size. */
    char version[32], url[512], digest[65];
    Sint64 size;
+   /* What its notes list, a line each. */
+   char notes[UPDATE_NOTES];
 } up;
 
 /* "v1.2.3", what's after it aside. */
@@ -119,7 +122,9 @@ static void save(void)
    json_write_string(io, up.url);
    SDL_IOprintf(io, ",\n  \"sha256\": ");
    json_write_string(io, up.digest);
-   SDL_IOprintf(io, ",\n  \"size\": %lld\n}\n", (long long)up.size);
+   SDL_IOprintf(io, ",\n  \"size\": %lld,\n  \"notes\": ", (long long)up.size);
+   json_write_string(io, up.notes);
+   SDL_IOprintf(io, "\n}\n");
    SDL_CloseIO(io);
 }
 
@@ -344,6 +349,7 @@ void update_init(const char *data_dir, const char *config_dir)
       SDL_strlcpy(up.version, json_str(root, "version", ""), sizeof(up.version));
       SDL_strlcpy(up.url, json_str(root, "url", ""), sizeof(up.url));
       SDL_strlcpy(up.digest, json_str(root, "sha256", ""), sizeof(up.digest));
+      SDL_utf8strlcpy(up.notes, json_str(root, "notes", ""), sizeof(up.notes));
    }
    json_free(root);
    SDL_free(text);
@@ -396,6 +402,36 @@ static void read_asset(const struct json *root)
    }
 }
 
+/* The items of the release notes' lists (Markdown), without what's around them.
+ * Under the lock. */
+static void read_notes(const char *body)
+{
+   size_t n = 0;
+
+   while (*body)
+   {
+      size_t len = strcspn(body, "\r\n"), at = strspn(body, " \t");
+      bool item = at + 2 < len && SDL_strchr("-*+", body[at]) && body[at + 1] == ' ';
+
+      /* Whole ones only. */
+      if (item && n + len + 2 < sizeof(up.notes))
+      {
+         if (n)
+            up.notes[n++] = '\n';
+         for (at += 2; at < len; at++)
+         {
+            if (body[at] == '`' || (body[at] == '*' && body[at + 1] == '*'))
+               at += body[at] == '*';
+            else
+               up.notes[n++] = body[at];
+         }
+      }
+      body += len;
+      body += strspn(body, "\r\n");
+   }
+   up.notes[n] = '\0';
+}
+
 void update_check(SDL_AtomicInt *abort, char *note, size_t size)
 {
    Sint64 asked, idle, now = now_s();
@@ -425,6 +461,7 @@ void update_check(SDL_AtomicInt *abort, char *note, size_t size)
    {
       SDL_snprintf(up.version, sizeof(up.version), "%d.%d.%d", v[0], v[1], v[2]);
       read_asset(root);
+      read_notes(json_str(root, "body", ""));
       if (is_newer(up.version))
          SDL_snprintf(note, size, "%s is available", up.version);
       else
@@ -466,6 +503,17 @@ bool update_newer(char *version, size_t size)
    SDL_strlcpy(version, newer ? up.version : "", size);
    SDL_UnlockMutex(up.lock);
    return newer;
+}
+
+bool update_notes(char *notes, size_t size)
+{
+   bool any;
+
+   SDL_LockMutex(up.lock);
+   any = is_newer(up.version) && up.notes[0];
+   SDL_strlcpy(notes, any ? up.notes : "", size);
+   SDL_UnlockMutex(up.lock);
+   return any;
 }
 
 bool update_can_install(void)
