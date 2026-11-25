@@ -167,6 +167,24 @@ int library_find(const char *id)
    return -1;
 }
 
+/* Without (TM), (R) and (C) too, which nobody types. library_normalize leaves
+ * them: games' ids are made with it. */
+static void match_name(const char *name, char *dst, size_t size)
+{
+   static const char *const marks[] = { "\xE2\x84\xA2", "\xC2\xAE", "\xC2\xA9" };
+   size_t i;
+
+   library_normalize(name, dst, size);
+   for (i = 0; i < SDL_arraysize(marks); i++)
+   {
+      size_t n = SDL_strlen(marks[i]);
+      char *p = dst;
+
+      while ((p = SDL_strstr(p, marks[i])))
+         SDL_memmove(p, p + n, SDL_strlen(p + n) + 1);
+   }
+}
+
 int library_match(const char *name_or_id)
 {
    char want[256], have[256];
@@ -174,19 +192,19 @@ int library_match(const char *name_or_id)
 
    if ((i = library_find(name_or_id)) >= 0)
       return i;
-   library_normalize(name_or_id, want, sizeof(want));
+   match_name(name_or_id, want, sizeof(want));
    if (!want[0])
       return -1;
    for (i = 0; i < lib.count; i++)
    {
-      library_normalize(lib.games[i].name, have, sizeof(have));
+      match_name(lib.games[i].name, have, sizeof(have));
       if (SDL_strcmp(want, have) == 0)
          return i;
    }
    /* Other apps may not know what it was renamed to. */
    for (i = 0; i < lib.count; i++)
    {
-      library_normalize(lib.games[i].own_name, have, sizeof(have));
+      match_name(lib.games[i].own_name, have, sizeof(have));
       if (SDL_strcmp(want, have) == 0)
          return i;
    }
