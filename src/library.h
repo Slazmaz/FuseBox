@@ -37,6 +37,9 @@ struct art_choice
    unsigned sgdb_id;
    /* Picked by the user (not filled in by FuseBox): kept as it is. */
    bool picked;
+   /* When it became the game's (ms since 1970), 0 if unknown: of two processes'
+    * the newest counts. */
+   Sint64 time;
 };
 
 struct game

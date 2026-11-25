@@ -369,8 +369,10 @@ bool library_set_art(int index, enum art_type type, const char *tmp_path,
 {
    char folder[1024], path[1024];
    struct game *g;
+   SDL_Time now = 0;
    bool ok;
 
+   SDL_GetCurrentTime(&now);
    library_lock();
    g = &lib.games[index];
    game_folder(g, folder, sizeof(folder));
@@ -384,6 +386,7 @@ bool library_set_art(int index, enum art_type type, const char *tmp_path,
       SDL_strlcpy(g->art[type].path, path, sizeof(g->art[type].path));
       g->art[type].sgdb_id = sgdb_id;
       g->art[type].picked = false;
+      g->art[type].time = SDL_NS_TO_MS(now);
       g->art_version++;
       lib.dirty = true;
    }
@@ -483,13 +486,14 @@ static bool game_from_json(const struct json *o, struct game *g)
          SDL_strlcpy(g->art[t].path, path, sizeof(g->art[t].path));
          g->art[t].sgdb_id = (unsigned)json_num(a, "sgdb_id", 0);
          g->art[t].picked = json_bool(a, "picked", false);
+         g->art[t].time = (Sint64)json_num(a, "time", 0);
       }
    }
    return true;
 }
 
 /* Merges library.json into what's in memory: games it has that memory
- * doesn't, and art it has where memory has none. */
+ * doesn't, and art it has where memory has none or older. */
 static bool merge_file(void)
 {
    struct json *root, *games, *o;
@@ -524,9 +528,11 @@ static bool merge_file(void)
          continue;
       }
       for (t = 0; t < ART_TYPES; t++)
-         if (!lib.games[i].art[t].path[0] && g.art[t].path[0])
+         if (g.art[t].path[0] && (!lib.games[i].art[t].path[0]
+                  || g.art[t].time > lib.games[i].art[t].time))
          {
             lib.games[i].art[t] = g.art[t];
+            lib.games[i].art_edited |= g.art_edited && g.art[t].picked;
             lib.games[i].art_version++;
             found = true;
          }
@@ -641,8 +647,9 @@ static void write_game(SDL_IOStream *io, const struct game *g)
       }
       SDL_IOprintf(io, "\"path\": ");
       json_write_string(io, g->art[t].path);
-      SDL_IOprintf(io, ", \"sgdb_id\": %u, \"picked\": %s }", g->art[t].sgdb_id,
-            g->art[t].picked ? "true" : "false");
+      SDL_IOprintf(io, ", \"sgdb_id\": %u, \"picked\": %s, \"time\": %lld }",
+            g->art[t].sgdb_id, g->art[t].picked ? "true" : "false",
+            (long long)g->art[t].time);
       first = false;
    }
    SDL_IOprintf(io, "%s}\n    }", first ? "" : "\n      ");
