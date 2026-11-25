@@ -3982,6 +3982,7 @@ int main(int argc, char **argv)
    jobs_add(job_scan, NULL, JOB_NOW, true);
    check_update();
    SDL_ShowWindow(app.window);
+   platform_window_start(app.window);
    SDL_StopTextInput(app.window);
    app.redraw = true;
 
@@ -4109,6 +4110,7 @@ int main(int argc, char **argv)
    ui_quit();
    library_quit();
    http_quit();
+   platform_window_stop();
    SDL_GL_DestroyContext(app.gl);
    SDL_DestroyWindow(app.window);
    if (log_file)

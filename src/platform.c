@@ -974,6 +974,16 @@ bool platform_tray_wait(int ms)
    return false;
 }
 
+/* The tray finds the window by itself here. */
+void platform_window_start(void *sdl_window)
+{
+   (void)sdl_window;
+}
+
+void platform_window_stop(void)
+{
+}
+
 /* This program's command line from its nth argument on, quotes and all. */
 static const WCHAR *typed_from(int n)
 {
@@ -1238,20 +1248,6 @@ bool platform_open(const char *exe)
    if (p)
       SDL_DestroyProcess(p);
    return p != NULL;
-}
-
-void platform_tray_start(void)
-{
-}
-
-void platform_tray_stop(void)
-{
-}
-
-bool platform_tray_wait(int ms)
-{
-   SDL_Delay(ms);
-   return false;
 }
 
 bool platform_run_game(const char *exe, const char *args, const char *dir, char **argv, int skip,

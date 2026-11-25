@@ -111,6 +111,7 @@ add_library(fusebox_core STATIC
    src/steamui.c
    src/background.c
    src/bolt.c
+   src/tray_linux.c
    src/history.c
    src/lan.c
    src/sockets.c

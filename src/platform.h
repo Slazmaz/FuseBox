@@ -77,11 +77,14 @@ bool platform_only_session(void);
  * if it can't. */
 bool platform_again_background(void);
 /* The background one's icon by the taskbar's clock: opens FuseBox, or quits
- * the background one (Windows; nothing elsewhere). */
+ * the background one (Linux: on desktops that have a place for such icons). */
 void platform_tray_start(void);
 void platform_tray_stop(void);
 /* Waits that long, or until quitting is asked for there: true then. */
 bool platform_tray_wait(int ms);
+/* From here on that icon brings the window to the front; or not any more. */
+void platform_window_start(void *sdl_window);
+void platform_window_stop(void);
 /* A program's window to the front, or the program started; in front, though
  * the caller isn't. False if it can't be. */
 bool platform_open(const char *exe);
