@@ -1152,6 +1152,8 @@ void platform_start_background(bool by_game)
       args[n++] = "--user";
       args[n++] = "--quiet";
       args[n++] = "--collect";
+      /* What it opens isn't ended with it. */
+      args[n++] = "--property=KillMode=process";
    }
    args[n++] = exe;
    args[n++] = "--background";
