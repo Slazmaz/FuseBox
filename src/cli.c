@@ -4,7 +4,7 @@
  *      Prints the image's path. A game or art FuseBox doesn't have yet is
  *      looked up on SteamGridDB (its most popular art) and saved, so the
  *      next ask is instant and the window shows it. Exit 1: none found.
- *   fusebox-cli set <game name or id> <type> <image>
+ *   fusebox-cli setart <game name or id> <type> <image>
  *      Makes it the game's art, as if picked in the window, and prints its
  *      path: a file, an address, or the id of one of the choices. Steam gets
  *      it through the window. Exit 1: not done.
@@ -39,7 +39,7 @@ static void usage(void)
 {
    fprintf(stderr,
          "usage: fusebox-cli art <game name or id> <cover|wide|hero|logo|icon> [--no-fetch]\n"
-         "       fusebox-cli set <game name or id> <type> <image file, address or choice's id>\n"
+         "       fusebox-cli setart <game name or id> <type> <image file, address or choice's id>\n"
          "       fusebox-cli choices <game name or id> <type> [--animated]\n"
          "       fusebox-cli list\n"
          "       fusebox-cli library\n"
@@ -390,7 +390,7 @@ int main(int argc, char **argv)
 
    if (argc >= 4 && SDL_strcmp(argv[1], "art") == 0)
       code = art(argv[2], argv[3], !(argc >= 5 && SDL_strcmp(argv[4], "--no-fetch") == 0));
-   else if (argc == 5 && SDL_strcmp(argv[1], "set") == 0)
+   else if (argc == 5 && SDL_strcmp(argv[1], "setart") == 0)
       code = set_art(data, argv[2], argv[3], argv[4]);
    else if ((argc == 4 || (argc == 5 && SDL_strcmp(argv[4], "--animated") == 0))
          && SDL_strcmp(argv[1], "choices") == 0)
