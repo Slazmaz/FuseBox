@@ -47,10 +47,11 @@ void steam_target(const struct game *g, char *exe, size_t exe_size, char *option
       size_t options_size);
 
 /* What the shortcut starts that's there only while the game runs
- * (steamui_once): fusebox --once "<path>", and more after it. The launch
- * options count where they have %command%; the rest is FuseBox's to add. */
-void steam_once_target(const char *path, const char *launch_options, const char *more, char *exe,
-      size_t exe_size, char *options, size_t options_size);
+ * (steamui_once): fusebox --once "<path>", with that emulator (empty: its own),
+ * and more after it. The launch options count where they have %command%; the
+ * rest is FuseBox's to add. */
+void steam_once_target(const char *path, const char *emulator, const char *launch_options,
+      const char *more, char *exe, size_t exe_size, char *options, size_t options_size);
 /* Where the settings are (steam_read_settings). */
 const char *steam_settings_dir(void);
 

@@ -15,10 +15,10 @@ void background_apply(void);
  * folder; config_dir: its config. */
 int background_run(const char *data_dir, const char *config_dir);
 
-/* fusebox "<game's path>" [arguments], as Steam's shortcuts have it (older
- * ones: --run "<exe>" <arguments>): starts the background one if it's wanted,
- * then the game as the library says to (a ROM with its emulator); returns when
- * that ends, with its exit code. Not started by Steam, it has Steam run the game
+/* fusebox "<game's path>" [--emulator "<path>"] [arguments], as Steam's shortcuts
+ * have it (older ones: --run "<exe>" <arguments>): starts the background one if
+ * it's wanted, then the game as the library says to (a ROM with its emulator), or
+ * with the emulator that's given, this time only; returns when that ends, with its exit code. Not started by Steam, it has Steam run the game
  * (its code is 0 then), for the overlay and the rest, whether it has a shortcut
  * there or not: --once "<path>" is one that's there only meanwhile. argv: main's. */
 int background_game(const char *data_dir, const char *config_dir, char **argv);

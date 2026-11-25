@@ -1188,6 +1188,57 @@ static int rom_system(const char *path, const char *ext, int folder_system, int 
    return i;
 }
 
+/* The system of a ROM that isn't in the library: by the folders it's in, too. */
+static int system_of(const char *path)
+{
+   char dir[1024], above[1024];
+   const char *dot = SDL_strrchr(base_name(path), '.');
+   int system = -1, rank;
+
+   parent_dir(path, dir, sizeof(dir));
+   while (dir[0] && (system = system_by_folder(base_name(dir))) < 0)
+   {
+      parent_dir(dir, above, sizeof(above));
+      if (SDL_strcmp(above, dir) == 0)
+         break;
+      SDL_strlcpy(dir, above, sizeof(dir));
+   }
+   return dot ? rom_system(path, dot + 1, system, &rank) : system;
+}
+
+bool roms_emulator_args(const struct game *g, const char *rom, const char *exe, char *args,
+      size_t size)
+{
+   struct found_emulator f;
+   struct rom_option o;
+   struct scan sc;
+   bool ok = true;
+
+   SDL_zero(f);
+   SDL_zero(o);
+   SDL_zero(sc);
+   SDL_strlcpy(f.exe, exe, sizeof(f.exe));
+   o.emulator = f.emulator = emulator_by_exe(base_name(exe), &f.rank);
+   /* RetroArch: with the core picked for the game, else the first there is. */
+   if (f.emulator >= 0 && !emulators[f.emulator].systems)
+   {
+      const struct rom_option *core;
+      struct game picked;
+
+      SDL_zero(picked);
+      SDL_strlcpy(picked.emulator, exe, sizeof(picked.emulator));
+      if (g)
+         SDL_strlcpy(picked.core, g->core, sizeof(picked.core));
+      emulator_options(&sc, &f);
+      core = chosen_of(sc.options, sc.option_count,
+            g && g->rom[0] ? system_by_name(g->source) : system_of(rom), &picked);
+      if ((ok = core != NULL))
+         o = *core;
+      SDL_free(sc.options);
+   }
+   return ok && make_args(&o, rom, args, size);
+}
+
 /* Takes "(Disc 2)" and the like out of a name; the disc's number, 0 if
  * it has none. */
 static int take_disc(char *stem)

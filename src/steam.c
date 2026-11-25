@@ -324,14 +324,18 @@ void steam_target(const struct game *g, char *exe, size_t exe_size, char *option
    around_options(g->launch_options, path, options, options_size);
 }
 
-void steam_once_target(const char *path, const char *launch_options, const char *more, char *exe,
-      size_t exe_size, char *options, size_t options_size)
+void steam_once_target(const char *path, const char *emulator, const char *launch_options,
+      const char *more, char *exe, size_t exe_size, char *options, size_t options_size)
 {
-   char quoted[1100], args[3200];
+   char quoted[1100], with[1100], args[4400];
 
    SDL_strlcpy(exe, own_exe(), exe_size);
    quote_arg(path, quoted, sizeof(quoted));
-   SDL_snprintf(args, sizeof(args), ONCE "%s%s%s", quoted, more[0] ? " " : "", more);
+   with[0] = '\0';
+   if (emulator[0])
+      quote_arg(emulator, with, sizeof(with));
+   SDL_snprintf(args, sizeof(args), ONCE "%s%s%s%s%s", quoted, with[0] ? " --emulator " : "", with,
+         more[0] ? " " : "", more);
    around_options(launch_options, args, options, options_size);
 }
 

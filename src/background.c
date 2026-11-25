@@ -364,12 +364,35 @@ static void full_path(const char *path, char *dst, size_t size)
    SDL_free(here);
 }
 
-/* By the library; what that has no emulator for is looked for again. False
- * with why in error. */
-static bool find_start(const char *data_dir, const char *config_dir, const char *path,
-      struct start *s, char *error, size_t size)
+/* With the emulator that's given rather than its own. g: its game, may be NULL. */
+static bool set_emulator(const struct game *g, const char *path, const char *emulator,
+      struct start *s)
 {
-   bool found = false, rom = false, scanned = false;
+   char *slash;
+
+   SDL_strlcpy(s->exe, emulator, sizeof(s->exe));
+   SDL_strlcpy(s->dir, emulator, sizeof(s->dir));
+   if ((slash = SDL_strrchr(s->dir, PATH_SEP[0])))
+      *slash = '\0';
+   if (!slash || !platform_exists(s->dir))
+      s->dir[0] = '\0';
+   if (!roms_emulator_args(g, path, emulator, s->args, sizeof(s->args)))
+      return false;
+   /* The user's, but for those that are Steam's. */
+   if (g && g->launch_options[0] && !SDL_strstr(g->launch_options, "%command%"))
+   {
+      SDL_strlcat(s->args, " ", sizeof(s->args));
+      SDL_strlcat(s->args, g->launch_options, sizeof(s->args));
+   }
+   return true;
+}
+
+/* By the library; what that has no emulator for is looked for again. emulator:
+ * the one to start it with, empty for its own. False with why in error. */
+static bool find_start(const char *data_dir, const char *config_dir, const char *path,
+      const char *emulator, struct start *s, char *error, size_t size)
+{
+   bool found = false, rom = false, scanned = false, can = true;
    const struct game *g;
    char *slash;
 
@@ -381,13 +404,19 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
          library_lock();
          g = library_game(library_by_path(path, history_appid()));
          rom = g && g->rom[0];
-         found = g && g->exe[0] && !(rom && (g->no_emulator || !platform_exists(g->exe)));
-         if (found)
+         found = g && (emulator[0]
+               || (g->exe[0] && !(rom && (g->no_emulator || !platform_exists(g->exe)))));
+         if (found && emulator[0])
+            can = set_emulator(g, path, emulator, s);
+         else if (found)
          {
             SDL_strlcpy(s->exe, g->exe, sizeof(s->exe));
             library_launch_options(g, s->args, sizeof(s->args));
             if (platform_exists(g->start_dir))
                SDL_strlcpy(s->dir, g->start_dir, sizeof(s->dir));
+         }
+         if (found)
+         {
             SDL_strlcpy(s->name, g->name, sizeof(s->name));
             SDL_strlcpy(s->icon, g->art[ART_ICON].path, sizeof(s->icon));
             SDL_strlcpy(s->launch_options, g->launch_options, sizeof(s->launch_options));
@@ -396,7 +425,8 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
             s->input = g->steam_input;
          }
          library_unlock();
-         if (found || scanned || (g && !rom) || is_program(path) || !platform_exists(path))
+         if (found || emulator[0] || scanned || (g && !rom) || is_program(path)
+               || !platform_exists(path))
             break;
          roms_init(config_dir);
          scan_roms();
@@ -408,6 +438,10 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
    }
    if ((rom || !found) && !platform_exists(path))
       SDL_snprintf(error, size, "This game isn't there any more:\n%s", path);
+   else if (emulator[0] && !platform_exists(emulator))
+      SDL_snprintf(error, size, "This emulator isn't there:\n%s", emulator);
+   else if (!can || (emulator[0] && !found && !set_emulator(NULL, path, emulator, s)))
+      SDL_snprintf(error, size, "RetroArch has no core for this game:\n%s", path);
    else if (found)
       return true;
    else if (rom)
@@ -415,13 +449,18 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
    else
    {
       /* One the library doesn't have: as it is. */
-      SDL_strlcpy(s->exe, path, sizeof(s->exe));
-      SDL_strlcpy(s->dir, path, sizeof(s->dir));
+      if (!emulator[0])
+      {
+         SDL_strlcpy(s->exe, path, sizeof(s->exe));
+         SDL_strlcpy(s->dir, path, sizeof(s->dir));
+      }
       slash = SDL_strrchr(s->dir, PATH_SEP[0]);
       SDL_strlcpy(s->name, slash ? slash + 1 : path, sizeof(s->name));
       if ((slash = SDL_strrchr(s->name, '.')))
          *slash = '\0';
       s->overlay = s->input = true;
+      if (emulator[0])
+         return true;
       slash = SDL_strrchr(s->dir, PATH_SEP[0]);
       if (slash)
          *slash = '\0';
@@ -437,15 +476,16 @@ static bool find_start(const char *data_dir, const char *config_dir, const char 
 
 /* Has Steam run the game, with its overlay and the rest; waits until it's over.
  * False if Steam can't now: it's started without. more: arguments after it. */
-static bool through_steam(const char *config_dir, const char *path, const struct start *s,
-      const char *more)
+static bool through_steam(const char *config_dir, const char *path, const char *emulator,
+      const struct start *s, const char *more)
 {
-   char exe[1024], options[4096], asked[1100], played[1100], *text;
+   char exe[1024], options[5400], asked[1100], played[1100], *text;
    SDL_PathInfo info;
    SDL_Time now = 0;
    Uint32 appid = 0, pid;
    Uint64 until;
-   bool once = !s->appid || more[0], over = false;
+   /* The game's own shortcut doesn't have these. */
+   bool once = !s->appid || more[0] || emulator[0], over = false;
 
    if (!steam_menus() || !steam_init() || !platform_steam_running(steam_install()))
       return false;
@@ -468,7 +508,8 @@ static bool through_steam(const char *config_dir, const char *path, const struct
    if (!appid)
    {
       once = true;
-      steam_once_target(path, s->launch_options, more, exe, sizeof(exe), options, sizeof(options));
+      steam_once_target(path, emulator, s->launch_options, more, exe, sizeof(exe), options,
+            sizeof(options));
       if (!(appid = steamui_once(s->name, exe, options, s->icon, s->overlay, s->input, NULL)))
          return false;
       lan_once(config_dir, appid, path, true);
@@ -499,7 +540,7 @@ static bool through_steam(const char *config_dir, const char *path, const struct
 
 int background_game(const char *data_dir, const char *config_dir, char **argv)
 {
-   char path[1024], played[1100], error[1200], more[2048], ended[16];
+   char path[1024], emulator[1024], played[1100], error[1200], more[2048], ended[16];
    /* Older shortcuts say how. */
    bool old = SDL_strcmp(argv[1], "--run") == 0, once = SDL_strcmp(argv[1], "--once") == 0;
    const char *in_steam = SDL_getenv("SteamGameId");
@@ -510,9 +551,15 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    steam_read_settings(config_dir);
    SDL_zero(s);
    full_path(once ? argv[2] : argv[1], path, sizeof(path));
+   emulator[0] = '\0';
+   if (!old && argv[skip] && SDL_strcmp(argv[skip], "--emulator") == 0 && argv[skip + 1])
+   {
+      full_path(argv[skip + 1], emulator, sizeof(emulator));
+      skip += 2;
+   }
    if (old)
       SDL_strlcpy(s.exe, argv[2], sizeof(s.exe));
-   else if (!find_start(data_dir, config_dir, path, &s, error, sizeof(error)))
+   else if (!find_start(data_dir, config_dir, path, emulator, &s, error, sizeof(error)))
    {
       SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "FuseBox", error, NULL);
       return 1;
@@ -523,7 +570,7 @@ int background_game(const char *data_dir, const char *config_dir, char **argv)
    if (!old && !once && !(in_steam && in_steam[0]))
    {
       platform_arguments(argv, skip, more, sizeof(more));
-      if (through_steam(config_dir, path, &s, more))
+      if (through_steam(config_dir, path, emulator, &s, more))
          return 0;
    }
    history_playing(data_dir);

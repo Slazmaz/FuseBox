@@ -61,6 +61,11 @@ void roms_choose(struct game *g, const struct rom_option *option);
  * now on: an emulator FuseBox knows, or any other (given just the ROM).
  * False if it's RetroArch without a core for the system. */
 bool roms_add_emulator(struct game *g, const char *exe);
+/* What a program is given to start a ROM with it: an emulator FuseBox knows, or
+ * any other (just the ROM). g: the ROM's game, NULL if it isn't in the library.
+ * False if it's RetroArch without a core for it. */
+bool roms_emulator_args(const struct game *g, const char *rom, const char *exe, char *args,
+      size_t size);
 /* An emulator's name by its exe: the one FuseBox knows it by, else the
  * file's. */
 void roms_emulator_name(const char *exe, char *dst, size_t size);
