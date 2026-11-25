@@ -4,6 +4,9 @@
  *      Prints the image's path. A game or art FuseBox doesn't have yet is
  *      looked up on SteamGridDB (its most popular art) and saved, so the
  *      next ask is instant and the window shows it. Exit 1: none found.
+ *   fusebox-cli choices <game name or id> <type> [--animated]
+ *      SteamGridDB's art for it, most popular first: id, size, kind and
+ *      address, tab separated.
  *   fusebox-cli list           id, name and each art path, tab separated
  *   fusebox-cli library        library.json's path
  *   fusebox-cli version        FuseBox's version
@@ -31,6 +34,7 @@ static void usage(void)
 {
    fprintf(stderr,
          "usage: fusebox-cli art <game name or id> <cover|wide|hero|logo|icon> [--no-fetch]\n"
+         "       fusebox-cli choices <game name or id> <type> [--animated]\n"
          "       fusebox-cli list\n"
          "       fusebox-cli library\n"
          "       fusebox-cli version\n"
@@ -107,6 +111,14 @@ static void steam(const char *config)
    printf("%s\n", text);
 }
 
+static bool has_key(void)
+{
+   if (sgdb_has_key())
+      return true;
+   fprintf(stderr, "no SteamGridDB API key: add one in FuseBox, in Settings\n");
+   return false;
+}
+
 static int art(const char *name, const char *type_name, bool fetch)
 {
    enum art_type type = art_from_name(type_name);
@@ -131,11 +143,8 @@ static int art(const char *name, const char *type_name, bool fetch)
       printf("%s\n", path);
       return 0;
    }
-   if (!sgdb_has_key())
-   {
-      fprintf(stderr, "no SteamGridDB API key: add one in FuseBox, in Settings\n");
+   if (!has_key())
       return 1;
-   }
 
    /* One FuseBox doesn't know: kept as a lookup, so its art is saved and
     * can be changed in the window like any other. */
@@ -161,6 +170,55 @@ static int art(const char *name, const char *type_name, bool fetch)
       return 1;
    printf("%s\n", path);
    return 0;
+}
+
+/* The SteamGridDB game a name or id is of, 0 if none. */
+static unsigned sgdb_game(const char *name)
+{
+   struct sgdb_game match;
+   char search[256];
+   unsigned id = 0;
+   int index;
+
+   SDL_strlcpy(search, name, sizeof(search));
+   library_lock();
+   if ((index = library_match(name)) >= 0)
+   {
+      id = library_game(index)->sgdb_id;
+      SDL_strlcpy(search, library_game(index)->name, sizeof(search));
+   }
+   library_unlock();
+   if (!id && sgdb_search(search, &match, 1, NULL, NULL) > 0)
+      id = match.id;
+   return id;
+}
+
+static int choices(const char *name, const char *type_name, bool animated)
+{
+   enum art_type type = art_from_name(type_name);
+   struct sgdb_art *arts = NULL;
+   unsigned id;
+   int i, n;
+
+   if (type == ART_TYPES)
+   {
+      fprintf(stderr, "unknown art type: %s\n", type_name);
+      return 2;
+   }
+   if (!has_key())
+      return 1;
+   if (!(id = sgdb_game(name)))
+   {
+      fprintf(stderr, "not found on SteamGridDB: %s\n", name);
+      return 1;
+   }
+   if ((n = sgdb_list(id, type, animated, &arts, NULL)) < 0)
+      fprintf(stderr, "can't ask SteamGridDB\n");
+   for (i = 0; i < n; i++)
+      printf("%u\t%dx%d\t%s\t%s\n", arts[i].id, arts[i].width, arts[i].height, arts[i].ext,
+            arts[i].url);
+   SDL_free(arts);
+   return n > 0 ? 0 : 1;
 }
 
 static void list(void)
@@ -202,6 +260,9 @@ int main(int argc, char **argv)
 
    if (argc >= 4 && SDL_strcmp(argv[1], "art") == 0)
       code = art(argv[2], argv[3], !(argc >= 5 && SDL_strcmp(argv[4], "--no-fetch") == 0));
+   else if ((argc == 4 || (argc == 5 && SDL_strcmp(argv[4], "--animated") == 0))
+         && SDL_strcmp(argv[1], "choices") == 0)
+      code = choices(argv[2], argv[3], argc == 5);
    else if (argc == 2 && SDL_strcmp(argv[1], "list") == 0)
       list();
    else if (argc == 2 && SDL_strcmp(argv[1], "library") == 0)
