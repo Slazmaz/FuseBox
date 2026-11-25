@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(fusebox VERSION 0.3 LANGUAGES C)
+project(fusebox VERSION 0.3.1 LANGUAGES C)
 
 # The version, above, is what updates go by (update.c).
 if(NOT PROJECT_VERSION_PATCH)
