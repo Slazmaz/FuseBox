@@ -5,15 +5,17 @@
 #include <stddef.h>
 #include <SDL3/SDL_atomic.h>
 
-/* Newer FuseBoxes: GitHub's latest release (no drafts or pre-releases) against
+/* Newer FuseBoxes: GitHub's newest release (no drafts or pre-releases) against
  * this one's version (CMakeLists.txt). What was found last, and when, is in
  * <config>/update.json, so it's known without asking again. */
 
 /* All releases, for a browser. */
 #define UPDATE_PAGE "https://github.com/Slazmaz/FuseBox/releases/latest"
 
-/* Room for a release's notes. */
-#define UPDATE_NOTES 4096
+/* Room for releases' notes. */
+#define UPDATE_NOTES 8192
+/* Before a version among them. */
+#define UPDATE_HEAD "# "
 
 /* Takes away what an earlier update left, too. */
 void update_init(const char *data_dir, const char *config_dir);
@@ -25,8 +27,9 @@ int update_wait(float *done);
 void update_check(SDL_AtomicInt *abort, char *note, size_t size);
 /* The newer version there is, false if none is known of. */
 bool update_newer(char *version, size_t size);
-/* What's new in it, a line for each item of its release notes; false if they list
- * nothing. */
+/* What's new in it and in the versions between, a line for each item of their
+ * release notes, under UPDATE_HEAD and the version if it's more than one; false if
+ * they list nothing. */
 bool update_notes(char *notes, size_t size);
 /* Whether it can be installed from here: else it's in UPDATE_PAGE only. */
 bool update_can_install(void);

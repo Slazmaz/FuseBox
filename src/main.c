@@ -3354,14 +3354,22 @@ static float draw_notes(const char *notes, float x, float y, float w, bool draw)
 
    while (*notes)
    {
-      size_t n = strcspn(notes, "\n");
+      size_t n = strcspn(notes, "\n"), mark = SDL_strlen(UPDATE_HEAD);
 
       SDL_strlcpy(item, notes, SDL_min(n + 1, sizeof(item)));
+      notes += n;
+      notes += strspn(notes, "\n");
+      if (SDL_strncmp(item, UPDATE_HEAD, mark) == 0)
+      {
+         y += y > top ? S(8) : 0;
+         if (draw)
+            ui_text(UI_BOLD, px, x, y + line / 2, UI_LEFT, w, C_TEXT, 1, item + mark);
+         y += line + gap;
+         continue;
+      }
       if (draw)
          ui_rect(x + S(2), y + line / 2 - S(2.5f), S(5), S(5), S(2.5f), C_ACCENT, 1);
       y += draw_lines(px, x + S(18), y + line / 2, w - S(18), line, item, draw) * line + gap;
-      notes += n;
-      notes += strspn(notes, "\n");
    }
    return SDL_max(0, y - gap - top);
 }

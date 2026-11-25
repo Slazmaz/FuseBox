@@ -16,7 +16,7 @@
 
 /* Set otherwise only to test. */
 #ifndef UPDATE_API
-#define UPDATE_API "https://api.github.com/repos/Slazmaz/FuseBox/releases/latest"
+#define UPDATE_API "https://api.github.com/repos/Slazmaz/FuseBox/releases?per_page=30"
 #endif
 #ifndef UPDATE_FILES
 #define UPDATE_FILES "https://github.com/Slazmaz/FuseBox/releases/download/"
@@ -53,7 +53,7 @@ static struct
     * and size. */
    char version[32], url[512], digest[65];
    Sint64 size;
-   /* What its notes list, a line each. */
+   /* What its notes list, and those of the ones between (update_notes). */
    char notes[UPDATE_NOTES];
 } up;
 
@@ -77,16 +77,22 @@ static bool read_version(const char *text, int v[3])
    return true;
 }
 
-static bool is_newer(const char *version)
+/* Above 0 if a is newer, below if b is. */
+static int compare(const int a[3], const int b[3])
 {
-   int a[3], b[3], i;
+   int i;
 
-   if (!read_version(version, a) || !read_version(FUSEBOX_VERSION, b))
-      return false;
    for (i = 0; i < 3; i++)
       if (a[i] != b[i])
-         return a[i] > b[i];
-   return false;
+         return a[i] - b[i];
+   return 0;
+}
+
+static bool is_newer(const char *version)
+{
+   int a[3], b[3];
+
+   return read_version(version, a) && read_version(FUSEBOX_VERSION, b) && compare(a, b) > 0;
 }
 
 static Sint64 now_s(void)
@@ -402,12 +408,34 @@ static void read_asset(const struct json *root)
    }
 }
 
-/* The items of the release notes' lists (Markdown), without what's around them.
- * Under the lock. */
-static void read_notes(const char *body)
+/* Not drafts and pre-releases. */
+static bool read_release(const struct json *release, int v[3])
 {
-   size_t n = 0;
+   return !json_bool(release, "draft", false) && !json_bool(release, "prerelease", false)
+      && read_version(json_str(release, "tag_name", ""), v);
+}
 
+/* The list's newest release, its version in v; older than below, if not NULL. */
+static const struct json *newest_release(const struct json *list, const int *below, int v[3])
+{
+   const struct json *r, *best = NULL;
+   int other[3];
+
+   for (r = list->child; r; r = r->next)
+   {
+      if (!read_release(r, other) || (below && compare(other, below) >= 0)
+            || (best && compare(other, v) <= 0))
+         continue;
+      best = r;
+      SDL_memcpy(v, other, sizeof(other));
+   }
+   return best;
+}
+
+/* The items of the release notes' lists (Markdown), without what's around them,
+ * after the first n of up.notes. Returns how many there are then. Under the lock. */
+static size_t add_notes(const char *body, size_t n)
+{
    while (*body)
    {
       size_t len = strcspn(body, "\r\n"), at = strspn(body, " \t");
@@ -430,11 +458,50 @@ static void read_notes(const char *body)
       body += strspn(body, "\r\n");
    }
    up.notes[n] = '\0';
+   return n;
+}
+
+/* Those of all releases newer than this FuseBox, the newest first; each under its
+ * version if there are more. Under the lock. */
+static void read_notes(const struct json *list)
+{
+   const struct json *r;
+   int v[3], below[3], mine[3], count = 0;
+   size_t n = 0;
+
+   up.notes[0] = '\0';
+   if (!read_version(FUSEBOX_VERSION, mine))
+      return;
+   for (r = newest_release(list, NULL, v); r && compare(v, mine) > 0;
+         r = newest_release(list, below, v))
+   {
+      char head[48];
+      size_t before = n, len;
+
+      SDL_memcpy(below, v, sizeof(v));
+      SDL_snprintf(head, sizeof(head), "%s" UPDATE_HEAD "%d.%d.%d", n ? "\n" : "", v[0], v[1], v[2]);
+      len = SDL_strlen(head);
+      if (n + len >= sizeof(up.notes))
+         break;
+      SDL_memcpy(up.notes + n, head, len + 1);
+      n = add_notes(json_str(r, "body", ""), n + len);
+      if (n == before + len)
+         up.notes[n = before] = '\0';
+      else
+         count++;
+   }
+   if (count == 1)
+   {
+      size_t len = strcspn(up.notes, "\n") + 1;
+
+      SDL_memmove(up.notes, up.notes + len, SDL_strlen(up.notes + len) + 1);
+   }
 }
 
 void update_check(SDL_AtomicInt *abort, char *note, size_t size)
 {
    Sint64 asked, idle, now = now_s();
+   const struct json *release = NULL;
    struct json *root = NULL;
    char *body = NULL;
    int wait, next, status, v[3];
@@ -455,20 +522,25 @@ void update_check(SDL_AtomicInt *abort, char *note, size_t size)
          &body, NULL, 20);
    if (status == 200)
       root = json_parse(body);
+   if (root && root->type != JSON_ARRAY)
+   {
+      json_free(root);
+      root = NULL;
+   }
 
    SDL_LockMutex(up.lock);
-   if (root && read_version(json_str(root, "tag_name", ""), v))
+   if (root && (release = newest_release(root, NULL, v)))
    {
       SDL_snprintf(up.version, sizeof(up.version), "%d.%d.%d", v[0], v[1], v[2]);
-      read_asset(root);
-      read_notes(json_str(root, "body", ""));
+      read_asset(release);
+      read_notes(root);
       if (is_newer(up.version))
          SDL_snprintf(note, size, "%s is available", up.version);
       else
          SDL_strlcpy(note, "Up to date", size);
    }
    /* No release yet, or none any more. */
-   else if (status == 404)
+   else if (root || status == 404)
    {
       up.version[0] = up.url[0] = up.digest[0] = '\0';
       SDL_strlcpy(note, "Up to date", size);
