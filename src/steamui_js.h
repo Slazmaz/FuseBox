@@ -1,6 +1,9 @@
 #ifndef FUSEBOX_STEAMUI_JS_H
 #define FUSEBOX_STEAMUI_JS_H
 
+/* Counted up with each change to the script: an older one is replaced. */
+#define STEAMUI_VERSION "38"
+
 /* Run in Steam's SharedJSContext. Returns "ready", "wait" (Steam is still
  * starting) or "unsupported".
  *
@@ -60,7 +63,7 @@
    "         || !window.SteamUIStore || !SteamUIStore.WindowStore\n" \
    "         || !SteamUIStore.WindowStore.SteamUIWindows.length) return 'wait';\n" \
    "   if (window.__fusebox) {\n" \
-   "      if (window.__fusebox.me === me && window.__fusebox.version === 38) return 'ready';\n" \
+   "      if (window.__fusebox.me === me && window.__fusebox.version === " STEAMUI_VERSION ") return 'ready';\n" \
    "      window.__fusebox.undo();\n" \
    "   }\n" \
    "   let req, page, cache, store, links, plays = false, keys = false;\n" \
@@ -848,7 +851,7 @@
    "   });\n" \
    "   window.__fusebox = {\n" \
    "      me,\n" \
-   "      version: 38,\n" \
+   "      version: " STEAMUI_VERSION ",\n" \
    "      opens(list) {\n" \
    "         opens.clear();\n" \
    "         Object.keys(list).forEach(app => opens.set(Number(app), list[app]));\n" \

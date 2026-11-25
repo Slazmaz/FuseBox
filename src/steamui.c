@@ -387,7 +387,7 @@ enum steamui steamui_check(SDL_AtomicInt *abort)
 
    if (!find_target(url, sizeof(url), abort))
       return STEAMUI_NO_PORT;
-   return evaluate(url, "window.__fusebox && __fusebox.version === 36"
+   return evaluate(url, "window.__fusebox && __fusebox.version === " STEAMUI_VERSION
          " && __fusebox.me === App.m_CurrentUser.strSteamID"
          " && __fusebox.whole() ? 'shown' : ''", result, sizeof(result), abort)
       && result[0] ? STEAMUI_OK : STEAMUI_WAIT;
